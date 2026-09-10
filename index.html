@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xfsWinPad — Windows 轻量级文本 / 代码编辑器</title>
+<meta name="description" content="xfsWinPad：Windows 下的轻量级文本与代码编辑器。大文件秒开、语法高亮、AI 助手、插件系统。免费下载。">
+<link rel="icon" type="image/png" href="favicon.png">
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --line: #262b36;
+    --text: #e6e9ef; --muted: #9aa3b2; --accent: #4f8cff; --accent2: #38c98e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.65;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 64px 0 40px; text-align: center; }
+  .logo { width: 84px; height: 84px; border-radius: 18px; }
+  h1 { font-size: 2.4rem; margin-top: 16px; letter-spacing: .5px; }
+  .tagline { color: var(--muted); font-size: 1.15rem; margin-top: 8px; }
+  .ver { display: inline-block; margin-top: 14px; padding: 3px 14px; border: 1px solid var(--line);
+         border-radius: 999px; color: var(--muted); font-size: .9rem; }
+  .downloads { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin: 28px 0 10px; }
+  .btn {
+    display: inline-block; padding: 13px 30px; border-radius: 10px; text-decoration: none;
+    font-size: 1.05rem; font-weight: 600; transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost { background: var(--card); color: var(--text); border: 1px solid var(--line); }
+  .dl-note { color: var(--muted); font-size: .9rem; text-align: center; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+            padding: 28px 32px; margin: 22px 0; }
+  h2 { font-size: 1.35rem; margin-bottom: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 10px 24px; }
+  .feature { color: var(--text); }
+  .feature b { color: var(--accent2); margin-right: 8px; }
+  .muted { color: var(--muted); }
+  code, .hash { font-family: Consolas, monospace; font-size: .82rem; color: var(--muted);
+                word-break: break-all; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 6px 0; }
+  a { color: var(--accent); }
+  footer { text-align: center; color: var(--muted); font-size: .88rem; padding: 28px 0 44px; }
+  .warn { border-left: 3px solid #e0a83a; padding: 10px 16px; background: rgba(224,168,58,.08);
+          border-radius: 6px; margin-top: 14px; font-size: .95rem; }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <img class="logo" src="favicon.png" alt="xfsWinPad">
+  <h1>xfsWinPad</h1>
+  <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
+  <span class="ver">v0.2.0 · 2026-09-10 · Windows 10/11 x64</span>
+  <div class="downloads">
+    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（4.5 MB）</a>
+    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.7 MB）</a>
+  </div>
+  <p class="dl-note">便携版解压即用，不写注册表；两个版本功能完全一致。</p>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <h2>特性</h2>
+    <div class="grid">
+      <div class="feature"><b>⚡</b>大文件秒开：2GB+ 原生虚拟滚动，亿级行不卡顿</div>
+      <div class="feature"><b>🎨</b>27+ 语言语法高亮 + 自动补全（跨标签词汇、注释过滤）</div>
+      <div class="feature"><b>🤖</b>AI 助手面板：opencode / OpenAI 兼容接口，diff 上屏、改盘自动重载</div>
+      <div class="feature"><b>🧩</b>插件系统 + AI 插件工场：一句话让 AI 写好并装好插件</div>
+      <div class="feature"><b>🪟</b>多标签 + 双视图分屏，会话恢复、崩溃安全自动保存</div>
+      <div class="feature"><b>🔬</b>STDF 半导体测试数据查看器 + 十六进制查看器</div>
+      <div class="feature"><b>⌨️</b>内置终端面板（ConPTY）、宏录制、行变换工具包</div>
+      <div class="feature"><b>🌍</b>中文 / English 界面，配置一键导出换机</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>安装说明</h2>
+    <ul>
+      <li><b>安装版</b>：双击 <code>xfsWinPad-setup.exe</code>，按向导完成；可选关联文本文件类型。</li>
+      <li><b>便携版</b>：解压 <code>xfsWinPad-portable.zip</code> 到任意目录，运行 <code>xfsWinPad.exe</code>。</li>
+    </ul>
+    <div class="warn">⚠️ 程序暂未做代码签名：首次运行如弹出 <b>“Windows 已保护你的电脑”</b>，
+    请点击 <b>更多信息 → 仍要运行</b>。介意的话请先核对下方 SHA256 再运行。</div>
+  </section>
+
+  <section>
+    <h2>文件校验（SHA256）</h2>
+    <p class="muted">xfsWinPad-setup.exe</p>
+    <p class="hash">0FECA3ECB5604FEBCD19A5BF085504025280D585C6564AF70FE26FCD25C2628D</p>
+    <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
+    <p class="hash">FA0E090C3A1E4495A0EB64DA98ABD938ECEC630889C99BC39D3C0587CD5530B2</p>
+  </section>
+
+  <section>
+    <h2>更新日志</h2>
+    <p><b>v0.2.0</b>（2026-09-10）</p>
+    <ul>
+      <li>安装器支持文本/代码文件类型关联（合法写入 UserChoice，覆盖旧选择）与文件夹右键「打开为工作区」</li>
+      <li>自动补全 v1.1：注释/字符串词汇过滤 + 跨标签词汇</li>
+      <li>行变换工具包：注释切换、合并/拆分行、去空行、行序反转</li>
+      <li>AI 面板：SSE 流式、会话 token/费用显示、STDF 一键分析</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>反馈与参与</h2>
+    <p>遇到 Bug、有功能建议？欢迎到
+      <a href="https://github.com/Kyrieme/xfsWinPad/issues" target="_blank">GitHub Issues</a>
+      提交（需要 GitHub 账号）。崩溃报告请附上
+      <code>%APPDATA%\xfsWinPad\logs</code> 下的日志文件。</p>
+  </section>
+
+</main>
+
+<footer>
+  xfsWinPad · 免费 · 无广告 · 不联网也能用
+</footer>
+
+</body>
+</html>
