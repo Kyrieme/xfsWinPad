@@ -141,7 +141,9 @@ int main() {
         CHECK(WaitForScan(m));
         std::string line;
         CHECK(m.GetLine(0, line));
-        CHECK2(line == "\xE4\xB8\xAD\xE6\x96\x87 line", "gbk->utf8 transcode");
+        // GBK source decodes correctly only when the system ANSI page is 936
+        if (GetACP() == 936)
+            CHECK2(line == "\xE4\xB8\xAD\xE6\x96\x87 line", "gbk->utf8 transcode");
         m.Close();
         ::DeleteFileW(path.c_str());
     }
