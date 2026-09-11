@@ -19,13 +19,19 @@ foreach ($f in 'xfsWinPad.exe','xfsWinPadPluginHost.exe','Scintilla.dll','Lexill
     Copy-Item "$bin\$f" $pay -Force
 }
 
-# --- VC runtime (search all common VS install drives) ---
-$redistDirs = @()
-foreach ($drive in 'C:\','D:\','E:\') {
-    $redistDirs += Get-ChildItem -Path "$drive`Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue
+# --- VC runtime (locate VS via vswhere; do NOT probe drive letters --
+# Get-ChildItem -Path on a nonexistent drive breaks FileSystem provider
+# dynamic-parameter binding, so -Directory "cannot be found" there) ---
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (-not (Test-Path $vswhere)) { throw 'vswhere not found' }
+$redistDir = $null
+foreach ($vs in (& $vswhere -latest -products * -property installationPath)) {
+    $glob = Join-Path $vs 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT'
+    $cand = Get-ChildItem -Path $glob -Directory -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1
+    if ($cand) { $redistDir = $cand; break }
 }
-$redistDir = $redistDirs | Sort-Object FullName -Descending | Select-Object -First 1
-if (-not $redistDir) { throw 'VC redist (Microsoft.VC143.CRT) not found' }
+if (-not $redistDir) { throw 'VC redist (Microsoft.VC*.CRT) not found via vswhere' }
 foreach ($f in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
     Copy-Item (Join-Path $redistDir.FullName $f) $pay -Force
 }
