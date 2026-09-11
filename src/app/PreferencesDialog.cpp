@@ -73,6 +73,23 @@ constexpr unsigned IDC_AIAIMODEL_MAX = IDC_AIMODEL_L;
 enum Page : int { kGeneral = 0, kEditing, kNewDoc, kBackup, kTerminal,
                   kUI, kRecent, kHighlight, kSearch, kMisc, kAi, kPageCount };
 
+// ---- 界面语言表（顺序即下拉顺序；语言名用各自母语书写，不做翻译）--------------
+struct UiLangEntry { const wchar_t* code; const wchar_t* label; };
+constexpr UiLangEntry kUiLangs[] = {
+    {L"zh-CN", L"简体中文"},
+    {L"en",    L"English"},
+    {L"zh-TW", L"繁體中文"},
+    {L"ja",    L"日本語"},
+    {L"ko",    L"한국어"},
+};
+constexpr int kUiLangCount = 5;
+
+int UiLangIndexOf(const std::wstring& code) {
+    for (int i = 0; i < kUiLangCount; ++i)
+        if (code == kUiLangs[i].code) return i;
+    return 0;   // 未知值回落简体中文（与旧版语义一致）
+}
+
 Page PageOf(unsigned id) {
     if (id >= IDC_THEME_L && id <= IDC_AUTOCLOSE) return kGeneral;
     if (id >= IDC_LINENUM && id <= IDC_AUTOCOMP)  return kEditing;
@@ -232,8 +249,7 @@ void LoadFromSettings(State& st) {
     setCheck(IDC_TBBAR, s.showTabBar);
     setCheck(IDC_TOOLBAR, s.showToolbar);
     if (HWND c = st.CtrlOf(IDC_LANG))
-        ::SendMessageW(c, CB_SETCURSEL,
-                       s.uiLang == L"en" ? 1 : 0, 0);   // 0=简体中文 1=English
+        ::SendMessageW(c, CB_SETCURSEL, UiLangIndexOf(s.uiLang), 0);
     setText(IDC_RECENT, std::to_wstring(s.recentFilesMax));
     setCheck(IDC_BRACE, s.braceMatch);
     setCheck(IDC_GUIDES, s.indentGuides);
@@ -289,7 +305,9 @@ void SyncToSettings(State& st) {
     s.showToolbar = check(IDC_TOOLBAR);
     if (HWND c = st.CtrlOf(IDC_LANG)) {
         int sel = (int)::SendMessageW(c, CB_GETCURSEL, 0, 0);
-        s.uiLang = (sel == 1) ? L"en" : L"zh-CN";   // 未知值不覆盖
+        // CB_ERR(-1)=尚未选中 → 简体中文（与旧版语义一致）
+        s.uiLang = (sel >= 0 && sel < kUiLangCount)
+                       ? kUiLangs[sel].code : L"zh-CN";
     }
     s.recentFilesMax = _wtoi(text(IDC_RECENT).c_str());
     if (s.recentFilesMax < 1 || s.recentFilesMax > 30) s.recentFilesMax = 10;
@@ -567,8 +585,8 @@ void PreferencesDialog::Run(HWND parent, HINSTANCE hInst, AppSettings* current,
     {
         // 选项用各自母语书写（语言名不做翻译是通行惯例）
         HWND lang = MkCombo(dlg, hInst, IDC_LANG, 120, 119, 160, font);
-        ::SendMessageW(lang, CB_ADDSTRING, 0, (LPARAM)L"简体中文");
-        ::SendMessageW(lang, CB_ADDSTRING, 0, (LPARAM)L"English");
+        for (const auto& e : kUiLangs)
+            ::SendMessageW(lang, CB_ADDSTRING, 0, (LPARAM)e.label);
         st->Track(lang, IDC_LANG);
     }
 
