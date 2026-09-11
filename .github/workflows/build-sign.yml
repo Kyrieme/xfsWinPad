@@ -34,7 +34,7 @@ jobs:
           Write-Host "Generator: $gen (VS $instVer)"
           cmake -S . -B build -G $gen -A x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build --config Release --target xfsWinPad xfsWinPadPluginHost
+          cmake --build build --config Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest -C Release --test-dir build --output-on-failure --no-tests=error
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
