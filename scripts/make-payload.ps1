@@ -22,7 +22,7 @@ foreach ($f in 'xfsWinPad.exe','xfsWinPadPluginHost.exe','Scintilla.dll','Lexill
 # --- VC runtime (search all common VS install drives) ---
 $redistDirs = @()
 foreach ($drive in 'C:\','D:\','E:\') {
-    $redistDirs += Get-ChildItem -Path "$drive`Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory -ErrorAction SilentlyContinue
+    $redistDirs += Get-ChildItem -Path "$drive`Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue
 }
 $redistDir = $redistDirs | Sort-Object FullName -Descending | Select-Object -First 1
 if (-not $redistDir) { throw 'VC redist (Microsoft.VC143.CRT) not found' }
