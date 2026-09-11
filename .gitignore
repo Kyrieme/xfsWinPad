@@ -1,0 +1,31 @@
+﻿(untitled)
+xfsWinPad.exe
+build/
+build_out.log
+build_release.log
+commit_out.log
+out/
+Testing/
+*.obj
+.mimosa/
+temp/
+dist/
+third_party/lexilla553.zip
+third_party/scintilla566.zip
+third_party/lexilla/doc/*.png
+third_party/scintilla/doc/*.png
+third_party/scintilla/cocoa/res/
+resources/toolbar_icons/
+
+--- private workspace files (never publish) ---
+TODO.md
+HANDOFF.md
+LESSONS.md
+PROJECT.md
+.git-acl.txt
+Codex-*.bat
+docs/autocomplete-wip.md
+docs/manual-test-checklist.md
+docs/settings-plan.md
+/xfsWinPad*.txt
+--- end private ---
