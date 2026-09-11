@@ -104,6 +104,15 @@ add_custom_command(TARGET xfsWinPad POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/resources/lang/en.json
         $<TARGET_FILE_DIR:xfsWinPad>/lang/en.json
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/resources/lang/zh-TW.json
+        $<TARGET_FILE_DIR:xfsWinPad>/lang/zh-TW.json
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/resources/lang/ja.json
+        $<TARGET_FILE_DIR:xfsWinPad>/lang/ja.json
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/resources/lang/ko.json
+        $<TARGET_FILE_DIR:xfsWinPad>/lang/ko.json
     COMMENT "Copying lang/*.json"
 )
 
