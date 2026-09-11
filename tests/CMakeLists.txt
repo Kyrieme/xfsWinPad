@@ -458,3 +458,19 @@ if(MSVC)
     target_compile_options(dump_nppexec PRIVATE /utf-8 /W3)
 endif()
 target_link_libraries(dump_nppexec PRIVATE user32)
+
+# ---- xfsbench：核心数据路径离线基准（mmap/编码/大文件/CSV 虚拟模型）----------
+# 不入 ctest；手动运行或由 ci.yml 调用（--csv 输出机器可读行，上传 artifact）。
+add_executable(xfsbench xfsbench.cpp
+    ../src/bigfile/BigFileModel.cpp
+    ../src/csv/CsvBigModel.cpp
+    ../src/csv/CsvParser.cpp
+    ../src/encoding/Encoding.cpp
+    ../src/core/Util.cpp
+    ../src/core/Log.cpp)
+
+target_compile_definitions(xfsbench PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(xfsbench PRIVATE /utf-8 /W3)
+endif()
+target_link_libraries(xfsbench PRIVATE shlwapi user32)

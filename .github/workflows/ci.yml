@@ -1,0 +1,59 @@
+name: ci
+
+# Fast feedback CI: clean-runner Release build, full ctest suite, then the
+# xfsbench data-path benchmark (results uploaded as an artifact).
+# Release signing / installers live in build-and-sign.yml (dispatch + v* tags).
+
+on:
+  push:
+    branches: ['master']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_test_bench:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build (cmake)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $instVer = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          $major = [int]("$instVer".Split('.')[0])
+          $gen = if ($major -ge 18) { 'Visual Studio 18 2026' } else { 'Visual Studio 17 2022' }
+          Write-Host "Generator: $gen (VS $instVer)"
+          cmake -S . -B build -G $gen -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          ctest -C Release --test-dir build --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Benchmark (xfsbench)
+        shell: pwsh
+        run: |
+          & build\bin\Release\xfsbench.exe --csv --size-mb 32 | Tee-Object -FilePath benchmark.csv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content benchmark.csv | ForEach-Object { Write-Host $_ }
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          if-no-files-found: error
+          path: benchmark.csv
