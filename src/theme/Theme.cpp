@@ -201,6 +201,9 @@ bool SaveThemeJsonTo(const ThemeDef* t, const std::wstring& path) {
     }
     j += L"\r\n}\r\n";
     std::string utf8 = WideToUtf8(j);
+    std::error_code dirc;
+    std::filesystem::create_directories(
+        std::filesystem::path(path).parent_path(), dirc);
     return WriteFileBytes(path, utf8.data(), utf8.size());
 }
 

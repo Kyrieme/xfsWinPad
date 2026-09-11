@@ -224,20 +224,24 @@ int main() {
         }
         CHECK(allbe == "hi");
         // GBK DBCS pair split across every chunk size (你 = C4 E3, 好 = BA C3)
-        std::string gbk = "\xC4\xE3\xBA\xC3hi";
-        const unsigned char expGbk[] = {0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD, 'h', 'i'};
-        for (size_t chunk = 1; chunk <= 6; ++chunk) {
-            StreamDecoder sd(gbk.data(), gbk.size(),
-                             encoding::EncodingType::ANSI, chunk);
-            std::string all;
-            for (;;) {
-                std::string c = sd.Next();
-                if (c.empty()) break;
-                all += c;
+        // CP936-only: on other ANSI locales (e.g. CP1252 CI runners) these
+        // bytes decode as Latin characters, so the CJK expectation fails
+        if (GetACP() == 936) {
+            std::string gbk = "\xC4\xE3\xBA\xC3hi";
+            const unsigned char expGbk[] = {0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD, 'h', 'i'};
+            for (size_t chunk = 1; chunk <= 6; ++chunk) {
+                StreamDecoder sd(gbk.data(), gbk.size(),
+                                 encoding::EncodingType::ANSI, chunk);
+                std::string all;
+                for (;;) {
+                    std::string c = sd.Next();
+                    if (c.empty()) break;
+                    all += c;
+                }
+                CHECK(all.size() == 8);
+                if (all.size() == 8)
+                    CHECK(memcmp(all.data(), expGbk, 8) == 0);
             }
-            CHECK(all.size() == 8);
-            if (all.size() == 8)
-                CHECK(memcmp(all.data(), expGbk, 8) == 0);
         }
     }
 
@@ -287,12 +291,13 @@ int main() {
                     back += part;
                 }
                 if (c.t == encoding::EncodingType::ANSI) {
-                    // emoji/symbol unmappable in CP936: 'a?b?' style loss is
-                    // expected; just require CJK text to survive
+                    // unmappable chars turn to '?' on any ANSI locale; the
+                    // CJK-survival assertion only holds when ANSI is CP936
                     CHECK(back.compare(0, 3, "abc") == 0);   // ascii head survives
-                    CHECK(back.find("\xe4\xbd\xa0\xe5\xa5\xbd") !=
-                          std::string::npos);                // CJK survives
                     CHECK(back.back() == 'z');
+                    if (GetACP() == 936)                     // CJK survives
+                        CHECK(back.find("\xe4\xbd\xa0\xe5\xa5\xbd") !=
+                              std::string::npos);
                 } else {
                     bool ok = back == u8;
                     CHECK2(ok, c.name, chunk);
