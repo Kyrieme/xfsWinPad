@@ -1,0 +1,11 @@
+// test_npp_dock.rc — 4d 端到端测试插件的对话框资源。
+// 与真实 NPP 插件一致：用资源模板 + CreateDialogParamW 建 modeless 对话框。
+#include <windows.h>
+#define IDD_DOCK 101
+IDD_DOCK DIALOG 0, 0, 300, 180
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "dock"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT "dock-dialog-content", -1, 10, 10, 280, 160
+END

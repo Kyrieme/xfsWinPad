@@ -1,0 +1,108 @@
+name: build-and-sign
+
+# Builds xfsWinPad on a clean runner, submits two SignPath signing requests
+# (payload PEs, then the installer embedding the signed PEs), and attaches
+# artifacts to the GitHub release when triggered by a v* tag.
+# If vars.SIGNPATH_ORGANIZATION_ID is not set, it still builds and publishes
+# unsigned artifacts (SignPath OSS program pending approval).
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build_sign:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build (cmake + tests)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          cmake --build build --config Release --target xfsWinPad xfsWinPadPluginHost
+          ctest -C Release --test-dir build --output-on-failure
+
+      - name: Assemble payload (unsigned)
+        shell: pwsh
+        run: ./scripts/make-payload.ps1 -SkipSetup
+
+      - name: Upload unsigned PEs
+        id: up_pes
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-pes
+          if-no-files-found: error
+          path: |
+            dist/payload/xfsWinPad.exe
+            dist/payload/xfsWinPadPluginHost.exe
+            dist/payload/xtaclean.exe
+
+      - name: Sign PEs (SignPath request 1)
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ vars.SIGNPATH_PROJECT_SLUG || ''xfsWinPad'' }}'
+          signing-policy-slug: '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || ''release-signing'' }}'
+          artifact-configuration-slug: 'pes'
+          github-artifact-id: '${{ steps.up_pes.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed-pes
+
+      - name: Re-assemble with signed PEs + build installer
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: |
+          Copy-Item signed-pes/* dist/payload/ -Force
+          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" "@dist\setup.rsp"
+          if ($LASTEXITCODE -ne 0) { throw 'setup.exe build failed' }
+          Copy-Item dist/setup.exe dist/xfsWinPad-setup.exe -Force
+
+      - name: Upload unsigned installer
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        id: up_setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-setup
+          if-no-files-found: error
+          path: dist/setup.exe
+
+      - name: Sign installer (SignPath request 2)
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ vars.SIGNPATH_PROJECT_SLUG || ''xfsWinPad'' }}'
+          signing-policy-slug: '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || ''release-signing'' }}'
+          artifact-configuration-slug: 'setup'
+          github-artifact-id: '${{ steps.up_setup.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed-setup
+
+      - name: Download signed installer
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: Copy-Item signed-setup/setup.exe dist/xfsWinPad-setup.exe -Force
+
+      - name: Portable zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/payload/* -DestinationPath dist/xfsWinPad-portable.zip -Force
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/xfsWinPad-setup.exe
+            dist/xfsWinPad-portable.zip
+          generate_release_notes: true
