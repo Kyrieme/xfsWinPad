@@ -339,6 +339,27 @@ std::vector<uint32_t> FilterRows(const CsvData& d, std::wstring_view needle) {
     return out;
 }
 
+static void AppendCellUtf8(std::string& out, std::wstring_view v, wchar_t delim) {
+    bool need = false;
+    for (wchar_t ch : v) {
+        if (ch == delim || ch == L'"' || ch == L'\r' || ch == L'\n') {
+            need = true;
+            break;
+        }
+    }
+    std::string cell8 = WideToUtf8(std::wstring(v));
+    if (!need) {
+        out += cell8;
+        return;
+    }
+    out.push_back('"');
+    for (char ch : cell8) {
+        if (ch == '"') out.push_back('"');
+        out.push_back(ch);
+    }
+    out.push_back('"');
+}
+
 std::string SerializeCsv(const CsvData& d, wchar_t delim,
                          const char* newline, bool trailingNewline) {
     std::string out;
@@ -347,28 +368,23 @@ std::string SerializeCsv(const CsvData& d, wchar_t delim,
         if (r) out += newline;
         for (size_t c = 0; c < d.cols; ++c) {
             if (c) out.push_back((char)delim);   // 支持的分隔符均为 ASCII
-            std::wstring_view v = d.Cell(r, c);
-            bool need = false;
-            for (wchar_t ch : v) {
-                if (ch == delim || ch == L'"' || ch == L'\r' || ch == L'\n') {
-                    need = true;
-                    break;
-                }
-            }
-            std::string cell8 = WideToUtf8(std::wstring(v));
-            if (!need) {
-                out += cell8;
-                continue;
-            }
-            out.push_back('"');
-            for (char ch : cell8) {
-                if (ch == '"') out.push_back('"');
-                out.push_back(ch);
-            }
-            out.push_back('"');
+            AppendCellUtf8(out, d.Cell(r, c), delim);
         }
     }
     if (trailingNewline && rows > 0) out += newline;
+    return out;
+}
+
+std::string SerializeRows(const std::vector<std::vector<std::wstring>>& rows,
+                          wchar_t delim, const char* newline) {
+    std::string out;
+    for (size_t r = 0; r < rows.size(); ++r) {
+        if (r) out += newline;
+        for (size_t c = 0; c < rows[r].size(); ++c) {
+            if (c) out.push_back((char)delim);
+            AppendCellUtf8(out, rows[r][c], delim);
+        }
+    }
     return out;
 }
 

@@ -76,5 +76,10 @@ std::vector<uint32_t> FilterRows(const CsvData& d, std::wstring_view needle);
 std::string SerializeCsv(const CsvData& d, wchar_t delim,
                          const char* newline, bool trailingNewline);
 
+// 序列化任意行矩阵（批次 43「导出选中行」复用 SerializeCsv 的引号规则；
+// 每行格数独立，行间用 newline，末尾不带换行）。UTF-8 返回。
+std::string SerializeRows(const std::vector<std::vector<std::wstring>>& rows,
+                          wchar_t delim, const char* newline = "\r\n");
+
 } // namespace csv
 } // namespace xfs

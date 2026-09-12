@@ -74,6 +74,11 @@ private:
     void AddRowAt();
     void DeleteSelectedRow();
     void ShowRowMenu(int xScreen, int yScreen);
+
+    // 批次 43：跳转显示行（右键菜单/Ctrl+G + InputBox）、导出选中行
+    // （RFC 4180 引号保真，GetSaveFileNameW 选路径，UTF-8 无 BOM）
+    void GoToRow();
+    void ExportSelected();
     static LRESULT CALLBACK ListProcThunk(HWND, UINT, WPARAM, LPARAM,
                                           UINT_PTR, DWORD_PTR);
     LRESULT ListProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);

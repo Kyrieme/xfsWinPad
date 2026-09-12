@@ -9,9 +9,13 @@
 #include "../csv/CsvBigModel.h"
 #include "../encoding/Encoding.h"
 #include "../theme/Theme.h"
+#include "InputBox.h"
 
 #include <commctrl.h>
+#include <commdlg.h>
 #include <shellapi.h>
+
+#include <cstdlib>
 
 namespace xfs {
 
@@ -29,6 +33,8 @@ constexpr int ID_CTX_ADDROW = 1390;
 constexpr int ID_CTX_DELROW = 1391;
 constexpr int ID_CTX_ADDCOL = 1392;
 constexpr int ID_CTX_DELCOL = 1393;
+constexpr int ID_CTX_GOTO = 1394;
+constexpr int ID_CTX_EXPORT = 1395;
 constexpr UINT_PTR kFilterTimer = 5;
 constexpr UINT_PTR kBigPollTimer = 6;   // 大文件过滤轮询（批次 37）
 constexpr UINT_PTR kEditSubclassId = 20260933;
@@ -657,6 +663,8 @@ LRESULT CsvPanel::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (LOWORD(wp) == ID_CTX_DELROW) { DeleteSelectedRow(); return 0; }
             if (LOWORD(wp) == ID_CTX_ADDCOL) { AddColAt(); return 0; }
             if (LOWORD(wp) == ID_CTX_DELCOL) { DeleteColAt(); return 0; }
+            if (LOWORD(wp) == ID_CTX_GOTO) { GoToRow(); return 0; }
+            if (LOWORD(wp) == ID_CTX_EXPORT) { ExportSelected(); return 0; }
             if (LOWORD(wp) == ID_FILTEREDIT && HIWORD(wp) == EN_CHANGE) {
                 if (filterTimer_) ::KillTimer(hwnd_, kFilterTimer);
                 ::SetTimer(hwnd_, filterTimer_ = kFilterTimer, 250, nullptr);
@@ -864,17 +872,25 @@ void CsvPanel::DeleteSelectedRow() {
 }
 
 void CsvPanel::ShowRowMenu(int xScreen, int yScreen) {
-    if (!data_ || !list_) return;
+    if ((!data_ && !big_) || !list_) return;
     HMENU m = ::CreatePopupMenu();
     if (!m) return;
-    ::AppendMenuW(m, MF_STRING, ID_CTX_ADDROW, Tr(L"csv.addrow"));
-    int sel = ListView_GetNextItem(list_, -1, LVNI_SELECTED);
-    ::AppendMenuW(m, MF_STRING | (sel >= 0 ? 0 : MF_GRAYED),
-                  ID_CTX_DELROW, Tr(L"csv.delrow"));
-    ::AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(m, MF_STRING, ID_CTX_ADDCOL, Tr(L"csv.addcol"));
-    ::AppendMenuW(m, MF_STRING | (lastSubItem_ >= 0 ? 0 : MF_GRAYED),
-                  ID_CTX_DELCOL, Tr(L"csv.delcol"));
+    if (data_) {   // 编辑类操作只在可写小文件模式提供
+        ::AppendMenuW(m, MF_STRING, ID_CTX_ADDROW, Tr(L"csv.addrow"));
+        int sel = ListView_GetNextItem(list_, -1, LVNI_SELECTED);
+        ::AppendMenuW(m, MF_STRING | (sel >= 0 ? 0 : MF_GRAYED),
+                      ID_CTX_DELROW, Tr(L"csv.delrow"));
+        ::AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        ::AppendMenuW(m, MF_STRING, ID_CTX_ADDCOL, Tr(L"csv.addcol"));
+        ::AppendMenuW(m, MF_STRING | (lastSubItem_ >= 0 ? 0 : MF_GRAYED),
+                      ID_CTX_DELCOL, Tr(L"csv.delcol"));
+    }
+    // 批次 43：跳转/导出（只读操作，大文件模式同样可用）
+    if (data_) ::AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenuW(m, MF_STRING, ID_CTX_GOTO, Tr(L"csv.goto"));
+    int selCount = (int)SendMessageW(list_, LVM_GETSELECTEDCOUNT, 0, 0);
+    ::AppendMenuW(m, MF_STRING | (selCount > 0 ? 0 : MF_GRAYED),
+                  ID_CTX_EXPORT, Tr(L"csv.exportsel"));
     if (xScreen == -1 || yScreen == -1) {   // 键盘呼出 → 列表中央
         RECT rc{};
         ::GetWindowRect(list_, &rc);
@@ -899,6 +915,10 @@ LRESULT CsvPanel::ListProc(HWND h, UINT m, WPARAM wp, LPARAM lp,
         case WM_KEYDOWN:
             if (wp == VK_INSERT) { AddRowAt(); return 0; }
             if (wp == VK_DELETE) { DeleteSelectedRow(); return 0; }
+            if (wp == 'G' && (::GetKeyState(VK_CONTROL) & 0x8000)) {
+                GoToRow();
+                return 0;
+            }
             break;
         case WM_CONTEXTMENU:
             ShowRowMenu(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
@@ -939,6 +959,104 @@ void CsvPanel::RebuildColumns() {
     while (ListView_DeleteColumn(list_, 0)) {}
     BuildColumns();
     RebuildView();
+}
+
+// --- 跳转行 / 导出选中行（批次 43）------------------------------------------
+
+void CsvPanel::GoToRow() {
+    if (!list_) return;
+    CommitCellEdit(true);
+    int total = ListView_GetItemCount(list_);
+    if (total <= 0) return;
+    std::wstring val;
+    if (!InputBox(hwnd_, inst_, Tr(L"csv.goto"), Tr(L"csv.gotolabel"), val))
+        return;
+    const wchar_t* s = val.c_str();
+    wchar_t* end = nullptr;
+    unsigned long long n = ::wcstoull(s, &end, 10);
+    if (end == s || n < 1 || n > (unsigned long long)total) {
+        Logger::Debug("CsvPanel: goto rejected [" + WideToUtf8(val) + "]");
+        return;
+    }
+    int idx = (int)n - 1;   // 用户按显示行号 1 基输入
+    ListView_EnsureVisible(list_, idx, FALSE);
+    ListView_SetItemState(list_, idx,
+                          LVIS_SELECTED | LVIS_FOCUSED,
+                          LVIS_SELECTED | LVIS_FOCUSED);
+    Logger::Info("CsvPanel: goto row " + std::to_string(n));
+}
+
+void CsvPanel::ExportSelected() {
+    if ((!data_ && !big_) || !list_ || path_.empty()) return;
+    CommitCellEdit(true);
+    std::vector<std::vector<std::wstring>> rows;
+    for (int r = -1;
+         (r = ListView_GetNextItem(list_, r, LVNI_SELECTED)) >= 0;) {
+        std::vector<std::wstring> row;
+        for (int c = 0; c < cols_; ++c) row.push_back(CellText(r, c));
+        rows.push_back(std::move(row));
+    }
+    if (rows.empty()) {
+        Logger::Debug("CsvPanel: export no selection");
+        return;
+    }
+    wchar_t delim = data_ ? data_->delim : big_->Delim();
+    std::string utf8 = csv::SerializeRows(rows, delim, newline_.c_str());
+    utf8 += newline_.c_str();   // 导出文件补末尾换行
+    Logger::Info("CsvPanel: export begin rows=" + std::to_string(rows.size()));
+
+    // 默认文件名：原文件同目录 <stem>_export.csv
+    std::wstring dir = L".", stem = path_;
+    size_t slash = path_.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) {
+        dir = path_.substr(0, slash);
+        stem = path_.substr(slash + 1);
+    }
+    size_t dot = stem.find_last_of(L'.');
+    if (dot != std::wstring::npos) stem = stem.substr(0, dot);
+    std::wstring def = dir + L"\\" + stem + L"_export.csv";
+
+    wchar_t buf[512] = L"";
+    ::lstrcpynW(buf, def.c_str(), 512);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = ::GetAncestor(hwnd_, GA_ROOT);   // owner 必须是顶层，WS_CHILD 会导致对话框不可见
+    ofn.lpstrFilter = L"CSV (*.csv)\0*.csv\0All files (*.*)\0*.*\0";
+    ofn.lpstrFile = buf;
+    ofn.nMaxFile = 512;
+    ofn.lpstrDefExt = L"csv";
+    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY |
+                OFN_OVERWRITEPROMPT;
+    if (!::GetSaveFileNameW(&ofn)) {   // 取消静默；真错误记 cde 便于诊断
+        DWORD cde = ::CommDlgExtendedError();
+        if (cde) Logger::Warn("CsvPanel: export dialog error cde=" + std::to_string(cde));
+        return;
+    }
+
+    HANDLE h = ::CreateFileW(buf, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        std::wstring msg = Tr(L"msg.csvsavefail");
+        msg += L"\n\n";
+        msg += buf;
+        ::MessageBoxW(hwnd_, msg.c_str(), L"xfsWinPad CSV",
+                      MB_OK | MB_ICONERROR);
+        Logger::Error("CsvPanel: export open failed gle=" +
+                      std::to_string(::GetLastError()));
+        return;
+    }
+    DWORD written = 0;
+    BOOL wok = ::WriteFile(h, utf8.data(), (DWORD)utf8.size(), &written,
+                           nullptr);
+    ::CloseHandle(h);
+    if (!wok || written != utf8.size()) {
+        ::MessageBoxW(hwnd_, Tr(L"msg.csvsavefail"), L"xfsWinPad CSV",
+                      MB_OK | MB_ICONERROR);
+        Logger::Error("CsvPanel: export short write");
+        return;
+    }
+    Logger::Info("CsvPanel: exported " + std::to_string(rows.size()) +
+                 " rows -> " + WideToUtf8(buf));
 }
 
 LRESULT CALLBACK CsvPanel::WndProcThunk(HWND h, UINT m, WPARAM wp, LPARAM lp) {
