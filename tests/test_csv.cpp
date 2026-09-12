@@ -261,6 +261,22 @@ int main() {
         g.DeleteCol(9);                                   // 越界 no-op
         CHECK(g.cols == 3);
     }
+    {   // 批次 43：SerializeRows（导出选中行复用同一引号规则）
+        std::vector<std::vector<std::wstring>> rows = {
+            { L"b", L"\"x,y\"" }, { L"2", L"tab\tsep" }, { L"", L"q\"uote" },
+        };
+        std::string out = SerializeRows(rows, L',', "\n");
+        CHECK(out == "b,\"\"\"x,y\"\"\"\n2,tab\tsep\n,\"q\"\"uote\"");
+        CsvData back = Parse(Utf8ToWide(out), -1);        // 回环：解析回来等价
+        CHECK(back.cols == 2);
+        CHECK(back.Cell(0, 1) == L"\"x,y\"");
+        CHECK(back.Cell(1, 1) == L"tab\tsep");
+        CHECK(back.Cell(2, 1) == L"q\"uote");
+        std::string lf = SerializeRows(rows, L';', "\n");  // 活动分隔符换分号
+        CHECK(lf.find("x,y") != std::string::npos);          // 逗号仍加引号
+        CHECK(lf.find("tab\tsep") != std::string::npos);     // tab 非活动 → 裸出
+        CHECK(SerializeRows({}, L',', "\r\n").empty());
+    }
 
     if (g_failed == 0) std::printf("test_csv: all passed\n");
     else std::printf("test_csv: %d FAILED\n", g_failed);
