@@ -2104,7 +2104,7 @@ void MainWindow::SetProjectRoot(const std::wstring& dir, bool persist) {
         explorer_ = std::make_unique<FileExplorer>();
         if (!explorer_->Create(hwnd_, inst_)) { explorer_.reset(); return; }
         explorer_->onOpenFile = [this](const std::wstring& path) {
-            workspace_->OpenPath(path);
+            OpenUserFile(path);
         };
     }
     explorer_->SetRoot(dir);
@@ -2139,7 +2139,7 @@ void MainWindow::ToggleExplorer() {
         explorer_ = std::make_unique<FileExplorer>();
         if (!explorer_->Create(hwnd_, inst_)) { explorer_.reset(); return; }
         explorer_->onOpenFile = [this](const std::wstring& path) {
-            workspace_->OpenPath(path);
+            OpenUserFile(path);
         };
     }
     bool show = !explorer_->Visible();
@@ -3180,6 +3180,20 @@ bool MainWindow::OpenSpecialFile(const std::wstring& f) {
     return false;
 }
 
+// 资源管理器面板双击 / 最近文件菜单 / 拖放进窗 的统一打开入口（与 CLI
+// OpenCliFiles 同语义）：目录=作为项目文件夹打开；.xfm/主题 json=直达对应
+// 管理器；其余=普通文档。CLI 路径不走这里（需透传 gotoLine/readOnly）。
+void MainWindow::OpenUserFile(const std::wstring& path) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(path, ec)) {
+        SetProjectRoot(path, true);
+        AddRecentFolder(path);
+        return;
+    }
+    if (OpenSpecialFile(path)) return;
+    workspace_->OpenPath(path);
+}
+
 void MainWindow::OpenCliFiles(const StartupOptions& opts) {
     for (auto& f : opts.files) {
         // a directory argument = open it as the project/folder workspace
@@ -4108,7 +4122,7 @@ void MainWindow::ExecuteCommand(unsigned int id) {
                     return;
             }
             if (id >= Cmd::FileRecentFirst && id < Cmd::FileRecentFirst + recentItems_.size()) {
-                workspace_->OpenPath(recentItems_[id - Cmd::FileRecentFirst]);
+                OpenUserFile(recentItems_[id - Cmd::FileRecentFirst]);
             } else if (id >= Cmd::FileRecentFolderFirst &&
                        id < Cmd::FileRecentFolderFirst + recentFolderItems_.size()) {
                 std::wstring dir = recentFolderItems_[id - Cmd::FileRecentFolderFirst];
@@ -4479,7 +4493,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             for (UINT i = 0; i < n; ++i) {
                 wchar_t path[MAX_PATH * 4];
                 if (DragQueryFileW(drop, i, path, MAX_PATH * 4))
-                    workspace_->OpenPath(path);
+                    OpenUserFile(path);
             }
             DragFinish(drop);
             return 0;
