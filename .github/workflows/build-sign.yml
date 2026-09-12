@@ -41,7 +41,7 @@ jobs:
 
       - name: Assemble payload (unsigned)
         shell: pwsh
-        run: ./scripts/make-payload.ps1 -SkipSetup
+        run: ./scripts/make-payload.ps1
 
       - name: Upload unsigned PEs
         id: up_pes
