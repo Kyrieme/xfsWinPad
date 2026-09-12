@@ -115,7 +115,8 @@ void FileExplorer::PopulateTree(HTREEITEM parent, const fs::path& dir) {
                     L".xml", L".yaml", L".yml", L".sql", L".sh", L".bat", L".ps1",
                     L".rs", L".go", L".java", L".rb", L".lua", L".log", L".cfg",
                     L".ini", L".toml", L".csv", L".svg", L".pgs", L".ldf",
-                    L".pat", L".dat", L".stil", L".vcproj", L".vcxproj", nullptr };
+                    L".pat", L".dat", L".stil", L".vcproj", L".vcxproj",
+                    L".xfm", nullptr };
                 bool match = false;
                 for (int j = 0; ok[j]; ++j) if (ext == ok[j]) { match = true; break; }
                 if (!match) continue;

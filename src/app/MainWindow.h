@@ -151,6 +151,7 @@ private:
     std::wstring MacroDir() const;
     void RunThemeImportFrom(const std::wstring& path); // CLI 主题 json 直达共用
     bool OpenSpecialFile(const std::wstring& f);   // .xfm/theme-json 分派
+    void OpenUserFile(const std::wstring& path);   // 面板双击/最近文件/拖放统一入口
     void RunPluginAdmin();
     void RunPreferences();     // 设置 > 首选项…（docs/settings-plan.md 阶段 1）
     void RunStyleConfigurator();  // 设置 > 语言样式配置器…（阶段 2b）

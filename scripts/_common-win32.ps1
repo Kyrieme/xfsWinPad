@@ -79,10 +79,13 @@ public static class WIN {
         SendMessageW(edit,0x00B1 /*EM_SETSEL*/,IntPtr.Zero,(IntPtr)(-1));
         foreach(char ch in s) PostMessageW(edit,0x0102,(IntPtr)ch,IntPtr.Zero); }
     public static void MoveTo(int px,int py){
-        int sx=GetSystemMetrics(0), sy=GetSystemMetrics(1);
+        // MOUSEEVENTF_MOVE|ABSOLUTE|VIRTUALDESK; note ABSOLUTE is 0x8000.
+        const int SM_XV=76, SM_YV=77, SM_CXV=78, SM_CYV=79;
+        int vx=GetSystemMetrics(SM_XV), vy=GetSystemMetrics(SM_YV);
+        int cx=GetSystemMetrics(SM_CXV), cy=GetSystemMetrics(SM_CYV);
         INPUT mv=NewInput();
-        mv.u.mi.dwFlags=0x0001|0x4000;
-        mv.u.mi.dx=(int)(px*65536.0/sx); mv.u.mi.dy=(int)(py*65536.0/sy);
+        mv.u.mi.dwFlags=0x0001|0x8000|0x4000;
+        mv.u.mi.dx=(int)((px-vx)*65536.0/cx); mv.u.mi.dy=(int)((py-vy)*65536.0/cy);
         INPUT[] a=new INPUT[]{mv}; SendInput(1,a,Marshal.SizeOf(typeof(INPUT))); }
     public static void Click(int px,int py){
         MoveTo(px,py);
