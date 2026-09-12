@@ -148,6 +148,7 @@
   "csv.goto": "行へ移動… (Ctrl+G)",
   "csv.gotolabel": "表示行番号（1 = 先頭行）：",
   "csv.exportsel": "選択行をエクスポート…",
+  "csv.print": "テーブルを印刷(&P)…",
   "csv.readonly": "大きなファイル · 読み取り専用",
   "csv.scanning": "スキャン中 {0}% · 一致 {1} 行",
   "msg.csvneedsave": "CSV テーブル ビューには保存済みファイルが必要です。\n先に現在のドキュメントを保存してください（Ctrl+S）。",

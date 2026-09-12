@@ -148,6 +148,7 @@
   "csv.goto": "跳转到行… (Ctrl+G)",
   "csv.gotolabel": "显示行号（1 = 首行）：",
   "csv.exportsel": "导出选中行…",
+  "csv.print": "打印表格(&P)…",
   "csv.readonly": "大文件 · 只读",
   "csv.scanning": "扫描中 {0}% · 命中 {1} 行",
   "msg.csvneedsave": "CSV 表格视图需要已保存的文件。\n请先保存当前文档（Ctrl+S）。",

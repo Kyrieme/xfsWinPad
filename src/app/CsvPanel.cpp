@@ -7,6 +7,7 @@
 #include "../core/Log.h"
 #include "../core/Util.h"
 #include "../csv/CsvBigModel.h"
+#include "../csv/CsvPrint.h"
 #include "../encoding/Encoding.h"
 #include "../theme/Theme.h"
 #include "InputBox.h"
@@ -35,6 +36,7 @@ constexpr int ID_CTX_ADDCOL = 1392;
 constexpr int ID_CTX_DELCOL = 1393;
 constexpr int ID_CTX_GOTO = 1394;
 constexpr int ID_CTX_EXPORT = 1395;
+constexpr int ID_CTX_PRINT = 1396;
 constexpr UINT_PTR kFilterTimer = 5;
 constexpr UINT_PTR kBigPollTimer = 6;   // 大文件过滤轮询（批次 37）
 constexpr UINT_PTR kEditSubclassId = 20260933;
@@ -665,6 +667,7 @@ LRESULT CsvPanel::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (LOWORD(wp) == ID_CTX_DELCOL) { DeleteColAt(); return 0; }
             if (LOWORD(wp) == ID_CTX_GOTO) { GoToRow(); return 0; }
             if (LOWORD(wp) == ID_CTX_EXPORT) { ExportSelected(); return 0; }
+            if (LOWORD(wp) == ID_CTX_PRINT) { PrintTable(); return 0; }
             if (LOWORD(wp) == ID_FILTEREDIT && HIWORD(wp) == EN_CHANGE) {
                 if (filterTimer_) ::KillTimer(hwnd_, kFilterTimer);
                 ::SetTimer(hwnd_, filterTimer_ = kFilterTimer, 250, nullptr);
@@ -891,6 +894,7 @@ void CsvPanel::ShowRowMenu(int xScreen, int yScreen) {
     int selCount = (int)SendMessageW(list_, LVM_GETSELECTEDCOUNT, 0, 0);
     ::AppendMenuW(m, MF_STRING | (selCount > 0 ? 0 : MF_GRAYED),
                   ID_CTX_EXPORT, Tr(L"csv.exportsel"));
+    ::AppendMenuW(m, MF_STRING, ID_CTX_PRINT, Tr(L"csv.print"));   // 批次 44
     if (xScreen == -1 || yScreen == -1) {   // 键盘呼出 → 列表中央
         RECT rc{};
         ::GetWindowRect(list_, &rc);
@@ -1057,6 +1061,160 @@ void CsvPanel::ExportSelected() {
     }
     Logger::Info("CsvPanel: exported " + std::to_string(rows.size()) +
                  " rows -> " + WideToUtf8(buf));
+}
+
+// --- 打印表格（批次 44）------------------------------------------------------
+// 打印当前视图（过滤/排序生效）：每页重复表头；列按显示宽贪心分组做
+// 水平分页，行按行高垂直分页——分页数学在 csv::BuildPrintPages，纯逻辑已单测。
+void CsvPanel::PrintTable() {
+    if ((!data_ && !big_) || !list_) return;
+    CommitCellEdit(true);
+    int rows = ListView_GetItemCount(list_);
+    if (cols_ <= 0) return;
+
+    PRINTDLGW pd{};
+    pd.lStructSize = sizeof(pd);
+    pd.hwndOwner = ::GetAncestor(hwnd_, GA_ROOT);
+    pd.Flags = PD_RETURNDC | PD_USEDEVMODECOPIESANDCOLLATE;
+    pd.nMinPage = 1; pd.nMaxPage = 1; pd.nFromPage = 1; pd.nToPage = 1;
+    if (!::PrintDlgW(&pd) || !pd.hDC) {   // 取消静默；真错误记 cde
+        DWORD cde = ::CommDlgExtendedError();
+        if (cde) Logger::Warn("CsvPanel: print dialog error cde=" +
+                              std::to_string(cde));
+        return;
+    }
+    HDC pdc = pd.hDC;
+    int dpiX = ::GetDeviceCaps(pdc, LOGPIXELSX);
+    int dpiY = ::GetDeviceCaps(pdc, LOGPIXELSY);
+    int pageW = ::GetDeviceCaps(pdc, HORZRES);
+    int pageH = ::GetDeviceCaps(pdc, VERTRES);
+    int margin = dpiX / 2;
+    int contentW = pageW - 2 * margin;
+    int contentH = pageH - 2 * margin;
+
+    HFONT base = ::CreateFontW(-::MulDiv(9, dpiY, 72), 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN,
+        L"Consolas");
+    HFONT bold = ::CreateFontW(-::MulDiv(9, dpiY, 72), 0, 0, 0, FW_BOLD,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN,
+        L"Consolas");
+    HPEN pen = ::CreatePen(PS_SOLID, 1, RGB(200, 200, 200));
+    if (!base || !bold || !pen) {
+        if (base) ::DeleteObject(base);
+        if (bold) ::DeleteObject(bold);
+        if (pen) ::DeleteObject(pen);
+        ::DeleteDC(pdc);
+        return;
+    }
+    auto oldFont = (HFONT)::SelectObject(pdc, base);
+    auto oldPen = (HPEN)::SelectObject(pdc, pen);
+    ::SetBkMode(pdc, TRANSPARENT);
+    TEXTMETRICW tm{};
+    ::GetTextMetricsW(pdc, &tm);
+    int rowH = tm.tmHeight + tm.tmExternalLeading + 4;
+    int rowAreaH = contentH - 2 * rowH;   // 表头 1 行 + 页脚 1 行
+    if (rowAreaH < rowH) rowAreaH = rowH;
+
+    std::vector<int> colW(cols_);
+    for (int c = 0; c < cols_; ++c)
+        colW[c] = ::MulDiv((int)ListView_GetColumnWidth(list_, c), dpiX, 96);
+    auto plan = csv::BuildPrintPages(colW, rows, contentW, rowAreaH, rowH);
+    Logger::Info("CsvPanel: print begin rows=" + std::to_string(rows) +
+                 " cols=" + std::to_string(cols_) +
+                 " pages=" + std::to_string(plan.size()));
+    if (plan.empty()) {
+        ::SelectObject(pdc, oldFont);
+        ::DeleteObject(base); ::DeleteObject(bold); ::DeleteObject(pen);
+        ::DeleteDC(pdc);
+        return;
+    }
+
+    std::vector<std::wstring> hdrText(cols_);
+    HWND hdr = ListView_GetHeader(list_);
+    if (hdr) {
+        int hc = Header_GetItemCount(hdr);
+        for (int c = 0; c < cols_ && c < hc; ++c) {
+            wchar_t txt[256] = L"";
+            HDITEMW hi{};
+            hi.mask = HDI_TEXT;   // 与 UpdateSortArrows 一致（HDI_STRING 本 SDK 未定义）
+            hi.pszText = txt;
+            hi.cchTextMax = 256;
+            if (Header_GetItem(hdr, c, &hi)) hdrText[c] = txt;
+        }
+    }
+
+    std::wstring docName = path_.substr(path_.find_last_of(L"\\/") + 1);
+    DOCINFOW di{};
+    di.cbSize = sizeof(di);
+    di.lpszDocName = docName.c_str();
+    if (::StartDocW(pdc, &di) <= 0) {
+        Logger::Error("CsvPanel: StartDoc failed gle=" +
+                      std::to_string(::GetLastError()));
+        ::SelectObject(pdc, oldFont);
+        ::DeleteObject(base); ::DeleteObject(bold); ::DeleteObject(pen);
+        ::DeleteDC(pdc);
+        return;
+    }
+
+    int pageNum = 0;
+    int totalPages = (int)plan.size();
+    for (const auto& pg : plan) {
+        ++pageNum;
+        if (::StartPage(pdc) <= 0) break;
+        RECT full{0, 0, pageW, pageH};
+        ::FillRect(pdc, &full, (HBRUSH)::GetStockObject(WHITE_BRUSH));
+        int groupW = 0;
+        for (int c = pg.colStart; c < pg.colEnd; ++c) groupW += colW[c];
+        int usedBottom = margin + rowH + (pg.rowEnd - pg.rowStart) * rowH;
+
+        ::SelectObject(pdc, bold);
+        int x = margin;
+        for (int c = pg.colStart; c < pg.colEnd; ++c) {
+            RECT rc{x, margin, x + colW[c], margin + rowH};
+            ::DrawTextW(pdc, hdrText[c].c_str(), -1, &rc,
+                        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT);
+            x += colW[c];
+        }
+        ::SelectObject(pdc, base);
+        int y = margin + rowH;
+        for (int r = pg.rowStart; r < pg.rowEnd; ++r) {
+            x = margin;
+            for (int c = pg.colStart; c < pg.colEnd; ++c) {
+                std::wstring t = CellText(r, c);
+                RECT rc{x, y, x + colW[c], y + rowH};
+                ::DrawTextW(pdc, t.c_str(), -1, &rc,
+                            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT);
+                x += colW[c];
+            }
+            ::MoveToEx(pdc, margin, y, nullptr);
+            ::LineTo(pdc, margin + groupW, y);
+            y += rowH;
+        }
+        x = margin;
+        for (int c = pg.colStart; c < pg.colEnd; ++c) {
+            ::MoveToEx(pdc, x, margin, nullptr);
+            ::LineTo(pdc, x, usedBottom);
+            x += colW[c];
+        }
+        ::MoveToEx(pdc, margin + groupW, margin, nullptr);
+        ::LineTo(pdc, margin + groupW, usedBottom);
+
+        wchar_t foot[64];
+        swprintf_s(foot, L"%d / %d", pageNum, totalPages);
+        RECT fr{margin, usedBottom + rowH / 2, margin + groupW,
+                pageH - margin / 2};
+        ::DrawTextW(pdc, docName.c_str(), -1, &fr,
+                    DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT);
+        ::DrawTextW(pdc, foot, -1, &fr, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+        ::EndPage(pdc);
+    }
+    ::EndDoc(pdc);
+    ::SelectObject(pdc, oldFont);
+    ::DeleteObject(base); ::DeleteObject(bold); ::DeleteObject(pen);
+    ::DeleteDC(pdc);
+    Logger::Info("CsvPanel: printed pages=" + std::to_string(pageNum));
 }
 
 LRESULT CALLBACK CsvPanel::WndProcThunk(HWND h, UINT m, WPARAM wp, LPARAM lp) {

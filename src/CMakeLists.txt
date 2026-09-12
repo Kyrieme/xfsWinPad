@@ -32,6 +32,7 @@ set(XFS_APP_SOURCES
     csv/CsvParser.cpp
     csv/CsvBigModel.cpp
     csv/CsvBigFilter.cpp
+    csv/CsvPrint.cpp
     diff/DiffView.cpp
     hex/HexPanel.cpp
     log/LogPanel.cpp

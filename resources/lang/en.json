@@ -148,6 +148,7 @@
   "csv.goto": "Go to row... (Ctrl+G)",
   "csv.gotolabel": "Display row number (1 = first row):",
   "csv.exportsel": "Export selected rows...",
+  "csv.print": "Print Table(&P)...",
   "csv.readonly": "large file, read-only",
   "csv.scanning": "scanning {0}% - {1} matches",
   "msg.csvneedsave": "CSV Table View needs a saved file.\nSave the current document first (Ctrl+S).",

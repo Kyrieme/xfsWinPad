@@ -1,5 +1,6 @@
 // xfsWinPad - CSV 解析/排序/过滤单测（批次 32/33）
 #include "../src/csv/CsvParser.h"
+#include "../src/csv/CsvPrint.h"
 #include "../src/core/Util.h"
 
 #include <cstdio>
@@ -276,6 +277,45 @@ int main() {
         CHECK(lf.find("x,y") != std::string::npos);          // 逗号仍加引号
         CHECK(lf.find("tab\tsep") != std::string::npos);     // tab 非活动 → 裸出
         CHECK(SerializeRows({}, L',', "\r\n").empty());
+    }
+    {   // 批次 44：BuildPrintPages（列组装填 + 行带分页 + 页序）
+        // 单列不超宽、行数正好一屏：一页
+        auto p1 = BuildPrintPages({ 100, 100 }, 3, 250, 60, 20);
+        CHECK(p1.size() == 1);
+        CHECK(p1[0].rowStart == 0 && p1[0].rowEnd == 3);
+        CHECK(p1[0].colStart == 0 && p1[0].colEnd == 2);
+
+        // 宽表：内容宽 250，三列各 100 → 列组成 [0,2) [2,3)
+        auto p2 = BuildPrintPages({ 100, 100, 100 }, 2, 250, 100, 20);
+        CHECK(p2.size() == 2);
+        CHECK(p2[0].colEnd == 2 && p2[0].firstColGroup);
+        CHECK(p2[1].colStart == 2 && !p2[1].firstColGroup);
+        CHECK(p2[0].rowEnd == 2 && p2[1].rowEnd == 2);  // 同一行带内列组相邻
+
+        // 长表行带分页：content 60 / rowH 20 = 每页 3 行，10 行 → 4 带
+        auto p3 = BuildPrintPages({ 80 }, 10, 200, 60, 20);
+        CHECK(p3.size() == 4);
+        CHECK(p3[0].rowStart == 0 && p3[0].rowEnd == 3);
+        CHECK(p3[3].rowStart == 9 && p3[3].rowEnd == 10);
+
+        // 二维：3 行带(每带 40/20=2 行) × 2 列组 = 6 页，行带优先顺序
+        auto p4 = BuildPrintPages({ 100, 100, 100 }, 6, 250, 40, 20);
+        CHECK(p4.size() == 6);
+        CHECK(p4[0].rowEnd == 2 && p4[0].colEnd == 2);   // band0 group0
+        CHECK(p4[1].rowEnd == 2 && p4[1].colStart == 2); // band0 group1
+        CHECK(p4[2].rowStart == 2 && p4[2].firstColGroup);
+        CHECK(p4[5].rowStart == 4 && p4[5].colStart == 2);
+
+        // 空列宽表 → 无页；0 行 → 一个表头页
+        CHECK(BuildPrintPages({}, 5, 200, 100, 20).empty());
+        auto p5 = BuildPrintPages({ 50 }, 0, 200, 100, 20);
+        CHECK(p5.size() == 1 && p5[0].rowStart == 0 && p5[0].rowEnd == 0);
+
+        // 超宽单列（>contentW）独占一组不丢弃
+        auto p6 = BuildPrintPages({ 500, 40 }, 1, 100, 100, 20);
+        CHECK(p6.size() == 2);
+        CHECK(p6[0].colStart == 0 && p6[0].colEnd == 1);
+        CHECK(p6[1].colStart == 1 && p6[1].colEnd == 2);
     }
 
     if (g_failed == 0) std::printf("test_csv: all passed\n");

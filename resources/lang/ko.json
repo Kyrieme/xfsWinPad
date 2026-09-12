@@ -148,6 +148,7 @@
   "csv.goto": "행으로 이동… (Ctrl+G)",
   "csv.gotolabel": "행 번호 (1 = 첫 행):",
   "csv.exportsel": "선택 행 내보내기…",
+  "csv.print": "표 인쇄(&P)…",
   "csv.readonly": "대용량 파일 · 읽기 전용",
   "csv.scanning": "검사 중 {0}% · 일치 {1}행",
   "msg.csvneedsave": "CSV 표 보기에는 저장된 파일이 필요합니다.\n먼저 현재 문서를 저장하세요(Ctrl+S).",
