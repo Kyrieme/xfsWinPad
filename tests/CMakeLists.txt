@@ -185,6 +185,7 @@ add_test(NAME wordscan COMMAND test_wordscan)
 # CSV 表格解析（批次 32/33）：引号/分隔符探测/数值排序/过滤/SetCell/序列化回环
 add_executable(test_csv test_csv.cpp
     ../src/csv/CsvParser.cpp
+    ../src/csv/CsvPrint.cpp
     ../src/core/Util.cpp)
 
 target_compile_definitions(test_csv PRIVATE UNICODE _UNICODE NOMINMAX)

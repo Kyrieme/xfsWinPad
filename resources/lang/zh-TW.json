@@ -148,6 +148,7 @@
   "csv.goto": "跳至列… (Ctrl+G)",
   "csv.gotolabel": "顯示列號（1 = 首列）：",
   "csv.exportsel": "匯出選取列…",
+  "csv.print": "列印表格(&P)…",
   "csv.readonly": "大型檔案 · 唯讀",
   "csv.scanning": "掃描中 {0}% · 命中 {1} 列",
   "msg.csvneedsave": "CSV 表格檢視需要已儲存的檔案。\n請先儲存目前文件（Ctrl+S）。",

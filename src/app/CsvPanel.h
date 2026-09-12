@@ -79,6 +79,7 @@ private:
     // （RFC 4180 引号保真，GetSaveFileNameW 选路径，UTF-8 无 BOM）
     void GoToRow();
     void ExportSelected();
+    void PrintTable();
     static LRESULT CALLBACK ListProcThunk(HWND, UINT, WPARAM, LPARAM,
                                           UINT_PTR, DWORD_PTR);
     LRESULT ListProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
