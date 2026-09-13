@@ -656,6 +656,8 @@
   "fe.delete.title": "삭제",
   "fe.delete.confirm": "\"{0}\"을(를) 휴지통으로 이동하시겠습니까?",
   "fe.delete.fail": "삭제에 실패했습니다.",
+  "git.compare": "마지막 커밋(HEAD)과 비교",
+  "git.noblob": "이 파일의 커밋된 내용을 가져올 수 없습니다(아직 커밋되지 않았을 수 있음).",
 
   "term.copy": "복사\tCtrl+C",
   "term.pasteinput": "입력 줄에 붙여넣기\tCtrl+V",

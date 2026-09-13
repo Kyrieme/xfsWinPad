@@ -148,6 +148,23 @@ std::wstring FileExplorer::GetItemFullPath(HTREEITEM hti) const {
     return buf;
 }
 
+COLORREF FileExplorer::GitTextColorOf(HTREEITEM hti) const {
+    if (!gitStates_ || gitStates_->empty() || !hti) return CLR_NONE;
+    std::wstring key = GetItemFullPath(hti);
+    for (auto& ch : key) ch = towlower(ch);
+    auto it = gitStates_->find(key);
+    if (it == gitStates_->end()) return CLR_NONE;
+    switch (it->second) {
+        case git::FileState::Modified:
+        case git::FileState::Renamed:   return RGB(214, 120, 0);   // orange
+        case git::FileState::Untracked:
+        case git::FileState::Added:     return RGB(51, 153, 51);   // green
+        case git::FileState::Deleted:
+        case git::FileState::Conflict:  return RGB(204, 51, 51);   // red
+    }
+    return CLR_NONE;
+}
+
 void FileExplorer::Refresh() {
     if (!rootDir_.empty()) SetRoot(rootDir_);
 }
@@ -176,6 +193,10 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, 6, Tr(L"fe.rename"));
     ::AppendMenuW(menu, MF_STRING, 7, Tr(L"fe.delete"));
+    if (isFile && onGitCompare) {
+        ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        ::AppendMenuW(menu, MF_STRING, 9, Tr(L"git.compare"));
+    }
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, 8, Tr(L"fe.refresh"));
 
@@ -212,6 +233,7 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 6: RenameItem(sel); break;
         case 7: DeleteItem(sel); break;
         case 8: Refresh(); break;
+        case 9: if (!path.empty() && onGitCompare) onGitCompare(path); break;
     }
 }
 
@@ -355,6 +377,19 @@ LRESULT CALLBACK FeWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 case NM_DBLCLK:
                     self->OpenSelection();
                     return 1;   // suppress default
+                case NM_CUSTOMDRAW: {
+                    NMTVCUSTOMDRAW* cd = (NMTVCUSTOMDRAW*)lp;
+                    if (cd->nmcd.dwDrawStage == CDDS_PREPAINT)
+                        return (LRESULT)CDRF_NOTIFYITEMDRAW;
+                    if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+                        COLORREF c = self->GitTextColorOf((HTREEITEM)cd->nmcd.dwItemSpec);
+                        if (c != CLR_NONE) {
+                            cd->clrText = c;
+                            return (LRESULT)CDRF_NEWFONT;
+                        }
+                    }
+                    return (LRESULT)CDRF_DODEFAULT;
+                }
             }
             break;
         }

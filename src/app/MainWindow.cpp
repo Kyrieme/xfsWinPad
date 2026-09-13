@@ -372,10 +372,12 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
 
     // 4c: 宿主初始化完成 → NPPN_READY（hwndFrom=主窗口，idFrom=0）
     if (plugins_) plugins_->EmitNppNotification(npp::NPPN_READY, 0);
+    git_.SetMainWnd(hwnd_);
 
     // plugin host event sources (v3 hooks) + NPP 通知合成（4c）
     // BufferID 沿用 4b 的 Document* 空间（见 docs/plugin-system.md §5.6）。
     workspace_->onDocumentOpened = [this](const Document* d) {
+        if (d && d->HasPath()) git_.RequestForPath(d->path.wstring());
         if (plugins_ && d) {
             plugins_->Raise(XFS_EVT_DOC_OPENED,
                             WideToUtf8(d->path.wstring()).c_str());
@@ -384,6 +386,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
     };
     workspace_->onDocumentActivated = [this](const Document* d) {
         UpdateUndoRedoState();   // 换文档：撤销/重做按钮跟随新文档状态
+        if (d && d->HasPath()) git_.RequestForPath(d->path.wstring());
         if (plugins_ && d) {
             plugins_->Raise(XFS_EVT_DOC_ACTIVATED,
                             WideToUtf8(d->path.wstring()).c_str());
@@ -391,6 +394,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
         }
     };
     workspace_->onDocumentSaved = [this](const Document* d) {
+        if (d && d->HasPath()) git_.RequestForPath(d->path.wstring());
         if (plugins_ && d) {
             plugins_->Raise(XFS_EVT_DOC_SAVED,
                             WideToUtf8(d->path.wstring()).c_str());
@@ -1447,8 +1451,10 @@ void MainWindow::MoveSplitter(int xAbs) {
 }
 
 void MainWindow::UpdateTitleBar() {
+    std::wstring gitSuffix;
+    if (!git_.Branch().empty()) gitSuffix = L" [" + git_.Branch() + L"]";
     Document* d = workspace_->Active();
-    if (!d) { SetWindowTextW(hwnd_, L"xfsWinPad"); return; }
+    if (!d) { SetWindowTextW(hwnd_, (L"xfsWinPad" + gitSuffix).c_str()); return; }
     std::wstring title;
     if (macro_.Recording()) title += L"[REC] ";
     if (d->editor.Modified()) title += L"* ";
@@ -1456,7 +1462,7 @@ void MainWindow::UpdateTitleBar() {
         title += d->path.wstring() + L" - xfsWinPad";
     else
         title += d->DisplayName() + L" - xfsWinPad";
-    SetWindowTextW(hwnd_, title.c_str());
+    SetWindowTextW(hwnd_, (title + gitSuffix).c_str());
 }
 
 void MainWindow::UpdateStatusBar() {
@@ -2106,8 +2112,12 @@ void MainWindow::SetProjectRoot(const std::wstring& dir, bool persist) {
         explorer_->onOpenFile = [this](const std::wstring& path) {
             OpenUserFile(path);
         };
+        explorer_->onGitCompare = [this](const std::wstring& path) {
+            GitCompareWithHead(path);
+        };
     }
     explorer_->SetRoot(dir);
+    git_.RequestForPath(dir);
     // panel visibility follows the persisted toggle state, not the root
     if (settings_.explorerVisible) {
         explorer_->Show();
@@ -2129,6 +2139,8 @@ void MainWindow::CloseFolder() {
         explorer_->CloseFolder();
         explorer_->Hide();
     }
+    git_.ClearNow();
+    UpdateTitleBar();
     CheckMenuItem(menu_, Cmd::ViewExplorer, MF_UNCHECKED);
     LayoutChildren();
     Logger::Info("Project folder closed");
@@ -2140,6 +2152,9 @@ void MainWindow::ToggleExplorer() {
         if (!explorer_->Create(hwnd_, inst_)) { explorer_.reset(); return; }
         explorer_->onOpenFile = [this](const std::wstring& path) {
             OpenUserFile(path);
+        };
+        explorer_->onGitCompare = [this](const std::wstring& path) {
+            GitCompareWithHead(path);
         };
     }
     bool show = !explorer_->Visible();
@@ -2157,6 +2172,7 @@ void MainWindow::ToggleExplorer() {
             }
         }
         explorer_->SetRoot(dir);
+        git_.RequestForPath(dir);
     }
     if (show) explorer_->Show(); else explorer_->Hide();
     CheckMenuItem(menu_, Cmd::ViewExplorer,
@@ -3881,6 +3897,58 @@ void MainWindow::RunDiffCompare(Document* a, Document* b) {
     MessageBoxW(hwnd_, msg, L"xfsWinPad Diff", MB_OK | MB_ICONINFORMATION);
 }
 
+void MainWindow::SyncGitUi() {
+    if (explorer_) explorer_->SetGitStates(git_.States());
+    UpdateTitleBar();
+}
+
+void MainWindow::OnGitDone(GitSnapshot* snap) {
+    git_.OnDone(snap);
+    SyncGitUi();
+}
+
+void MainWindow::GitCompareWithHead(const std::wstring& absPath) {
+    if (!git_.HasRoot()) return;
+    wchar_t base[MAX_PATH]{};
+    if (!::GetTempPathW(MAX_PATH, base)) return;
+    std::wstring dir = std::wstring(base) + L"xfsWinPad\\git\\";
+    ::SHCreateDirectoryExW(hwnd_, dir.c_str(), nullptr);
+    std::wstring name = std::filesystem::path(absPath).filename().wstring();
+    size_t h = std::hash<std::wstring>{}(absPath);
+    std::wstring temp = dir + name + L".head-" + std::to_wstring(h) + L".txt";
+    if (!git_.FetchHeadBlob(absPath, temp)) {
+        MessageBoxW(hwnd_, Tr(L"git.noblob"), L"xfsWinPad", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    Logger::Info("git: compare HEAD started for " + WideToUtf8(absPath));
+}
+
+void MainWindow::OnGitBlob(GitBlobResult* res) {
+    if (!res) return;
+    std::unique_ptr<GitBlobResult> guard(res);
+    if (!res->ok) {
+        MessageBoxW(hwnd_, Tr(L"git.noblob"), L"xfsWinPad", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    Document* orig = nullptr;
+    for (int i = 0; i < workspace_->Count(); ++i) {
+        Document* d = workspace_->DocumentAt(i);
+        if (d && d->HasPath() &&
+            _wcsicmp(d->path.wstring().c_str(), res->absPath.c_str()) == 0)
+            { orig = d; break; }
+    }
+    workspace_->OpenPath(res->tempPath, -1, true, false);
+    Document* blob = nullptr;
+    for (int i = 0; i < workspace_->Count(); ++i) {
+        Document* d = workspace_->DocumentAt(i);
+        if (d && d->HasPath() &&
+            _wcsicmp(d->path.wstring().c_str(), res->tempPath.c_str()) == 0)
+            { blob = d; break; }
+    }
+    if (orig && blob && orig != blob) RunDiffCompare(orig, blob);
+    else Logger::Warn("git: compare HEAD skipped (document not found)");
+}
+
 void MainWindow::SwitchTheme(const ThemeDef* t) {
     if (!t || t == theme_) return;
     theme_ = t;
@@ -4505,6 +4573,14 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_APP_GOTOHIT:
             OnResultActivate((int)wp);
+            return 0;
+
+        case WM_APP_GIT_DONE:
+            OnGitDone((GitSnapshot*)lp);
+            return 0;
+
+        case WM_APP_GIT_BLOB:
+            OnGitBlob((GitBlobResult*)lp);
             return 0;
 
         case WM_TIMER: {

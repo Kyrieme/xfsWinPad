@@ -656,6 +656,8 @@
   "fe.delete.title": "削除",
   "fe.delete.confirm": "\"{0}\" をごみ箱へ移動しますか？",
   "fe.delete.fail": "削除に失敗しました。",
+  "git.compare": "直前のコミット（HEAD）と比較",
+  "git.noblob": "このファイルのコミット済み内容を取得できません（まだコミットされていない可能性）。",
 
   "term.copy": "コピー\tCtrl+C",
   "term.pasteinput": "入力行へ貼り付け\tCtrl+V",

@@ -19,6 +19,7 @@
 #include "StdfPanel.h"
 #include "CsvPanel.h"
 #include "../bigfile/BigFileView.h"
+#include "../git/GitClient.h"
 #include "../hex/HexPanel.h"
 #include "../log/LogPanel.h"
 #include "../terminal/TerminalPanel.h"
@@ -136,6 +137,11 @@ private:
     void RebuildPluginMenu();
     void DoDiffCompare();
     void RunDiffCompare(Document* a, Document* b);
+    // git 集成 v1（批次 46）：分支进标题 + 树着色 + 与 HEAD 比较
+    void GitCompareWithHead(const std::wstring& absPath);
+    void SyncGitUi();                 // explorer colors + title after a refresh
+    void OnGitDone(GitSnapshot* snap);    // WM_APP_GIT_DONE
+    void OnGitBlob(GitBlobResult* res);   // WM_APP_GIT_BLOB
     void SwitchTheme(const ThemeDef* t);
     void DoAutoSave();
     void CheckAutoSaveRecovery();
@@ -200,6 +206,7 @@ private:
     std::unique_ptr<ResultsPanel> results_;
     std::unique_ptr<CommandPalette> palette_;
     std::unique_ptr<FileExplorer> explorer_;
+    GitClient git_;
     std::unique_ptr<HexPanel> hex_;
     std::unique_ptr<StdfPanel> stdf_;
     std::unique_ptr<CsvPanel> csv_;
