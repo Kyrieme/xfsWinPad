@@ -36,6 +36,17 @@ StateMap ParseStatusPorcelainZ(const std::string& out, const std::wstring& root)
 // red (Conflict/Deleted) > orange (Modified/Renamed) > green (Added/Untracked).
 void AggregateDirs(StateMap& m, const std::wstring& root);
 
+// Parsed from the leading `## branch...upstream [ahead N, behind M]` record
+// emitted by `status --porcelain=v1 -b -z`.
+struct BranchTracking {
+    bool detached = false;   // "HEAD (no branch)"
+    bool hasUpstream = false;
+    bool gone = false;       // upstream ref no longer exists
+    int ahead = 0;           // local commits not on upstream
+    int behind = 0;          // upstream commits not pulled
+};
+BranchTracking ParseTracking(const std::string& out);
+
 // Trims a `rev-parse --abbrev-ref HEAD` stdout line.
 std::wstring ParseBranch(const std::string& out);
 

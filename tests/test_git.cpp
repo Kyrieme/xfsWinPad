@@ -26,6 +26,60 @@ int main() {
     CHECK(ParseBranch("(detached HEAD)\n") == L"(detached HEAD)");
     CHECK(ParseBranch("") == L"");
 
+    // --- ParseTracking -------------------------------------------------------
+    auto ZL = [](std::initializer_list<const char*> toks) {
+        std::string s;
+        for (auto t : toks) { s += t; s += '\0'; }
+        return s;
+    };
+    {
+        auto t = ParseTracking(ZL({"## master...origin/master"}));
+        CHECK(!t.detached && t.hasUpstream && !t.gone && t.ahead == 0 && t.behind == 0);
+    }
+    {
+        auto t = ParseTracking(ZL({"## master...origin/master [ahead 2, behind 1]",
+                                  "?? a.txt"}));
+        CHECK(t.hasUpstream && t.ahead == 2 && t.behind == 1 && !t.gone);
+    }
+    {
+        auto t = ParseTracking(ZL({"## main...origin/main [ahead 10]", "M  x"}));
+        CHECK(t.ahead == 10 && t.behind == 0);
+    }
+    {
+        auto t = ParseTracking(ZL({"## main...origin/main [behind 3]"}));
+        CHECK(t.behind == 3 && t.ahead == 0);
+    }
+    {
+        auto t = ParseTracking(ZL({"## main...origin/old [gone]"}));
+        CHECK(t.hasUpstream && t.gone && t.ahead == 0 && t.behind == 0);
+    }
+    {
+        auto t = ParseTracking(ZL({"## HEAD (no branch)", "M  x"}));
+        CHECK(t.detached && !t.hasUpstream && t.ahead == 0 && t.behind == 0);
+    }
+    {
+        auto t = ParseTracking(ZL({"## main"}));
+        CHECK(!t.detached && !t.hasUpstream);
+    }
+    {
+        auto t = ParseTracking(ZL({"## (no branch, rebasing main)"}));
+        CHECK(t.detached && !t.hasUpstream);
+    }
+    {
+        auto t = ParseTracking(ZL({"## main...origin/main [ahead 1, behind 2, gone]"}));
+        CHECK(t.ahead == 1 && t.behind == 2 && t.gone);
+    }
+    {
+        auto t = ParseTracking(ZL({"?? a.txt", "M  b"}));  // no -b header
+        CHECK(!t.hasUpstream && !t.detached && t.ahead == 0 && t.behind == 0);
+    }
+    {
+        auto t = ParseTracking(ZL({"## master...origin/master [ahead 12345]"}));
+        CHECK(t.ahead == 12345);
+    }
+    CHECK(ParseTracking("").hasUpstream == false);
+
+
     // --- ToAbsPath -----------------------------------------------------------
     CHECK(ToAbsPath(L"C:\\Repo", "src/a.txt") == L"c:\\repo\\src\\a.txt");
     CHECK(ToAbsPath(L"C:\\Repo\\", "b.md") == L"c:\\repo\\b.md");

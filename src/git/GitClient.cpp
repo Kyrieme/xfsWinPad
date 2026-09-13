@@ -75,10 +75,11 @@ void GitClient::StartThread(const std::wstring& root) {
         bool spawn = false;
         bool b = Run(root, L"rev-parse --abbrev-ref HEAD", branchOut, &spawn);
         snap->spawnFailed = spawn;
-        bool s = b && Run(root, L"status --porcelain=v1 -z", statusOut);
+        bool s = b && Run(root, L"status --porcelain=v1 -b -z", statusOut);
         snap->ok = b && s;
         if (snap->ok) {
             snap->branch = git::ParseBranch(branchOut);
+            snap->track = git::ParseTracking(statusOut);
             snap->states = std::make_shared<git::StateMap>(
                 git::ParseStatusPorcelainZ(statusOut, root));
             git::AggregateDirs(*snap->states, root);
@@ -110,14 +111,24 @@ bool GitClient::OnDone(GitSnapshot* snap) {
     } else if (!snap->ok) {
         // repo vanished or command failed transiently: drop stale data
         changed = !root_.empty() || !branch_.empty();
-        root_.clear(); branch_.clear(); states_.reset();
+        root_.clear(); branch_.clear(); track_ = {}; states_.reset();
     } else {
         changed = root_ != snap->root || branch_ != snap->branch ||
-                  states_ != snap->states;
+                  states_ != snap->states ||
+                  track_.ahead != snap->track.ahead ||
+                  track_.behind != snap->track.behind ||
+                  track_.gone != snap->track.gone;
         if (snap->branch != branch_)
             Logger::Info("git: branch " + WideToUtf8(snap->branch));
+        if (changed && snap->track.hasUpstream &&
+            (snap->track.ahead != track_.ahead || snap->track.behind != track_.behind ||
+             snap->track.gone != track_.gone))
+            Logger::Info("git: tracking ahead=" + std::to_string(snap->track.ahead) +
+                         " behind=" + std::to_string(snap->track.behind) +
+                         (snap->track.gone ? " gone" : ""));
         root_ = snap->root;
         branch_ = snap->branch;
+        track_ = snap->track;
         states_ = snap->states;
     }
     delete snap;
@@ -221,6 +232,7 @@ std::wstring GitClient::RelOf(const std::wstring& absPath) const {
 void GitClient::ClearNow() {
     root_.clear();
     branch_.clear();
+    track_ = {};
     states_.reset();
 }
 
