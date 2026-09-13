@@ -656,6 +656,8 @@
   "fe.delete.title": "刪除",
   "fe.delete.confirm": "確定要將 \"{0}\" 移到資源回收筒嗎？",
   "fe.delete.fail": "刪除失敗。",
+  "git.compare": "與上次提交（HEAD）比較",
+  "git.noblob": "無法取得該檔案的上次提交內容（可能尚未提交）。",
 
   "term.copy": "複製\tCtrl+C",
   "term.pasteinput": "貼到輸入行\tCtrl+V",

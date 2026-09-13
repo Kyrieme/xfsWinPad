@@ -656,6 +656,8 @@
   "fe.delete.title": "Delete",
   "fe.delete.confirm": "Move \"{0}\" to the Recycle Bin?",
   "fe.delete.fail": "Delete failed.",
+  "git.compare": "Compare with HEAD",
+  "git.noblob": "Cannot fetch the committed version of this file (not committed yet?).",
 
   "term.copy": "Copy\tCtrl+C",
   "term.pasteinput": "Paste to Input\tCtrl+V",

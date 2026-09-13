@@ -6,8 +6,11 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <functional>
+#include <memory>
 #include <string>
 #include <filesystem>
+
+#include "../git/GitStatus.h"
 
 namespace xfs {
 
@@ -27,6 +30,14 @@ public:
 
     // double-click on a file �?open request
     std::function<void(const std::wstring& path)> onOpenFile;
+    // "compare with HEAD" request (git repo files only; unset hides the item)
+    std::function<void(const std::wstring& path)> onGitCompare;
+
+    // git working-set coloring: lowercase abs path -> state (shared snapshot)
+    void SetGitStates(std::shared_ptr<const git::StateMap> states) {
+        gitStates_ = std::move(states);
+        if (tree_) ::InvalidateRect(tree_, nullptr, FALSE);
+    }
 
 private:
     friend LRESULT CALLBACK FeWndProc(HWND, UINT, WPARAM, LPARAM);
@@ -36,6 +47,7 @@ private:
     void OpenSelection();
     void ShowContextMenu(POINT screenPt);
     std::wstring GetItemFullPath(HTREEITEM hti) const;
+    COLORREF GitTextColorOf(HTREEITEM hti) const;   // RGB or CLR_NONE
 
     // file operations (context menu)
     std::wstring TargetDir(HTREEITEM sel) const;   // dir to create new items in
@@ -50,6 +62,7 @@ private:
     HINSTANCE hInst_ = nullptr;
     std::wstring rootDir_;
     unsigned treeItemIdCounter_ = 0;
+    std::shared_ptr<const git::StateMap> gitStates_;
 };
 
 } // namespace xfs

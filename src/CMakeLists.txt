@@ -34,6 +34,8 @@ set(XFS_APP_SOURCES
     csv/CsvBigFilter.cpp
     csv/CsvPrint.cpp
     diff/DiffView.cpp
+    git/GitStatus.cpp
+    git/GitClient.cpp
     hex/HexPanel.cpp
     log/LogPanel.cpp
     macro/MacroRecorder.cpp
