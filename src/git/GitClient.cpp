@@ -214,6 +214,24 @@ bool GitClient::Commit(const std::wstring& message) {
     return true;
 }
 
+bool GitClient::ListBranches() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    StartOp(GitOpKind::ListBranches,
+            L"for-each-ref --format=" +
+                git::QuoteArg(L"%(HEAD)%(refname:short)") + L" refs/heads",
+            L"");
+    Logger::Info("git: branch list started");
+    return true;
+}
+
+bool GitClient::Checkout(const std::wstring& branch) {
+    if (!HasRoot() || disabled_ || branch.empty() || cmdBusy_->exchange(true))
+        return false;
+    StartOp(GitOpKind::Checkout, L"checkout " + git::QuoteArg(branch), branch);
+    Logger::Info("git: checkout started " + WideToUtf8(branch));
+    return true;
+}
+
 std::wstring GitClient::RelOf(const std::wstring& absPath) const {
     if (root_.empty()) return std::wstring();
     std::wstring r = root_;

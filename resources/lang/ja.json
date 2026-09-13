@@ -662,7 +662,10 @@
   "git.unstage": "ステージを取り消し",
   "git.commit": "コミット…",
   "git.commit.msg": "コミットメッセージ：",
-  "git.op.fail": "操作に失敗しました:\n{0}",
+   "git.op.fail": "操作に失敗しました:\n{0}",
+   "git.branch": "ブランチを切り替え…",
+   "git.branch.pick": "切り替え先のブランチを選択:",
+   "git.checkout.dirty": "未コミットの変更があり、切り替え先と衝突する可能性があります。続行しますか?",
 
   "term.copy": "コピー\tCtrl+C",
   "term.pasteinput": "入力行へ貼り付け\tCtrl+V",

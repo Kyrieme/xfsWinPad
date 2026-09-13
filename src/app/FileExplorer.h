@@ -36,6 +36,7 @@ public:
     std::function<void(const std::wstring& path)> onGitStage;
     std::function<void(const std::wstring& path)> onGitUnstage;
     std::function<void()> onGitCommit;
+    std::function<void()> onGitBranch;
 
     // git working-set coloring: lowercase abs path -> state (shared snapshot)
     void SetGitStates(std::shared_ptr<const git::StateMap> states) {

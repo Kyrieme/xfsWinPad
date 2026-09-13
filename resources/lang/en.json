@@ -662,7 +662,10 @@
   "git.unstage": "Unstage",
   "git.commit": "Commit…",
   "git.commit.msg": "Commit message:",
-  "git.op.fail": "Operation failed:\n{0}",
+   "git.op.fail": "Operation failed:\n{0}",
+   "git.branch": "Switch Branch…",
+   "git.branch.pick": "Select a branch to switch to:",
+   "git.checkout.dirty": "You have uncommitted changes that may conflict with the target branch. Switch anyway?",
 
   "term.copy": "Copy\tCtrl+C",
   "term.pasteinput": "Paste to Input\tCtrl+V",

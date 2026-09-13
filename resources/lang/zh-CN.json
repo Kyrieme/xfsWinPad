@@ -663,6 +663,9 @@
   "git.commit": "提交…",
   "git.commit.msg": "提交信息：",
   "git.op.fail": "操作失败：\n{0}",
+  "git.branch": "切换分支…",
+  "git.branch.pick": "选择要切换到的分支：",
+  "git.checkout.dirty": "存在未提交的更改，可能与目标分支冲突。仍要切换吗？",
 
   "term.copy": "复制\tCtrl+C",
   "term.pasteinput": "粘贴到输入行\tCtrl+V",

@@ -79,6 +79,27 @@ int main() {
     }
     CHECK(ParseTracking("").hasUpstream == false);
 
+    // --- ParseBranchList (batch 50) --------------------------------------------
+    {
+        auto l = ParseBranchList("*main\r\n dev\r\n");
+        CHECK(l.size() == 2 && l[0].current && l[0].name == L"main" &&
+              !l[1].current && l[1].name == L"dev");
+    }
+    {
+        auto l = ParseBranchList(" feat/one-line-no-star\n");
+        CHECK(l.size() == 1 && !l[0].current && l[0].name == L"feat/one-line-no-star");
+    }
+    {
+        auto l = ParseBranchList("*\xe4\xb8\xad\xe6\x96\x87\n");
+        CHECK(l.size() == 1 && l[0].current && l[0].name == L"\u4e2d\u6587");
+    }
+    CHECK(ParseBranchList("").empty());
+    CHECK(ParseBranchList("\n \n").empty());      // degenerate/empty names
+    {
+        auto l = ParseBranchList("*no-trailing-newline");
+        CHECK(l.size() == 1 && l[0].name == L"no-trailing-newline");
+    }
+
 
     // --- ToAbsPath -----------------------------------------------------------
     CHECK(ToAbsPath(L"C:\\Repo", "src/a.txt") == L"c:\\repo\\src\\a.txt");
@@ -226,9 +247,38 @@ int main() {
             CHECK(xfs::GitClient::Run(repo.wstring(), L"log -1 --pretty=%s", lo));
             CHECK(xfs::Utf8ToWide(lo).find(L"two words \"q\" end\\") != std::wstring::npos);
         }
+        // batch 50: branch list + checkout round-trip in the same repo
+        {
+            std::string bo;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"rev-parse --abbrev-ref HEAD", bo));
+            std::wstring head = ParseBranch(bo);
+            CHECK(!head.empty());
+            CHECK(git(L"branch feat50x"));
+            std::string lo;
+            CHECK(xfs::GitClient::Run(repo.wstring(),
+                                       L"for-each-ref --format=" +
+                                           QuoteArg(L"%(HEAD)%(refname:short)") +
+                                           L" refs/heads", lo));
+            auto list = ParseBranchList(lo);
+            CHECK(list.size() == 2);
+            int curIdx = -1, featIdx = -1;
+            for (size_t k = 0; k < list.size(); ++k) {
+                if (list[k].current) curIdx = (int)k;
+                if (list[k].name == L"feat50x") featIdx = (int)k;
+            }
+            CHECK(curIdx >= 0 && featIdx >= 0 && curIdx != featIdx);
+            CHECK(list[curIdx].name == head);
+            CHECK(git(L"checkout -q " + QuoteArg(list[featIdx].name)));
+            std::string bo2;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"rev-parse --abbrev-ref HEAD", bo2));
+            CHECK(ParseBranch(bo2) == L"feat50x");
+            CHECK(git(L"checkout -q " + QuoteArg(head)));
+            std::string bo3;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"rev-parse --abbrev-ref HEAD", bo3));
+            CHECK(ParseBranch(bo3) == head);
+        }
         fs::remove_all(repo, ec48);
     }
-
     printf(g_fail ? "test_git: %d FAILED\n" : "test_git: all passed (%d)\n", g_fail);
     return g_fail;
 }
