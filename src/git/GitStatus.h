@@ -39,4 +39,7 @@ void AggregateDirs(StateMap& m, const std::wstring& root);
 // Trims a `rev-parse --abbrev-ref HEAD` stdout line.
 std::wstring ParseBranch(const std::string& out);
 
+// Win32 argv quoting (inverse of CommandLineToArgvW); embed in git arg lines.
+std::wstring QuoteArg(const std::wstring& arg);
+
 } // namespace xfs::git

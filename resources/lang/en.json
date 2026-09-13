@@ -658,6 +658,11 @@
   "fe.delete.fail": "Delete failed.",
   "git.compare": "Compare with HEAD",
   "git.noblob": "Cannot fetch the committed version of this file (not committed yet?).",
+  "git.stage": "Stage",
+  "git.unstage": "Unstage",
+  "git.commit": "Commit…",
+  "git.commit.msg": "Commit message:",
+  "git.op.fail": "Operation failed:\n{0}",
 
   "term.copy": "Copy\tCtrl+C",
   "term.pasteinput": "Paste to Input\tCtrl+V",

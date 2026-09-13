@@ -142,6 +142,11 @@ private:
     void SyncGitUi();                 // explorer colors + title after a refresh
     void OnGitDone(GitSnapshot* snap);    // WM_APP_GIT_DONE
     void OnGitBlob(GitBlobResult* res);   // WM_APP_GIT_BLOB
+    // 批次 48：暂存/取消暂存/提交
+    void WireExplorerGit();               // set git callbacks on a fresh explorer
+    void GitStagePath(const std::wstring& absPath, bool unstage);
+    void GitCommitDialog();
+    void OnGitOp(GitOpResult* res);       // WM_APP_GIT_OP
     void SwitchTheme(const ThemeDef* t);
     void DoAutoSave();
     void CheckAutoSaveRecovery();

@@ -15,6 +15,7 @@ namespace xfs {
 
 constexpr UINT WM_APP_GIT_DONE = WM_APP + 79;  // lParam = GitSnapshot* (receiver deletes)
 constexpr UINT WM_APP_GIT_BLOB = WM_APP + 80;  // lParam = GitBlobResult* (receiver deletes)
+constexpr UINT WM_APP_GIT_OP   = WM_APP + 81;  // lParam = GitOpResult* (receiver deletes)
 
 struct GitSnapshot {
     bool ok = false;
@@ -29,6 +30,15 @@ struct GitBlobResult {
     std::string data;
     std::wstring absPath;    // working-tree file the blob was fetched for
     std::wstring tempPath;   // where the caller wants the blob written
+};
+
+enum class GitOpKind : int { Stage = 0, Unstage = 1, Commit = 2 };
+
+struct GitOpResult {
+    GitOpKind kind;
+    bool ok = false;
+    std::wstring arg;     // abs path (stage/unstage) or message (commit)
+    std::string output;   // captured stdout+stderr for diagnostics
 };
 
 class GitClient {
@@ -47,6 +57,13 @@ public:
     // Returns false when preconditions fail (no repo / another fetch busy).
     bool FetchHeadBlob(const std::wstring& absPath, const std::wstring& tempPath);
 
+    // Async file/folder ops on the working tree (path must be inside repo).
+    // `git add`/`git restore --staged` take a repo-relative path; commit takes
+    // a message. Returns false when preconditions fail (no repo / op busy).
+    bool Stage(const std::wstring& absPath);
+    bool Unstage(const std::wstring& absPath);
+    bool Commit(const std::wstring& message);
+
     void ClearNow();  // folder closed / non-repo: drop everything synchronously
 
     bool Available() const { return !disabled_; }
@@ -64,6 +81,7 @@ public:
 
 private:
     void StartThread(const std::wstring& root);
+    void StartOp(GitOpKind kind, const std::wstring& args, const std::wstring& arg);
 
     HWND main_ = nullptr;
     bool disabled_ = false;
@@ -72,6 +90,7 @@ private:
     std::wstring root_, branch_;
     std::shared_ptr<git::StateMap> states_;
     std::atomic<bool> blobBusy_{false};
+    std::shared_ptr<std::atomic<bool>> cmdBusy_ = std::make_shared<std::atomic<bool>>(false);
 };
 
 } // namespace xfs

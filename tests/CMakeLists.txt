@@ -477,11 +477,16 @@ endif()
 target_link_libraries(xfsbench PRIVATE shlwapi user32)
 
 # Git 集成 v1：porcelain 解析 + 仓库根发现（批次 46，纯逻辑无进程）
+# 批次 48 追加：QuoteArg 回环 + 真实仓库 add/restore/commit 链路（GitClient::Run）
 add_executable(test_git test_git.cpp
     ../src/git/GitStatus.cpp
-    ../src/core/Util.cpp)
+    ../src/git/GitClient.cpp
+    ../src/core/Util.cpp
+    ../src/core/Log.cpp)
+target_include_directories(test_git PRIVATE ../src)
 target_compile_definitions(test_git PRIVATE UNICODE _UNICODE NOMINMAX)
 if(MSVC)
     target_compile_options(test_git PRIVATE /utf-8 /W3)
 endif()
+target_link_libraries(test_git PRIVATE shell32)
 add_test(NAME git COMMAND test_git)

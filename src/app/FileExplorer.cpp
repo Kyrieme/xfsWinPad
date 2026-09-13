@@ -193,9 +193,31 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, 6, Tr(L"fe.rename"));
     ::AppendMenuW(menu, MF_STRING, 7, Tr(L"fe.delete"));
-    if (isFile && onGitCompare) {
-        ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        ::AppendMenuW(menu, MF_STRING, 9, Tr(L"git.compare"));
+    {
+        git::FileState gst{};
+        bool hasState = false;
+        if (gitStates_ && !path.empty()) {
+            std::wstring key = path;
+            for (auto& ch : key) ch = towlower(ch);
+            auto it = gitStates_->find(key);
+            if (it != gitStates_->end()) { gst = it->second; hasState = true; }
+        }
+        bool inRepo = gitStates_ && !gitStates_->empty();
+        bool any = inRepo && (isFile && onGitCompare && hasState) ||
+                   (onGitStage && hasState && gst != git::FileState::Added) ||
+                   (onGitUnstage && hasState && gst == git::FileState::Added) ||
+                   (inRepo && onGitCommit);
+        if (any) {
+            ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            if (isFile && onGitCompare && hasState)
+                ::AppendMenuW(menu, MF_STRING, 9, Tr(L"git.compare"));
+            if (onGitStage && hasState && gst != git::FileState::Added)
+                ::AppendMenuW(menu, MF_STRING, 10, Tr(L"git.stage"));
+            if (onGitUnstage && hasState && gst == git::FileState::Added)
+                ::AppendMenuW(menu, MF_STRING, 11, Tr(L"git.unstage"));
+            if (inRepo && onGitCommit)
+                ::AppendMenuW(menu, MF_STRING, 12, Tr(L"git.commit"));
+        }
     }
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING, 8, Tr(L"fe.refresh"));
@@ -234,6 +256,9 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 7: DeleteItem(sel); break;
         case 8: Refresh(); break;
         case 9: if (!path.empty() && onGitCompare) onGitCompare(path); break;
+        case 10: if (!path.empty() && onGitStage) onGitStage(path); break;
+        case 11: if (!path.empty() && onGitUnstage) onGitUnstage(path); break;
+        case 12: if (onGitCommit) onGitCommit(); break;
     }
 }
 

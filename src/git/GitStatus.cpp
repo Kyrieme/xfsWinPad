@@ -132,4 +132,22 @@ std::wstring ParseBranch(const std::string& out) {
     return s;
 }
 
+std::wstring QuoteArg(const std::wstring& arg) {
+    if (arg.empty()) return L"\"\"";
+    if (arg.find_first_of(L" \t\"") == std::wstring::npos && arg.back() != L'\\')
+        return arg;
+    std::wstring out = L"\"";
+    size_t backslashes = 0;
+    for (wchar_t c : arg) {
+        if (c == L'\\') { ++backslashes; continue; }
+        if (c == L'"') { out.append(backslashes * 2 + 1, L'\\'); out += L'"'; backslashes = 0; continue; }
+        out.append(backslashes, L'\\');
+        backslashes = 0;
+        out += c;
+    }
+    out.append(backslashes * 2, L'\\');
+    out += L'"';
+    return out;
+}
+
 } // namespace xfs::git
