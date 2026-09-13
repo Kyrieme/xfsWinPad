@@ -22,6 +22,7 @@ struct GitSnapshot {
     bool spawnFailed = false;   // git.exe could not be launched at all
     std::wstring root;
     std::wstring branch;
+    git::BranchTracking track;
     std::shared_ptr<git::StateMap> states;
 };
 
@@ -70,6 +71,9 @@ public:
     bool HasRoot() const { return !root_.empty(); }
     const std::wstring& Root() const { return root_; }
     const std::wstring& Branch() const { return branch_; }
+    int Ahead() const { return track_.ahead; }
+    int Behind() const { return track_.behind; }
+    bool UpstreamGone() const { return track_.gone; }
     std::shared_ptr<const git::StateMap> States() const { return states_; }
     // repo-relative slash path, or empty when absPath is outside the repo
     std::wstring RelOf(const std::wstring& absPath) const;
@@ -88,6 +92,7 @@ private:
     std::atomic<bool> inflight_{false};
     std::wstring pending_;        // main-thread-only coalesce slot
     std::wstring root_, branch_;
+    git::BranchTracking track_;
     std::shared_ptr<git::StateMap> states_;
     std::atomic<bool> blobBusy_{false};
     std::shared_ptr<std::atomic<bool>> cmdBusy_ = std::make_shared<std::atomic<bool>>(false);

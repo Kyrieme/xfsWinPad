@@ -87,6 +87,46 @@ StateMap ParseStatusPorcelainZ(const std::string& out, const std::wstring& root)
     return map;
 }
 
+static int IntAfter(const std::string& s, const std::string& key) {
+    size_t k = s.find(key);
+    if (k == std::string::npos) return 0;
+    k += key.size();
+    while (k < s.size() && (s[k] == ' ')) ++k;
+    int v = 0; bool any = false;
+    while (k < s.size() && s[k] >= '0' && s[k] <= '9') {
+        v = v * 10 + (s[k] - '0'); ++k; any = true;
+    }
+    return any ? v : 0;
+}
+
+BranchTracking ParseTracking(const std::string& out) {
+    BranchTracking t;
+    size_t start = 0;
+    while (start < out.size()) {
+        size_t z = out.find('\0', start);
+        if (z == std::string::npos) z = out.size();
+        std::string tok = out.substr(start, z - start);
+        start = z + 1;
+        if (tok.size() < 3 || tok[0] != '#' || tok[1] != '#' || tok[2] != ' ')
+            continue;
+        std::string body = tok.substr(3);            // after "## "
+        size_t lb = body.find('[');
+        std::string ref = lb == std::string::npos ? body : body.substr(0, lb);
+        while (!ref.empty() && ref.back() == L' ') ref.pop_back();
+        t.detached = ref.find("no branch") != std::string::npos;
+        t.hasUpstream = ref.find("...") != std::string::npos;
+        if (lb == std::string::npos) return t;
+        std::string br = body.substr(lb + 1);
+        size_t rb = br.find(']');
+        if (rb != std::string::npos) br = br.substr(0, rb);
+        t.gone = br.find("gone") != std::string::npos;
+        t.ahead = IntAfter(br, "ahead");
+        t.behind = IntAfter(br, "behind");
+        return t;
+    }
+    return t;
+}
+
 static int ColorRank(FileState s) {
     switch (s) {
         case FileState::Conflict:

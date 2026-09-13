@@ -1453,7 +1453,13 @@ void MainWindow::MoveSplitter(int xAbs) {
 
 void MainWindow::UpdateTitleBar() {
     std::wstring gitSuffix;
-    if (!git_.Branch().empty()) gitSuffix = L" [" + git_.Branch() + L"]";
+    if (!git_.Branch().empty()) {
+        gitSuffix = L" [" + git_.Branch();
+        if (git_.Ahead()) gitSuffix += L" \u2191" + std::to_wstring(git_.Ahead());
+        if (git_.Behind()) gitSuffix += L" \u2193" + std::to_wstring(git_.Behind());
+        if (git_.UpstreamGone()) gitSuffix += L" \u2298";  // upstream deleted
+        gitSuffix += L"]";
+    }
     Document* d = workspace_->Active();
     if (!d) { SetWindowTextW(hwnd_, (L"xfsWinPad" + gitSuffix).c_str()); return; }
     std::wstring title;
