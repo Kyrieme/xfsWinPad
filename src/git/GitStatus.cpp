@@ -87,6 +87,44 @@ StateMap ParseStatusPorcelainZ(const std::string& out, const std::wstring& root)
     return map;
 }
 
+static int ColorRank(FileState s) {
+    switch (s) {
+        case FileState::Conflict:
+        case FileState::Deleted:    return 2;  // red
+        case FileState::Modified:
+        case FileState::Renamed:    return 1;  // orange
+        default:                    return 0;  // green
+    }
+}
+
+void AggregateDirs(StateMap& m, const std::wstring& root) {
+    if (root.empty()) return;
+    std::wstring rootLower = LowerAbs(root);
+    std::map<std::wstring, FileState> dirBest;
+    std::vector<std::pair<std::wstring, FileState>> items(m.begin(), m.end());
+    for (auto& [path, st] : items) {
+        std::wstring cur = path;
+        for (;;) {
+            size_t k = cur.find_last_of(L'\\');
+            if (k == std::wstring::npos || k <= 2) break;
+            cur = cur.substr(0, k);
+            if (cur.size() < rootLower.size() ||
+                cur.compare(0, rootLower.size(), rootLower) != 0 ||
+                (cur.size() > rootLower.size() && cur[rootLower.size()] != L'\\'))
+                break;
+            auto it = dirBest.find(cur);
+            if (it == dirBest.end()) dirBest.emplace(cur, st);
+            else if (ColorRank(st) > ColorRank(it->second)) it->second = st;
+            if (cur == rootLower) break;
+        }
+    }
+    for (auto& [path, st] : dirBest) {
+        auto it = m.find(path);
+        if (it == m.end()) m.emplace(path, st);
+        else if (ColorRank(st) > ColorRank(it->second)) it->second = st;
+    }
+}
+
 std::wstring ParseBranch(const std::string& out) {
     std::wstring s = Utf8ToWide(out);
     while (!s.empty() && (s.back() == L'\r' || s.back() == L'\n' || s.back() == L' '))
