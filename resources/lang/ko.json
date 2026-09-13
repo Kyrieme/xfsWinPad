@@ -663,6 +663,9 @@
   "git.commit": "커밋…",
   "git.commit.msg": "커밋 메시지:",
   "git.op.fail": "작업 실패:\n{0}",
+  "git.branch": "브랜치 전환…",
+  "git.branch.pick": "전환할 브랜치를 선택하세요:",
+  "git.checkout.dirty": "커밋하지 않은 변경이 있어 전환 대상과 충돌할 수 있습니다. 계속 전환하시겠습니까?",
 
   "term.copy": "복사\tCtrl+C",
   "term.pasteinput": "입력 줄에 붙여넣기\tCtrl+V",

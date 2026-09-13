@@ -3,6 +3,7 @@
 #include "StatusBar.h"
 #include "FindDialog.h"
 #include "InputBox.h"
+#include "ListPicker.h"
 #include "ResultsPanel.h"
 #include "WindowsListDialog.h"
 #include "../core/CommandIds.h"
@@ -3966,6 +3967,10 @@ void MainWindow::WireExplorerGit() {
     explorer_->onGitCommit = [this]() {
         GitCommitDialog();
     };
+    explorer_->onGitBranch = [this]() {
+        if (!git_.ListBranches())
+            Logger::Warn("git: branch list could not start");
+    };
 }
 
 void MainWindow::GitStagePath(const std::wstring& absPath, bool unstage) {
@@ -3992,9 +3997,45 @@ void MainWindow::GitCommitDialog() {
 void MainWindow::OnGitOp(GitOpResult* res) {
     if (!res) return;
     std::unique_ptr<GitOpResult> guard(res);
+    if (res->kind == GitOpKind::ListBranches && res->ok) {
+        auto branches = git::ParseBranchList(res->output);
+        if (branches.empty()) {
+            Logger::Warn("git: branch list empty");
+            return;
+        }
+        std::vector<std::wstring> names;
+        int cur = -1;
+        for (size_t i = 0; i < branches.size(); ++i) {
+            names.push_back(branches[i].name);
+            if (branches[i].current) cur = (int)i;
+        }
+        int sel = -1;
+        if (!ListPicker(hwnd_, inst_, Tr(L"git.branch"), Tr(L"git.branch.pick"),
+                        names, cur, sel))
+            return;
+        const std::wstring& target = names[sel];
+        bool dirty = false;
+        if (auto st = git_.States())
+            for (auto& [path, state] : *st)
+                if (state != git::FileState::Untracked) { dirty = true; break; }
+        if (dirty) {
+            int r = MessageBoxW(hwnd_, Tr(L"git.checkout.dirty"), L"xfsWinPad",
+                                MB_OKCANCEL | MB_ICONWARNING);
+            if (r != IDOK) {
+                Logger::Info("git: checkout cancelled (dirty) " + WideToUtf8(target));
+                return;
+            }
+        }
+        if (!git_.Checkout(target))
+            Logger::Warn("git: checkout could not start");
+        return;
+    }
     const wchar_t* name =
         res->kind == GitOpKind::Commit ? Tr(L"git.commit") :
-        res->kind == GitOpKind::Unstage ? Tr(L"git.unstage") : Tr(L"git.stage");
+        res->kind == GitOpKind::Unstage ? Tr(L"git.unstage") :
+        res->kind == GitOpKind::Checkout ? Tr(L"git.branch") :
+        res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
+        Tr(L"git.stage");
     if (!res->ok) {
         std::wstring text = I18n::Instance().Fmt(Tr(L"git.op.fail"),
                                                  {Utf8ToWide(res->output)});

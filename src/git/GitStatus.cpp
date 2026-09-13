@@ -127,6 +127,24 @@ BranchTracking ParseTracking(const std::string& out) {
     return t;
 }
 
+std::vector<BranchEntry> ParseBranchList(const std::string& out) {
+    std::vector<BranchEntry> list;
+    size_t pos = 0;
+    while (pos < out.size()) {
+        size_t nl = out.find('\n', pos);
+        if (nl == std::string::npos) nl = out.size();
+        std::string line = out.substr(pos, nl - pos);
+        pos = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.size() < 2) continue;
+        BranchEntry e;
+        e.current = line[0] == '*';
+        e.name = Utf8ToWide(line.substr(1));
+        if (!e.name.empty()) list.push_back(std::move(e));
+    }
+    return list;
+}
+
 static int ColorRank(FileState s) {
     switch (s) {
         case FileState::Conflict:

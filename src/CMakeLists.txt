@@ -9,6 +9,8 @@ set(XFS_APP_SOURCES
     app/CommandPalette.cpp
     app/FileExplorer.cpp
     app/InputBox.cpp
+    app/ListPicker.cpp
+    app/ListPicker.cpp
     app/PreferencesDialog.cpp
     app/StyleConfiguratorDialog.cpp
     app/ShortcutMapperDialog.cpp

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace xfs::git {
 
@@ -46,6 +47,14 @@ struct BranchTracking {
     int behind = 0;          // upstream commits not pulled
 };
 BranchTracking ParseTracking(const std::string& out);
+
+// Parses `for-each-ref --format=%(HEAD)%(refname:short) refs/heads` stdout:
+// one line per branch, first char '*' (current) or ' ', UTF-8 name after.
+struct BranchEntry {
+    std::wstring name;
+    bool current = false;
+};
+std::vector<BranchEntry> ParseBranchList(const std::string& out);
 
 // Trims a `rev-parse --abbrev-ref HEAD` stdout line.
 std::wstring ParseBranch(const std::string& out);
