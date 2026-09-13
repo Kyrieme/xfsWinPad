@@ -52,6 +52,38 @@ int main() {
     CHECK(m.count(L"c:\\repo\\type.txt") == 0);                // 'T' ignored
     CHECK(m[L"c:\\repo\\\u4E2D.txt"] == FileState::Untracked);
 
+    // --- AggregateDirs ----------------------------------------------------------
+    AggregateDirs(m, L"C:\\Repo");  // mixed-case root must be tolerated
+    CHECK(m.size() == 11);                                        // +src +repo
+    CHECK(m[L"c:\\repo\\src"] == FileState::Modified);
+    CHECK(m[L"c:\\repo"] == FileState::Conflict);                 // red wins all
+    CHECK(m[L"c:\\repo\\docs"] == FileState::Untracked);          // untouched
+    CHECK(m.count(L"c:") == 0 && m.count(L"c:\\") == 0);          // stays in repo
+
+    StateMap m2;
+    m2[L"c:\\repo\\p\\a.txt"] = FileState::Added;
+    m2[L"c:\\repo\\p\\b.txt"] = FileState::Modified;
+    m2[L"c:\\repo\\p"] = FileState::Untracked;   // explicit dir entry loses
+    m2[L"c:\\repo\\q\\deep\\x.txt"] = FileState::Conflict;
+    AggregateDirs(m2, L"c:\\repo");
+    CHECK(m2[L"c:\\repo\\p"] == FileState::Modified);
+    CHECK(m2[L"c:\\repo\\q\\deep"] == FileState::Conflict);
+    CHECK(m2[L"c:\\repo\\q"] == FileState::Conflict);
+    CHECK(m2[L"c:\\repo"] == FileState::Conflict);
+    CHECK(m2.size() == 7);
+
+    StateMap m3;
+    m3[L"c:\\repo\\solo.txt"] = FileState::Deleted;
+    m3[L"c:\\repoX\\s.txt"] = FileState::Untracked;  // sibling-prefix dir
+    AggregateDirs(m3, L"c:\\repo");
+    CHECK(m3.size() == 3);                            // +c:\repo only
+    CHECK(m3.count(L"c:\\repoX") == 0);
+    CHECK(m3[L"c:\\repo"] == FileState::Deleted);
+    AggregateDirs(m3, L"c:\\other");            // unrelated root: propagate none
+    AggregateDirs(m3, L"");                     // empty root: no-op
+    CHECK(m3.size() == 3);
+    CHECK(m3.count(L"c:\\other") == 0);
+
     // --- FindRepoRoot (real temp tree) ------------------------------------------
     fs::path tmp = fs::temp_directory_path() / "xfsGitTest46";
     std::error_code ec;

@@ -81,6 +81,7 @@ void GitClient::StartThread(const std::wstring& root) {
             snap->branch = git::ParseBranch(branchOut);
             snap->states = std::make_shared<git::StateMap>(
                 git::ParseStatusPorcelainZ(statusOut, root));
+            git::AggregateDirs(*snap->states, root);
         } else {
             snap->states = std::make_shared<git::StateMap>();
         }
