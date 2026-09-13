@@ -2,6 +2,7 @@
 #include "version.h"
 #include "StatusBar.h"
 #include "FindDialog.h"
+#include "InputBox.h"
 #include "ResultsPanel.h"
 #include "WindowsListDialog.h"
 #include "../core/CommandIds.h"
@@ -2112,9 +2113,7 @@ void MainWindow::SetProjectRoot(const std::wstring& dir, bool persist) {
         explorer_->onOpenFile = [this](const std::wstring& path) {
             OpenUserFile(path);
         };
-        explorer_->onGitCompare = [this](const std::wstring& path) {
-            GitCompareWithHead(path);
-        };
+        WireExplorerGit();
     }
     explorer_->SetRoot(dir);
     git_.RequestForPath(dir);
@@ -2153,9 +2152,7 @@ void MainWindow::ToggleExplorer() {
         explorer_->onOpenFile = [this](const std::wstring& path) {
             OpenUserFile(path);
         };
-        explorer_->onGitCompare = [this](const std::wstring& path) {
-            GitCompareWithHead(path);
-        };
+        WireExplorerGit();
     }
     bool show = !explorer_->Visible();
     if (show && explorer_->Root().empty()) {
@@ -3949,6 +3946,60 @@ void MainWindow::OnGitBlob(GitBlobResult* res) {
     else Logger::Warn("git: compare HEAD skipped (document not found)");
 }
 
+void MainWindow::WireExplorerGit() {
+    if (!explorer_) return;
+    explorer_->onGitCompare = [this](const std::wstring& path) {
+        GitCompareWithHead(path);
+    };
+    explorer_->onGitStage = [this](const std::wstring& path) {
+        GitStagePath(path, false);
+    };
+    explorer_->onGitUnstage = [this](const std::wstring& path) {
+        GitStagePath(path, true);
+    };
+    explorer_->onGitCommit = [this]() {
+        GitCommitDialog();
+    };
+}
+
+void MainWindow::GitStagePath(const std::wstring& absPath, bool unstage) {
+    if (!git_.HasRoot()) return;
+    if (unstage) git_.Unstage(absPath);
+    else git_.Stage(absPath);
+}
+
+void MainWindow::GitCommitDialog() {
+    if (!git_.HasRoot()) return;
+    std::wstring msg;
+    if (!InputBox(hwnd_, inst_, Tr(L"git.commit"), Tr(L"git.commit.msg"), msg, true))
+        return;
+    std::replace(msg.begin(), msg.end(), L'\r', L'\n');
+    while (!msg.empty() && msg.back() == L'\n') msg.pop_back();
+    if (msg.empty()) {
+        Logger::Info("git: commit cancelled (empty message)");
+        return;
+    }
+    if (!git_.Commit(msg))
+        Logger::Warn("git: commit could not start");
+}
+
+void MainWindow::OnGitOp(GitOpResult* res) {
+    if (!res) return;
+    std::unique_ptr<GitOpResult> guard(res);
+    const wchar_t* name =
+        res->kind == GitOpKind::Commit ? Tr(L"git.commit") :
+        res->kind == GitOpKind::Unstage ? Tr(L"git.unstage") : Tr(L"git.stage");
+    if (!res->ok) {
+        std::wstring text = I18n::Instance().Fmt(Tr(L"git.op.fail"),
+                                                 {Utf8ToWide(res->output)});
+        MessageBoxW(hwnd_, (std::wstring(name) + L"\n" + text).c_str(),
+                    L"xfsWinPad", MB_OK | MB_ICONWARNING);
+    } else {
+        Logger::Info("git: op ok (kind=" + std::to_string((int)res->kind) + ")");
+    }
+    git_.RequestForPath(git_.Root());   // refresh status colors + branch
+}
+
 void MainWindow::SwitchTheme(const ThemeDef* t) {
     if (!t || t == theme_) return;
     theme_ = t;
@@ -4581,6 +4632,10 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_APP_GIT_BLOB:
             OnGitBlob((GitBlobResult*)lp);
+            return 0;
+
+        case WM_APP_GIT_OP:
+            OnGitOp((GitOpResult*)lp);
             return 0;
 
         case WM_TIMER: {

@@ -6,10 +6,12 @@
 
 namespace xfs {
 
-// Modal single-line text input.
+// Modal single-line text input; multiline=true gives a wrapping scrollable
+// edit (Enter inserts a line break; OK button accepts).
 //   value - in: initial text; out: entered text on OK.
 // Returns true if OK pressed, false if cancelled / failed.
 bool InputBox(HWND parent, HINSTANCE hInst, const std::wstring& title,
-              const std::wstring& label, std::wstring& value);
+              const std::wstring& label, std::wstring& value,
+              bool multiline = false);
 
 } // namespace xfs

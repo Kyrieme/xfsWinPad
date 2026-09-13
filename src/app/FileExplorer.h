@@ -32,6 +32,10 @@ public:
     std::function<void(const std::wstring& path)> onOpenFile;
     // "compare with HEAD" request (git repo files only; unset hides the item)
     std::function<void(const std::wstring& path)> onGitCompare;
+    // git stage/unstage (item must carry a git state); commit opens dialog
+    std::function<void(const std::wstring& path)> onGitStage;
+    std::function<void(const std::wstring& path)> onGitUnstage;
+    std::function<void()> onGitCommit;
 
     // git working-set coloring: lowercase abs path -> state (shared snapshot)
     void SetGitStates(std::shared_ptr<const git::StateMap> states) {

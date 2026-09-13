@@ -658,6 +658,11 @@
   "fe.delete.fail": "删除失败。",
   "git.compare": "与上次提交（HEAD）比较",
   "git.noblob": "无法获取该文件的上次提交内容（可能尚未提交）。",
+  "git.stage": "暂存",
+  "git.unstage": "取消暂存",
+  "git.commit": "提交…",
+  "git.commit.msg": "提交信息：",
+  "git.op.fail": "操作失败：\n{0}",
 
   "term.copy": "复制\tCtrl+C",
   "term.pasteinput": "粘贴到输入行\tCtrl+V",

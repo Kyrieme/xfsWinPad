@@ -62,7 +62,7 @@ int TextWidth(HFONT font, const std::wstring& s) {
 } // namespace
 
 bool InputBox(HWND parent, HINSTANCE hInst, const std::wstring& title,
-              const std::wstring& label, std::wstring& value) {
+              const std::wstring& label, std::wstring& value, bool multiline) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = InputProc;
@@ -91,7 +91,8 @@ bool InputBox(HWND parent, HINSTANCE hInst, const std::wstring& title,
     int contentW = TextWidth(font, label) + u(24);
     if (contentW < u(300)) contentW = u(300);
     if (contentW > u(520)) contentW = u(520);
-    RECT rc{0, 0, contentW, u(108)};
+    int contentH = multiline ? u(180) : u(108);
+    RECT rc{0, 0, contentW, contentH};
     ::AdjustWindowRectEx(&rc, gstyle, FALSE, WS_EX_DLGMODALFRAME);
     int x = wr.left + ((wr.right - wr.left) - (rc.right - rc.left)) / 2;
     int y = wr.top + u(90);
@@ -106,17 +107,22 @@ bool InputBox(HWND parent, HINSTANCE hInst, const std::wstring& title,
         WS_CHILD | WS_VISIBLE, u(12), u(14), innerW, u(16),
         dlg, (HMENU)(UINT_PTR)3002, hInst, nullptr);
     ::SendMessageW(lbl, WM_SETFONT, (WPARAM)font, TRUE);
+    DWORD estyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | (multiline
+        ? (ES_MULTILINE | ES_WANTRETURN | WS_VSCROLL)
+        : (ES_AUTOHSCROLL | ES_LEFT));
+    int editH = multiline ? u(94) : u(22);
     HWND edit = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | (ES_AUTOHSCROLL | ES_LEFT),
-        u(12), u(34), innerW, u(22), dlg, (HMENU)(UINT_PTR)IDC_INPUT_EDIT, hInst, nullptr);
+        estyle,
+        u(12), u(34), innerW, editH, dlg, (HMENU)(UINT_PTR)IDC_INPUT_EDIT, hInst, nullptr);
     ::SendMessageW(edit, WM_SETFONT, (WPARAM)font, TRUE);
+    int btnY = multiline ? u(136) : u(66);
     struct Bt { const wchar_t* t; WORD id; int x; };
     const Bt bs[] = {{Tr(L"input.ok"), IDOK, contentW - u(150)},
                      {Tr(L"input.cancel"), IDCANCEL, contentW - u(80)}};
     for (const Bt& b : bs) {
         HWND bb = ::CreateWindowExW(0, L"BUTTON", b.t,
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
-            b.x, u(66), u(66), u(24), dlg, (HMENU)(UINT_PTR)b.id, hInst, nullptr);
+            b.x, btnY, u(66), u(24), dlg, (HMENU)(UINT_PTR)b.id, hInst, nullptr);
         ::SendMessageW(bb, WM_SETFONT, (WPARAM)font, TRUE);
     }
     ::SetWindowTextW(edit, st.initial.c_str());

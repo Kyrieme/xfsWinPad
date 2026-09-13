@@ -1,11 +1,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "../src/git/GitStatus.h"
+#include "../src/git/GitClient.h"
+#include "../src/core/Util.h"
 
 namespace fs = std::filesystem;
 using namespace xfs::git;
@@ -84,6 +88,27 @@ int main() {
     CHECK(m3.size() == 3);
     CHECK(m3.count(L"c:\\other") == 0);
 
+    // --- QuoteArg (batch 48) ---------------------------------------------------
+    CHECK(QuoteArg(L"plain.txt") == L"plain.txt");
+    CHECK(QuoteArg(L"") == L"\"\"");
+    CHECK(QuoteArg(L"two words") == L"\"two words\"");
+    CHECK(QuoteArg(L"a\"b") == L"\"a\\\"b\"");
+    CHECK(QuoteArg(L"end\\") == L"\"end\\\\\"");
+    CHECK(QuoteArg(L"x\\\"y") == L"\"x\\\\\\\"y\"");
+    {   // round-trip through the real CommandLineToArgvW parser
+        const wchar_t* raw[] = {L"a b", L"c\"d", L"e\\", L"f g\\h", L"\\i j"};
+        std::wstring line;
+        for (const wchar_t* r : raw) line += QuoteArg(r) + L' ';
+        int argc = 0;
+        LPWSTR* argv = ::CommandLineToArgvW(line.c_str(), &argc);
+        CHECK(argv != nullptr && argc == 5);
+        if (argv) {
+            for (int i = 0; i < argc && i < 5; ++i)
+                CHECK(std::wstring(argv[i]) == std::wstring(raw[i]));
+            ::LocalFree(argv);
+        }
+    }
+
     // --- FindRepoRoot (real temp tree) ------------------------------------------
     fs::path tmp = fs::temp_directory_path() / "xfsGitTest46";
     std::error_code ec;
@@ -98,6 +123,57 @@ int main() {
     fs::create_directories(bare);
     CHECK(FindRepoRoot((bare / "x.txt").wstring(), tmp.wstring()).empty());
     fs::remove_all(tmp, ec);
+
+    // --- real repo stage/commit chain (batch 48; skips when git.exe missing) ---
+    std::string ver;
+    bool noGit = false;
+    xfs::GitClient::Run(L"", L"--version", ver, &noGit);
+    if (noGit) {
+        printf("note: git.exe unavailable, skipped repo-chain checks\n");
+    } else {
+        fs::path repo = fs::temp_directory_path() / "xfsGitTest48";
+        std::error_code ec48;
+        fs::remove_all(repo, ec48);
+        fs::create_directories(repo);
+        auto git = [&](const std::wstring& args) {
+            std::string o;
+            bool sf = false;
+            bool r = xfs::GitClient::Run(repo.wstring(), args, o, &sf);
+            return !sf && r;
+        };
+        const wchar_t* id = L"-c user.email=t@t -c user.name=t ";
+        CHECK(git(L"init -q"));
+        { std::ofstream(repo / "seed.txt") << "seed\n"; }
+        CHECK(git(L"add -- seed.txt"));
+        CHECK(git(std::wstring(id) + L"commit -qm seed"));
+        { std::ofstream(repo / "w e.txt") << "hello\n"; }
+        CHECK(git(L"add -- " + QuoteArg(L"w e.txt")));
+        {   // Added now in the index
+            std::string so;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"status --porcelain=v1 -z", so));
+            StateMap sm = ParseStatusPorcelainZ(so, repo.wstring());
+            CHECK(sm[ToAbsPath(repo.wstring(), "w e.txt")] == FileState::Added);
+        }
+        CHECK(git(L"restore --staged -- " + QuoteArg(L"w e.txt")));
+        {   // back to untracked
+            std::string so;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"status --porcelain=v1 -z", so));
+            StateMap sm = ParseStatusPorcelainZ(so, repo.wstring());
+            CHECK(sm[ToAbsPath(repo.wstring(), "w e.txt")] == FileState::Untracked);
+        }
+        CHECK(git(L"add -- " + QuoteArg(L"w e.txt")));
+        CHECK(git(std::wstring(id) + L"commit -m " +
+                  QuoteArg(L"two words \"q\" end\\")));
+        {   // commit landed: status clean, subject round-tripped
+            std::string so;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"status --porcelain=v1 -z", so));
+            CHECK(ParseStatusPorcelainZ(so, repo.wstring()).empty());
+            std::string lo;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"log -1 --pretty=%s", lo));
+            CHECK(xfs::Utf8ToWide(lo).find(L"two words \"q\" end\\") != std::wstring::npos);
+        }
+        fs::remove_all(repo, ec48);
+    }
 
     printf(g_fail ? "test_git: %d FAILED\n" : "test_git: all passed (%d)\n", g_fail);
     return g_fail;

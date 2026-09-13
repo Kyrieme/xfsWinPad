@@ -658,6 +658,11 @@
   "fe.delete.fail": "削除に失敗しました。",
   "git.compare": "直前のコミット（HEAD）と比較",
   "git.noblob": "このファイルのコミット済み内容を取得できません（まだコミットされていない可能性）。",
+  "git.stage": "変更をステージ",
+  "git.unstage": "ステージを取り消し",
+  "git.commit": "コミット…",
+  "git.commit.msg": "コミットメッセージ：",
+  "git.op.fail": "操作に失敗しました:\n{0}",
 
   "term.copy": "コピー\tCtrl+C",
   "term.pasteinput": "入力行へ貼り付け\tCtrl+V",

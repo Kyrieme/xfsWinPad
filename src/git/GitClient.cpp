@@ -161,6 +161,48 @@ bool GitClient::FetchHeadBlob(const std::wstring& absPath,
     return true;
 }
 
+void GitClient::StartOp(GitOpKind kind, const std::wstring& args,
+                        const std::wstring& arg) {
+    HWND main = main_;
+    std::wstring root = root_;
+    auto busy = cmdBusy_;
+    std::thread([main, root, kind, args, arg, busy]() {
+        auto* res = new GitOpResult;
+        res->kind = kind;
+        res->arg = arg;
+        res->ok = GitClient::Run(root, args, res->output);
+        *busy = false;
+        if (main) ::PostMessageW(main, WM_APP_GIT_OP, 0, (LPARAM)res);
+        else delete res;
+    }).detach();
+}
+
+bool GitClient::Stage(const std::wstring& absPath) {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    std::wstring rel = RelOf(absPath);
+    if (rel.empty()) { *cmdBusy_ = false; return false; }
+    StartOp(GitOpKind::Stage, L"add -- " + git::QuoteArg(rel), absPath);
+    Logger::Info("git: stage " + WideToUtf8(rel));
+    return true;
+}
+
+bool GitClient::Unstage(const std::wstring& absPath) {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    std::wstring rel = RelOf(absPath);
+    if (rel.empty()) { *cmdBusy_ = false; return false; }
+    StartOp(GitOpKind::Unstage, L"restore --staged -- " + git::QuoteArg(rel), absPath);
+    Logger::Info("git: unstage " + WideToUtf8(rel));
+    return true;
+}
+
+bool GitClient::Commit(const std::wstring& message) {
+    if (!HasRoot() || disabled_ || message.empty() || cmdBusy_->exchange(true))
+        return false;
+    StartOp(GitOpKind::Commit, L"commit -m " + git::QuoteArg(message), message);
+    Logger::Info("git: commit started");
+    return true;
+}
+
 std::wstring GitClient::RelOf(const std::wstring& absPath) const {
     if (root_.empty()) return std::wstring();
     std::wstring r = root_;
