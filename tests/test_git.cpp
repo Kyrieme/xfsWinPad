@@ -571,6 +571,56 @@ int main() {
                 CHECK(xfs::GitClient::Run(repo.wstring(), L"branch -a", ba));
                 CHECK(ba.find("or52/new59") != std::string::npos);
             }
+            {   // batch 60: multi-remote clash -> DWIM fails, --track resolves
+                std::string o60;
+                fs::path bare3 = fs::temp_directory_path() / "xfsGitTest60b";
+                fs::remove_all(bare3, ec52);
+                fs::create_directories(bare3);
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    L"init -q --bare " + QuoteArg(bare3.wstring()), o60));
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(), std::wstring(id) + L"checkout -qb amb60",
+                    o60));
+                { std::ofstream(repo / "amb60.txt") << "a60\n"; }
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"add -- amb60.txt", o60));
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"commit -qm amb60", o60));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"push -q or52 amb60", o60));
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(), L"remote add or60 " + QuoteArg(bare3.wstring()),
+                    o60));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"push -q or60 amb60", o60));
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"checkout -q " + QuoteArg(head2), o60));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -D amb60", o60));
+                std::string dw;
+                CHECK(!xfs::GitClient::Run(repo.wstring(),
+                                           L"checkout amb60", dw));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"checkout --track or60/amb60", o60));
+                std::string cur60, up60;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --show-current", cur60));
+                CHECK(cur60.find("amb60") != std::string::npos);
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"rev-parse --abbrev-ref "
+                                          L"amb60@{upstream}", up60));
+                CHECK(up60.find("or60/amb60") != std::string::npos);
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"checkout -q " + QuoteArg(head2), o60));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -D amb60", o60));
+                fs::remove_all(bare3, ec52);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }
