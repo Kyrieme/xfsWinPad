@@ -79,26 +79,56 @@ int main() {
     }
     CHECK(ParseTracking("").hasUpstream == false);
 
-    // --- ParseBranchList (batch 50) --------------------------------------------
+    // --- ParseBranchList (batch 50/51) ------------------------------------------
     {
-        auto l = ParseBranchList("*main\r\n dev\r\n");
-        CHECK(l.size() == 2 && l[0].current && l[0].name == L"main" &&
-              !l[1].current && l[1].name == L"dev");
+        auto l = ParseBranchList(
+            "*refs/heads/main\r\n refs/remotes/origin/HEAD\n"
+            " refs/remotes/origin/main\n");
+        CHECK(l.size() == 2 && l[0].current && l[0].name == L"main" && !l[0].remote &&
+              !l[1].current && l[1].remote && l[1].name == L"origin/main");
     }
     {
-        auto l = ParseBranchList(" feat/one-line-no-star\n");
-        CHECK(l.size() == 1 && !l[0].current && l[0].name == L"feat/one-line-no-star");
+        auto l = ParseBranchList(" refs/heads/feat/one-line-no-star\n");
+        CHECK(l.size() == 1 && !l[0].current && !l[0].remote &&
+              l[0].name == L"feat/one-line-no-star");
     }
     {
-        auto l = ParseBranchList("*\xe4\xb8\xad\xe6\x96\x87\n");
+        auto l = ParseBranchList("*refs/heads/\xe4\xb8\xad\xe6\x96\x87\n");
         CHECK(l.size() == 1 && l[0].current && l[0].name == L"\u4e2d\u6587");
     }
     CHECK(ParseBranchList("").empty());
-    CHECK(ParseBranchList("\n \n").empty());      // degenerate/empty names
+    CHECK(ParseBranchList("\n \n").empty());          // degenerate/empty names
+    CHECK(ParseBranchList(" refs/tags/v1\n").empty());  // unknown namespace
     {
-        auto l = ParseBranchList("*no-trailing-newline");
+        auto l = ParseBranchList("*refs/heads/no-trailing-newline");
         CHECK(l.size() == 1 && l[0].name == L"no-trailing-newline");
     }
+
+    // --- BranchNameOk (batch 51) --------------------------------------------------
+    CHECK(BranchNameOk(L"main"));
+    CHECK(BranchNameOk(L"feat/x"));
+    CHECK(BranchNameOk(L"v1.2.3"));
+    CHECK(BranchNameOk(L"\u4e2d\u6587"));
+    CHECK(BranchNameOk(L"foo-bar"));
+    CHECK(BranchNameOk(L"1234"));
+    CHECK(!BranchNameOk(L""));
+    CHECK(!BranchNameOk(L"a b"));
+    CHECK(!BranchNameOk(L"a\tb"));
+    CHECK(!BranchNameOk(L"a..b"));
+    CHECK(!BranchNameOk(L"a//b"));
+    CHECK(!BranchNameOk(L"/lead"));
+    CHECK(!BranchNameOk(L"trail/"));
+    CHECK(!BranchNameOk(L"trail."));
+    CHECK(!BranchNameOk(L"-lead"));
+    CHECK(!BranchNameOk(L"x.lock"));
+    CHECK(!BranchNameOk(L"a~b"));
+    CHECK(!BranchNameOk(L"a^b"));
+    CHECK(!BranchNameOk(L"a:b"));
+    CHECK(!BranchNameOk(L"a?b"));
+    CHECK(!BranchNameOk(L"a*b"));
+    CHECK(!BranchNameOk(L"a[b"));
+    CHECK(!BranchNameOk(L"a\\b"));
+    CHECK(!BranchNameOk(L"a@{b"));
 
 
     // --- ToAbsPath -----------------------------------------------------------
@@ -257,8 +287,8 @@ int main() {
             std::string lo;
             CHECK(xfs::GitClient::Run(repo.wstring(),
                                        L"for-each-ref --format=" +
-                                           QuoteArg(L"%(HEAD)%(refname:short)") +
-                                           L" refs/heads", lo));
+                                           QuoteArg(L"%(HEAD)%(refname)") +
+                                           L" refs/heads refs/remotes", lo));
             auto list = ParseBranchList(lo);
             CHECK(list.size() == 2);
             int curIdx = -1, featIdx = -1;
@@ -276,6 +306,38 @@ int main() {
             std::string bo3;
             CHECK(xfs::GitClient::Run(repo.wstring(), L"rev-parse --abbrev-ref HEAD", bo3));
             CHECK(ParseBranch(bo3) == head);
+
+            // batch 51: remote branch list + DWIM tracking checkout
+            fs::path bare = fs::temp_directory_path() / "xfsGitTest51origin";
+            std::error_code ec51;
+            fs::remove_all(bare, ec51);
+            fs::create_directories(bare);
+            CHECK(git(L"init -q --bare " + QuoteArg(bare.wstring())));
+            CHECK(git(L"remote add origin " + QuoteArg(bare.wstring())));
+            CHECK(git(L"push -q origin " + QuoteArg(head)));
+            CHECK(git(L"branch feat51r"));
+            CHECK(git(L"push -q origin feat51r"));
+            CHECK(git(L"branch -D feat51r"));   // drop local; remote-tracking stays
+            {   // list now has 1 current local + remote entries
+                std::string ro;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                        L"for-each-ref --format=" + QuoteArg(L"%(HEAD)%(refname)") +
+                        L" refs/heads refs/remotes", ro));
+                auto rl = ParseBranchList(ro);
+                bool sawLocal = false, sawRemote = false;
+                for (auto& be : rl) {
+                    if (!be.remote && be.current && be.name == head) sawLocal = true;
+                    if (be.remote && be.name == L"origin/feat51r") sawRemote = true;
+                }
+                CHECK(sawLocal && sawRemote);
+                CHECK(git(L"checkout -q feat51r"));   // DWIM creates tracking
+                std::string bt;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                        L"rev-parse --abbrev-ref HEAD", bt));
+                CHECK(ParseBranch(bt) == L"feat51r");
+                CHECK(git(L"checkout -q " + QuoteArg(head)));
+            }
+            fs::remove_all(bare, ec51);
         }
         fs::remove_all(repo, ec48);
     }

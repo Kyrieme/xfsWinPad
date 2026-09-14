@@ -218,7 +218,8 @@ bool GitClient::ListBranches() {
     if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
     StartOp(GitOpKind::ListBranches,
             L"for-each-ref --format=" +
-                git::QuoteArg(L"%(HEAD)%(refname:short)") + L" refs/heads",
+                git::QuoteArg(L"%(HEAD)%(refname)") +
+                L" refs/heads refs/remotes",
             L"");
     Logger::Info("git: branch list started");
     return true;
@@ -229,6 +230,15 @@ bool GitClient::Checkout(const std::wstring& branch) {
         return false;
     StartOp(GitOpKind::Checkout, L"checkout " + git::QuoteArg(branch), branch);
     Logger::Info("git: checkout started " + WideToUtf8(branch));
+    return true;
+}
+
+bool GitClient::CreateBranch(const std::wstring& branch) {
+    if (!HasRoot() || disabled_ || branch.empty() || cmdBusy_->exchange(true))
+        return false;
+    StartOp(GitOpKind::CreateBranch,
+            L"checkout -b " + git::QuoteArg(branch), branch);
+    Logger::Info("git: branch create started " + WideToUtf8(branch));
     return true;
 }
 

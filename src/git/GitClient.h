@@ -33,7 +33,10 @@ struct GitBlobResult {
     std::wstring tempPath;   // where the caller wants the blob written
 };
 
-enum class GitOpKind : int { Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4 };
+enum class GitOpKind : int {
+    Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
+    CreateBranch = 5,
+};
 
 struct GitOpResult {
     GitOpKind kind;
@@ -66,6 +69,7 @@ public:
     bool Commit(const std::wstring& message);
     bool ListBranches();
     bool Checkout(const std::wstring& branch);
+    bool CreateBranch(const std::wstring& branch);
 
     void ClearNow();  // folder closed / non-repo: drop everything synchronously
 
