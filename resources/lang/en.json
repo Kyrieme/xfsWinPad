@@ -681,6 +681,7 @@
    "git.pull": "Pull",
    "git.merge": "Merge Branch",
    "git.merge.abort": "Abort Merge",
+   "git.log": "File History",
    "git.stash": "Stash Changes",
    "git.unstash": "Restore Stash",
    "git.revert": "Discard changes",

@@ -139,6 +139,8 @@ private:
     void RunDiffCompare(Document* a, Document* b);
     // git 集成 v1（批次 46）：分支进标题 + 树着色 + 与 HEAD 比较
     void GitCompareWithHead(const std::wstring& absPath);
+    // 批次 63：文件历史（log 选择器 + 任一审阅版本的只读视图/对比）
+    void GitShowRevision(const std::wstring& absPath, const std::wstring& rev);
     void SyncGitUi();                 // explorer colors + title after a refresh
     void OnGitDone(GitSnapshot* snap);    // WM_APP_GIT_DONE
     void OnGitBlob(GitBlobResult* res);   // WM_APP_GIT_BLOB
