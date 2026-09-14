@@ -39,6 +39,7 @@ public:
     std::function<void()> onGitBranch;
     std::function<void()> onGitBranchNew;
     std::function<void()> onGitBranchDel;
+    std::function<void()> onGitBranchRen;
     std::function<void()> onGitPush;
     std::function<void()> onGitFetch;
     std::function<void()> onGitPull;

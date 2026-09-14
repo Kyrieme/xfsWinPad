@@ -4005,6 +4005,30 @@ void MainWindow::WireExplorerGit() {
         if (!git_.CreateBranch(name))
             Logger::Warn("git: branch create could not start");
     };
+    explorer_->onGitBranchRen = [this]() {
+        if (!git_.HasRoot()) return;
+        const std::wstring cur = git_.Branch();
+        if (cur.empty() || cur == L"HEAD") {
+            // detached: git would refuse anyway; say so without spawning
+            MessageBoxW(hwnd_, Tr(L"git.branch.detached"), L"xfsWinPad",
+                        MB_OK | MB_ICONWARNING);
+            return;
+        }
+        std::wstring name = cur;   // prefill so the user edits instead of retyping
+        if (!InputBox(hwnd_, inst_, Tr(L"git.branch.ren"),
+                      Tr(L"git.branch.ren.prompt"), name))
+            return;
+        while (!name.empty() && name.back() == L' ') name.pop_back();
+        while (!name.empty() && name.front() == L' ') name.erase(name.begin());
+        if (name.empty() || name == cur) return;
+        if (!git::BranchNameOk(name)) {
+            MessageBoxW(hwnd_, Tr(L"git.branch.bad"), L"xfsWinPad",
+                        MB_OK | MB_ICONWARNING);
+            return;
+        }
+        if (!git_.RenameBranch(name))
+            Logger::Warn("git: branch rename could not start");
+    };
     explorer_->onGitFetch = [this]() {
         if (!git_.Fetch()) Logger::Warn("git: fetch could not start");
     };
@@ -4138,6 +4162,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
         res->kind == GitOpKind::Merge ? Tr(L"git.merge") :
         res->kind == GitOpKind::DeleteBranch ? Tr(L"git.branch.del") :
+        res->kind == GitOpKind::RenameBranch ? Tr(L"git.branch.ren") :
         res->kind == GitOpKind::Stash ? Tr(L"git.stash") :
         res->kind == GitOpKind::Unstash ? Tr(L"git.unstash") :
         res->kind == GitOpKind::Revert ? Tr(L"git.revert") :

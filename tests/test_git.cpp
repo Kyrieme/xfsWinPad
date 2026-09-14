@@ -521,6 +521,42 @@ int main() {
                                           L"branch --list side57", bl2));
                 CHECK(bl2.find("side57") != std::string::npos);
             }
+            {   // batch 58: branch -m renames (current + other), collision refused
+                std::string o58, bl;
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(), std::wstring(id) + L"branch coll58", o58));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -m coll58 coll58b", o58));
+                std::string old58, kept;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --list coll58", old58));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --list coll58b", kept));
+                CHECK(old58.find("coll58") == std::string::npos);
+                CHECK(kept.find("coll58b") != std::string::npos);
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -m side57 side58", o58));
+                std::string cur;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -m " + QuoteArg(head2) +
+                                              L" main58", o58));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --show-current", cur));
+                CHECK(cur.find("main58") != std::string::npos);
+                std::string clash;
+                CHECK(!xfs::GitClient::Run(repo.wstring(),
+                                           L"branch -m main58 coll58b", clash));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -m main58 " + QuoteArg(head2),
+                                          o58));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --show-current", cur));
+                CHECK(xfs::Utf8ToWide(cur).find(head2) != std::wstring::npos);
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -d coll58b", o58));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -D side58", bl));
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

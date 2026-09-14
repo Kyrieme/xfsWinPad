@@ -283,6 +283,17 @@ bool GitClient::DeleteBranch(const std::wstring& branch) {
     return true;
 }
 
+bool GitClient::RenameBranch(const std::wstring& newName) {
+    if (!HasRoot() || disabled_ || newName.empty() || cmdBusy_->exchange(true))
+        return false;
+    // -m without an old name renames the checked-out branch; detached HEAD
+    // simply fails and the error surfaces verbatim in the failure dialog.
+    StartOp(GitOpKind::RenameBranch, L"branch -m " + git::QuoteArg(newName),
+            newName);
+    Logger::Info("git: branch rename started " + WideToUtf8(newName));
+    return true;
+}
+
 bool GitClient::Push() {
     if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
     StartOp(GitOpKind::Push, L"push", L"", 120000, true);

@@ -212,7 +212,10 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                    (inRepo && onGitBranchNew) || (inRepo && onGitPush) ||
                    (inRepo && onGitFetch) || (inRepo && onGitPull) ||
                     (inRepo && onGitMerge) || (inRepo && onGitStash) ||
-                    (inRepo && onGitUnstash) || (inRepo && onGitBranchDel);
+                    (inRepo && onGitUnstash) ||
+                    (inRepo && onGitBranchDel) || (inRepo && onGitBranchRen);
+
+
 
         if (any) {
             ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -233,6 +236,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                 ::AppendMenuW(menu, MF_STRING, 14, Tr(L"git.branch.new"));
             if (inRepo && onGitBranchDel)
                 ::AppendMenuW(menu, MF_STRING, 22, Tr(L"git.branch.del"));
+            if (inRepo && onGitBranchRen)
+                ::AppendMenuW(menu, MF_STRING, 23, Tr(L"git.branch.ren"));
             if (inRepo && onGitFetch)
                 ::AppendMenuW(menu, MF_STRING, 15, Tr(L"git.fetch"));
             if (inRepo && onGitPull)
@@ -297,6 +302,7 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 20: if (onGitStash) onGitStash(); break;
         case 21: if (onGitUnstash) onGitUnstash(); break;
         case 22: if (onGitBranchDel) onGitBranchDel(); break;
+        case 23: if (onGitBranchRen) onGitBranchRen(); break;
     }
 }
 
