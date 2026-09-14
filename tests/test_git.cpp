@@ -633,6 +633,35 @@ int main() {
                                           L"ls-remote --heads or52", lr61));
                 CHECK(lr61.find("new59") == std::string::npos);
             }
+            {   // batch 62: merge --abort recovers from a conflicted merge
+                std::string o62;
+                const std::wstring w = w2.wstring();
+                CHECK(xfs::GitClient::Run(
+                    w, std::wstring(id) + L"checkout -qb c62one", o62));
+                { std::ofstream(w2 / "c62.txt") << "one\n"; }
+                CHECK(xfs::GitClient::Run(w, std::wstring(id) + L"add -- c62.txt",
+                                          o62));
+                CHECK(xfs::GitClient::Run(w, std::wstring(id) + L"commit -qm c62one",
+                                          o62));
+                CHECK(xfs::GitClient::Run(w, std::wstring(id) + L"checkout -q new59",
+                                          o62));
+                { std::ofstream(w2 / "c62.txt") << "other\n"; }
+                CHECK(xfs::GitClient::Run(w, std::wstring(id) + L"add -- c62.txt",
+                                          o62));
+                CHECK(xfs::GitClient::Run(w, std::wstring(id) + L"commit -qm c62other",
+                                          o62));
+                CHECK(!xfs::GitClient::Run(
+                    w, std::wstring(id) + L"merge --no-edit c62one", o62));
+                CHECK(xfs::GitClient::Run(w, std::wstring(id) + L"merge --abort",
+                                          o62));
+                std::string st62;
+                CHECK(xfs::GitClient::Run(w, L"status --porcelain", st62));
+                CHECK(st62.find("c62") == std::string::npos);
+                std::string cur62;
+                CHECK(xfs::GitClient::Run(w, L"branch --show-current", cur62));
+                CHECK(cur62.find("new59") != std::string::npos);
+                CHECK(xfs::GitClient::Run(w, L"branch -D c62one", o62));
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

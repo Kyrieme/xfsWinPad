@@ -680,6 +680,7 @@
    "git.fetch": "フェッチ",
    "git.pull": "プル",
    "git.merge": "ブランチをマージ",
+   "git.merge.abort": "マージを中止",
    "git.stash": "変更を一時保存",
    "git.unstash": "一時保存を復元",
    "git.revert": "変更を破棄",
