@@ -399,6 +399,34 @@ int main() {
                 auto tr = ParseTracking(so);
                 CHECK(tr.hasUpstream && tr.behind == 1 && tr.ahead == 0);
             }
+            {   // batch 53: pull --ff-only fast-forwards, then diverges and must refuse
+                std::string lo;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"pull --ff-only or52",
+                                          lo, nullptr, 60000, true));
+                std::string so;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -b -z", so));
+                auto tr = ParseTracking(so);
+                CHECK(tr.hasUpstream && tr.behind == 0 && tr.ahead == 0);
+                { std::ofstream(repo / "mine53.txt") << "m\n"; }
+                std::string co;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"add -- mine53.txt", co));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          std::wstring(id) + L"commit -qm local53", co));
+                std::ofstream(w2 / "rr.txt") << "rr\n";
+                CHECK(xfs::GitClient::Run(w2.wstring(), L"add -- rr.txt", co));
+                CHECK(xfs::GitClient::Run(w2.wstring(),
+                                          std::wstring(id) + L"commit -qm remote53", co));
+                CHECK(xfs::GitClient::Run(w2.wstring(), L"push -q origin HEAD",
+                                          co, nullptr, 60000, true));
+                std::string lo3;
+                CHECK(!xfs::GitClient::Run(repo.wstring(), L"pull --ff-only or52",
+                                           lo3, nullptr, 60000, true));
+                CHECK(lo3.find("Not possible to fast-forward") != std::string::npos ||
+                      lo3.find("divergent branches") != std::string::npos ||
+                      lo3.find("Need to specify how to reconcile") != std::string::npos);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

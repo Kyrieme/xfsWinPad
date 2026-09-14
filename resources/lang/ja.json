@@ -670,6 +670,7 @@
    "git.branch.new.prompt": "新しいブランチ名 (現在のコミットから作成して切り替えます):",
    "git.branch.bad": "無効なブランチ名です。",
    "git.fetch": "フェッチ",
+   "git.pull": "プル",
    "git.push": "プッシュ",
 
   "term.copy": "コピー\tCtrl+C",

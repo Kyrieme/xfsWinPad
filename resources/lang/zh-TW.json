@@ -670,6 +670,7 @@
   "git.branch.new.prompt": "新分支名稱（基於目前提交建立並切換）：",
   "git.branch.bad": "無效的分支名稱。",
   "git.fetch": "抓取",
+  "git.pull": "拉取",
   "git.push": "推送",
 
   "term.copy": "複製\tCtrl+C",
