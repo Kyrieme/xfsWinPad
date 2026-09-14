@@ -339,6 +339,69 @@ int main() {
             }
             fs::remove_all(bare, ec51);
         }
+        // batch 52: push/fetch round-trip (exercises timeout + blockPrompts Run)
+        {
+            auto firstline = [](std::string s) {
+                size_t n = s.find('\n');
+                if (n != std::string::npos) s.resize(n);
+                if (!s.empty() && s.back() == '\r') s.pop_back();
+                return s;
+            };
+            fs::path bare2 = fs::temp_directory_path() / "xfsGitTest52origin";
+            fs::path w2 = fs::temp_directory_path() / "xfsGitTest52w2";
+            std::error_code ec52;
+            fs::remove_all(bare2, ec52);
+            fs::remove_all(w2, ec52);
+            fs::create_directories(bare2);
+            CHECK(git(L"init -q --bare " + QuoteArg(bare2.wstring())));
+            CHECK(git(L"remote add or52 " + QuoteArg(bare2.wstring())));
+            std::string bo0;
+            CHECK(xfs::GitClient::Run(repo.wstring(), L"rev-parse --abbrev-ref HEAD", bo0));
+            std::wstring head2 = ParseBranch(bo0);
+            { std::ofstream(repo / "b52.txt") << "x\n"; }
+            CHECK(git(L"add -- b52.txt"));
+            CHECK(git(std::wstring(id) + L"commit -qm b52"));
+            {   // push via Run with blockPrompts enabled
+                std::string po;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"push -q -u or52 " + QuoteArg(head2),
+                                          po, nullptr, 60000, true));
+                std::string lo;
+                CHECK(xfs::GitClient::Run(bare2.wstring(),
+                                          L"rev-parse " + QuoteArg(head2), lo));
+                std::string local;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"rev-parse HEAD", local));
+                CHECK(firstline(lo) == firstline(local));
+                std::string so;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -b -z", so));
+                auto tr = ParseTracking(so);
+                CHECK(tr.hasUpstream && tr.ahead == 0 && tr.behind == 0);
+            }
+            {   // second clone advances the remote branch; fetch sees behind=1
+                std::string co;
+                CHECK(xfs::GitClient::Run(
+                    L"", L"clone -q -b " + QuoteArg(head2) + L" " +
+                         QuoteArg(bare2.wstring()) + L" " + QuoteArg(w2.wstring()), co));
+                { std::ofstream(w2 / "r.txt") << "r\n"; }
+                CHECK(xfs::GitClient::Run(w2.wstring(), L"add -- r.txt", co));
+                CHECK(xfs::GitClient::Run(w2.wstring(),
+                                          std::wstring(id) + L"commit -qm remote", co));
+                std::string po;
+                CHECK(xfs::GitClient::Run(w2.wstring(), L"push -q origin HEAD",
+                                          po, nullptr, 60000, true));
+                std::string fo;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"fetch --prune or52",
+                                          fo, nullptr, 60000, true));
+                std::string so;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -b -z", so));
+                auto tr = ParseTracking(so);
+                CHECK(tr.hasUpstream && tr.behind == 1 && tr.ahead == 0);
+            }
+            fs::remove_all(bare2, ec52);
+            fs::remove_all(w2, ec52);
+        }
         fs::remove_all(repo, ec48);
     }
     printf(g_fail ? "test_git: %d FAILED\n" : "test_git: all passed (%d)\n", g_fail);

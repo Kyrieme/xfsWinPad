@@ -3988,6 +3988,12 @@ void MainWindow::WireExplorerGit() {
         if (!git_.CreateBranch(name))
             Logger::Warn("git: branch create could not start");
     };
+    explorer_->onGitFetch = [this]() {
+        if (!git_.Fetch()) Logger::Warn("git: fetch could not start");
+    };
+    explorer_->onGitPush = [this]() {
+        if (!git_.Push()) Logger::Warn("git: push could not start");
+    };
 }
 
 void MainWindow::GitStagePath(const std::wstring& absPath, bool unstage) {
@@ -4062,6 +4068,8 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Unstage ? Tr(L"git.unstage") :
         res->kind == GitOpKind::Checkout ? Tr(L"git.branch") :
         res->kind == GitOpKind::CreateBranch ? Tr(L"git.branch.new") :
+        res->kind == GitOpKind::Push ? Tr(L"git.push") :
+        res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
     if (!res->ok) {

@@ -9,7 +9,8 @@
 namespace xfs {
 
 bool GitClient::Run(const std::wstring& cwd, const std::wstring& args,
-                    std::string& out, bool* spawnFailed) {
+                    std::string& out, bool* spawnFailed,
+                    DWORD timeoutMs, bool blockPrompts) {
     if (spawnFailed) *spawnFailed = false;
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
@@ -30,10 +31,18 @@ bool GitClient::Run(const std::wstring& cwd, const std::wstring& args,
     std::vector<wchar_t> buf(cmdline.begin(), cmdline.end());
     buf.push_back(L'\0');
 
+    // Run serializes git commands (cmdBusy_), so mutating our own process env
+    // around the spawn is safe and inherits like any other variable. Passing a
+    // custom lpEnvironment block proved unreliable across environments.
+    if (blockPrompts)
+        ::SetEnvironmentVariableW(L"GIT_TERMINAL_PROMPT", L"0");
+
     PROCESS_INFORMATION pi{};
     BOOL started = ::CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE,
                                     CREATE_NO_WINDOW, nullptr,
                                     cwd.empty() ? nullptr : cwd.c_str(), &si, &pi);
+    if (blockPrompts)
+        ::SetEnvironmentVariableW(L"GIT_TERMINAL_PROMPT", nullptr);
     ::CloseHandle(wr);
     if (!started) {
         ::CloseHandle(rd);
@@ -44,17 +53,25 @@ bool GitClient::Run(const std::wstring& cwd, const std::wstring& args,
         return false;
     }
 
-    char chunk[4096];
-    DWORD got = 0;
-    for (;;) {
-        if (!::ReadFile(rd, chunk, sizeof(chunk), &got, nullptr) || got == 0) break;
-        out.append(chunk, got);
-    }
-    DWORD wait = ::WaitForSingleObject(pi.hProcess, 15000);
+    // Reader thread keeps draining the pipe so the process cannot block on a
+    // full buffer while we enforce the deadline on the process handle.
+    std::thread reader([&rd, &out]() {
+        char chunk[4096];
+        DWORD got = 0;
+        for (;;) {
+            if (!::ReadFile(rd, chunk, sizeof(chunk), &got, nullptr) || got == 0)
+                break;
+            out.append(chunk, got);
+        }
+    });
+    DWORD wait = ::WaitForSingleObject(pi.hProcess, timeoutMs);
     DWORD code = 1;
     if (wait == WAIT_OBJECT_0) ::GetExitCodeProcess(pi.hProcess, &code);
-    else ::TerminateProcess(pi.hProcess, 1);
+    else ::TerminateProcess(pi.hProcess, 1);   // unblocks the reader (pipe EOF)
+    reader.join();
     ::CloseHandle(pi.hThread);
+    ::CloseHandle(pi.hProcess);
+    ::CloseHandle(rd);
     ::CloseHandle(pi.hProcess);
     ::CloseHandle(rd);
     return wait == WAIT_OBJECT_0 && code == 0;
@@ -173,15 +190,17 @@ bool GitClient::FetchHeadBlob(const std::wstring& absPath,
 }
 
 void GitClient::StartOp(GitOpKind kind, const std::wstring& args,
-                        const std::wstring& arg) {
+                        const std::wstring& arg, DWORD timeoutMs,
+                        bool blockPrompts) {
     HWND main = main_;
     std::wstring root = root_;
     auto busy = cmdBusy_;
-    std::thread([main, root, kind, args, arg, busy]() {
+    std::thread([main, root, kind, args, arg, busy, timeoutMs, blockPrompts]() {
         auto* res = new GitOpResult;
         res->kind = kind;
         res->arg = arg;
-        res->ok = GitClient::Run(root, args, res->output);
+        res->ok = GitClient::Run(root, args, res->output, nullptr,
+                                 timeoutMs, blockPrompts);
         *busy = false;
         if (main) ::PostMessageW(main, WM_APP_GIT_OP, 0, (LPARAM)res);
         else delete res;
@@ -239,6 +258,20 @@ bool GitClient::CreateBranch(const std::wstring& branch) {
     StartOp(GitOpKind::CreateBranch,
             L"checkout -b " + git::QuoteArg(branch), branch);
     Logger::Info("git: branch create started " + WideToUtf8(branch));
+    return true;
+}
+
+bool GitClient::Push() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    StartOp(GitOpKind::Push, L"push", L"", 120000, true);
+    Logger::Info("git: push started");
+    return true;
+}
+
+bool GitClient::Fetch() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    StartOp(GitOpKind::Fetch, L"fetch --prune", L"", 120000, true);
+    Logger::Info("git: fetch started");
     return true;
 }
 

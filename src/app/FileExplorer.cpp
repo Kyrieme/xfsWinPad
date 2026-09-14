@@ -207,7 +207,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                    (onGitStage && hasState && gst != git::FileState::Added) ||
                    (onGitUnstage && hasState && gst == git::FileState::Added) ||
                    (inRepo && onGitCommit) || (inRepo && onGitBranch) ||
-                   (inRepo && onGitBranchNew);
+                   (inRepo && onGitBranchNew) || (inRepo && onGitPush) ||
+                   (inRepo && onGitFetch);
         if (any) {
             ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             if (isFile && onGitCompare && hasState)
@@ -222,6 +223,10 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                 ::AppendMenuW(menu, MF_STRING, 13, Tr(L"git.branch"));
             if (inRepo && onGitBranchNew)
                 ::AppendMenuW(menu, MF_STRING, 14, Tr(L"git.branch.new"));
+            if (inRepo && onGitFetch)
+                ::AppendMenuW(menu, MF_STRING, 15, Tr(L"git.fetch"));
+            if (inRepo && onGitPush)
+                ::AppendMenuW(menu, MF_STRING, 16, Tr(L"git.push"));
         }
     }
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -266,6 +271,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 12: if (onGitCommit) onGitCommit(); break;
         case 13: if (onGitBranch) onGitBranch(); break;
         case 14: if (onGitBranchNew) onGitBranchNew(); break;
+        case 15: if (onGitFetch) onGitFetch(); break;
+        case 16: if (onGitPush) onGitPush(); break;
     }
 }
 

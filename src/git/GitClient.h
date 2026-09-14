@@ -35,7 +35,7 @@ struct GitBlobResult {
 
 enum class GitOpKind : int {
     Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
-    CreateBranch = 5,
+    CreateBranch = 5, Push = 6, Fetch = 7,
 };
 
 struct GitOpResult {
@@ -70,6 +70,8 @@ public:
     bool ListBranches();
     bool Checkout(const std::wstring& branch);
     bool CreateBranch(const std::wstring& branch);
+    bool Push();
+    bool Fetch();
 
     void ClearNow();  // folder closed / non-repo: drop everything synchronously
 
@@ -85,13 +87,16 @@ public:
     std::wstring RelOf(const std::wstring& absPath) const;
 
     // Blocking capture (worker threads only). spawnFailed reports that
-    // git.exe itself could not be launched.
+    // git.exe itself could not be launched. Network-ish ops may pass a longer
+    // timeout; blockPrompts also disables interactive credential prompts.
     static bool Run(const std::wstring& cwd, const std::wstring& args,
-                    std::string& out, bool* spawnFailed = nullptr);
+                    std::string& out, bool* spawnFailed = nullptr,
+                    DWORD timeoutMs = 15000, bool blockPrompts = false);
 
 private:
     void StartThread(const std::wstring& root);
-    void StartOp(GitOpKind kind, const std::wstring& args, const std::wstring& arg);
+    void StartOp(GitOpKind kind, const std::wstring& args, const std::wstring& arg,
+                 DWORD timeoutMs = 15000, bool blockPrompts = false);
 
     HWND main_ = nullptr;
     bool disabled_ = false;
