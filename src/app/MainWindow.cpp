@@ -3206,6 +3206,7 @@ bool MainWindow::OpenSpecialFile(const std::wstring& f) {
 void MainWindow::OpenUserFile(const std::wstring& path) {
     std::error_code ec;
     if (std::filesystem::is_directory(path, ec)) {
+        settings_.explorerVisible = true;   // opening a folder shows the panel
         SetProjectRoot(path, true);
         AddRecentFolder(path);
         return;
@@ -3219,6 +3220,7 @@ void MainWindow::OpenCliFiles(const StartupOptions& opts) {
         // a directory argument = open it as the project/folder workspace
         std::error_code ec;
         if (std::filesystem::is_directory(f, ec)) {
+            settings_.explorerVisible = true;   // opening a folder shows the panel
             SetProjectRoot(f, true);
             AddRecentFolder(f);
             continue;
