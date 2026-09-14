@@ -489,6 +489,38 @@ int main() {
                 CHECK(xfs::GitClient::Run(repo.wstring(), L"stash list", lst2));
                 CHECK(lst2.find("stash@{") == std::string::npos);
             }
+            {   // batch 57: branch -d deletes merged, refuses unmerged
+                std::string o57;
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"branch feat57", o57));
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch -d feat57", o57));
+                std::string bl;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --list feat57", bl));
+                CHECK(bl.find("feat57") == std::string::npos);
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"checkout -q -b side57 HEAD~1", o57));
+                { std::ofstream(repo / "side57.txt") << "s57\n"; }
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"add side57.txt", o57));
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"commit -q -m side57", o57));
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"checkout -q " + QuoteArg(head2), o57));
+                std::string ref;
+                CHECK(!xfs::GitClient::Run(repo.wstring(),
+                                           L"branch -d side57", ref));
+                std::string bl2;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"branch --list side57", bl2));
+                CHECK(bl2.find("side57") != std::string::npos);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

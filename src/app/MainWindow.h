@@ -212,7 +212,8 @@ private:
     std::unique_ptr<CommandPalette> palette_;
     std::unique_ptr<FileExplorer> explorer_;
     GitClient git_;
-    bool gitPickMerge_ = false;   // next branch picker result -> merge target
+    enum class GitPick : int { None = 0, Merge, DeleteBranch };
+    GitPick gitPick_ = GitPick::None;  // next branch picker result -> target op
     std::unique_ptr<HexPanel> hex_;
     std::unique_ptr<StdfPanel> stdf_;
     std::unique_ptr<CsvPanel> csv_;

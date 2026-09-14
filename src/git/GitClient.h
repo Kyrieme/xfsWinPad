@@ -36,7 +36,7 @@ struct GitBlobResult {
 enum class GitOpKind : int {
     Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
     CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8, Revert = 9, Merge = 10,
-    Stash = 11, Unstash = 12,
+    Stash = 11, Unstash = 12, DeleteBranch = 13,
 };
 
 struct GitOpResult {
@@ -72,6 +72,9 @@ public:
     bool Checkout(const std::wstring& branch);
     bool CreateBranch(const std::wstring& branch);
     bool Merge(const std::wstring& branch);
+    // Safe delete of a local branch: `git branch -d <name>`. Git itself
+    // refuses unmerged branches, so no extra confirmation is needed.
+    bool DeleteBranch(const std::wstring& branch);
     bool Push();
     bool Fetch();
     bool Pull();

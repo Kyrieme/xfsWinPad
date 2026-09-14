@@ -272,6 +272,17 @@ bool GitClient::Merge(const std::wstring& branch) {
     return true;
 }
 
+bool GitClient::DeleteBranch(const std::wstring& branch) {
+    if (!HasRoot() || disabled_ || branch.empty() || cmdBusy_->exchange(true))
+        return false;
+    // -d (not -D): git refuses unmerged branches; the error dialog surfaces
+    // the refusal verbatim, which is exactly the safety guarantee we want.
+    StartOp(GitOpKind::DeleteBranch,
+            L"branch -d " + git::QuoteArg(branch), branch);
+    Logger::Info("git: branch delete started " + WideToUtf8(branch));
+    return true;
+}
+
 bool GitClient::Push() {
     if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
     StartOp(GitOpKind::Push, L"push", L"", 120000, true);

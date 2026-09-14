@@ -669,6 +669,8 @@
   "git.branch.new": "新建分支…",
   "git.branch.new.prompt": "新分支名稱（基於目前提交建立並切換）：",
   "git.branch.bad": "無效的分支名稱。",
+  "git.branch.del": "刪除分支",
+  "git.branch.del.pick": "選擇要刪除的本機分支：",
   "git.fetch": "抓取",
   "git.pull": "拉取",
   "git.merge": "合併分支",

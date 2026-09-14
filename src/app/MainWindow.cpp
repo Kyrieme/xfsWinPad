@@ -3968,15 +3968,23 @@ void MainWindow::WireExplorerGit() {
         GitCommitDialog();
     };
     explorer_->onGitBranch = [this]() {
-        gitPickMerge_ = false;
+        gitPick_ = GitPick::None;
         if (!git_.ListBranches())
             Logger::Warn("git: branch list could not start");
     };
     explorer_->onGitMerge = [this]() {
         if (!git_.HasRoot()) return;
-        gitPickMerge_ = true;
+        gitPick_ = GitPick::Merge;
         if (!git_.ListBranches()) {
-            gitPickMerge_ = false;
+            gitPick_ = GitPick::None;
+            Logger::Warn("git: branch list could not start");
+        }
+    };
+    explorer_->onGitBranchDel = [this]() {
+        if (!git_.HasRoot()) return;
+        gitPick_ = GitPick::DeleteBranch;
+        if (!git_.ListBranches()) {
+            gitPick_ = GitPick::None;
             Logger::Warn("git: branch list could not start");
         }
     };
@@ -4050,12 +4058,30 @@ void MainWindow::GitCommitDialog() {
 void MainWindow::OnGitOp(GitOpResult* res) {
     if (!res) return;
     std::unique_ptr<GitOpResult> guard(res);
-    bool pickForMerge = gitPickMerge_;
-    gitPickMerge_ = false;   // consumed once, whatever the outcome
+    GitPick pick = gitPick_;
+    gitPick_ = GitPick::None;   // consumed once, whatever the outcome
     if (res->kind == GitOpKind::ListBranches && res->ok) {
         auto branches = git::ParseBranchList(res->output);
         if (branches.empty()) {
             Logger::Warn("git: branch list empty");
+            return;
+        }
+        if (pick == GitPick::DeleteBranch) {
+            // local branches only, minus the checked-out one (git refuses it
+            // anyway — hiding it keeps the list honest)
+            std::vector<std::wstring> locals;
+            for (const auto& b : branches)
+                if (!b.remote && !b.current) locals.push_back(b.name);
+            if (locals.empty()) {
+                Logger::Info("git: no other local branch to delete");
+                return;
+            }
+            int selD = -1;
+            if (!ListPicker(hwnd_, inst_, Tr(L"git.branch.del"),
+                             Tr(L"git.branch.del.pick"), locals, -1, selD))
+                return;
+            if (!git_.DeleteBranch(locals[selD]))
+                Logger::Warn("git: branch delete could not start");
             return;
         }
         std::vector<std::wstring> names;
@@ -4079,7 +4105,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
                         names, cur, sel))
             return;
         const std::wstring& target = checkoutName[sel];
-        if (pickForMerge) {
+        if (pick == GitPick::Merge) {
             // git itself refuses merges that would clobber uncommitted
             // changes, so no extra dirty-guard here.
             if (!git_.Merge(target))
@@ -4111,6 +4137,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
         res->kind == GitOpKind::Merge ? Tr(L"git.merge") :
+        res->kind == GitOpKind::DeleteBranch ? Tr(L"git.branch.del") :
         res->kind == GitOpKind::Stash ? Tr(L"git.stash") :
         res->kind == GitOpKind::Unstash ? Tr(L"git.unstash") :
         res->kind == GitOpKind::Revert ? Tr(L"git.revert") :

@@ -669,6 +669,8 @@
    "git.branch.new": "新しいブランチ…",
    "git.branch.new.prompt": "新しいブランチ名 (現在のコミットから作成して切り替えます):",
    "git.branch.bad": "無効なブランチ名です。",
+   "git.branch.del": "ブランチを削除",
+   "git.branch.del.pick": "削除するローカルブランチを選択:",
    "git.fetch": "フェッチ",
    "git.pull": "プル",
    "git.merge": "ブランチをマージ",
