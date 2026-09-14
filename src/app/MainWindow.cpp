@@ -4052,6 +4052,10 @@ void MainWindow::WireExplorerGit() {
     explorer_->onGitUnstash = [this]() {
         if (!git_.Unstash()) Logger::Warn("git: unstash could not start");
     };
+    explorer_->onGitMergeAbort = [this]() {
+        if (!git_.HasRoot()) return;
+        if (!git_.MergeAbort()) Logger::Warn("git: merge abort could not start");
+    };
     explorer_->onGitRevert = [this](const std::wstring& path) {
         if (!git_.HasRoot()) return;
         std::wstring msg = I18n::Instance().Fmt(Tr(L"git.revert.confirm"),
@@ -4235,6 +4239,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
         res->kind == GitOpKind::Merge ? Tr(L"git.merge") :
+        res->kind == GitOpKind::MergeAbort ? Tr(L"git.merge.abort") :
         res->kind == GitOpKind::DeleteBranch ? Tr(L"git.branch.del") :
         res->kind == GitOpKind::DeleteRemoteBranch ?
             Tr(L"git.branch.delremote") :

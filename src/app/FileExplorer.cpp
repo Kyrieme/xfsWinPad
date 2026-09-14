@@ -214,7 +214,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                     (inRepo && onGitMerge) || (inRepo && onGitStash) ||
                     (inRepo && onGitUnstash) ||
                     (inRepo && onGitBranchDel) || (inRepo && onGitBranchRen) ||
-                    (inRepo && onGitBranchDelRemote);
+                    (inRepo && onGitBranchDelRemote) ||
+                    (inRepo && onGitMergeAbort);
 
 
 
@@ -248,6 +249,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                 ::AppendMenuW(menu, MF_STRING, 17, Tr(L"git.pull"));
             if (inRepo && onGitMerge)
                 ::AppendMenuW(menu, MF_STRING, 19, Tr(L"git.merge"));
+            if (inRepo && onGitMergeAbort)
+                ::AppendMenuW(menu, MF_STRING, 25, Tr(L"git.merge.abort"));
             if (inRepo && onGitPush)
                 ::AppendMenuW(menu, MF_STRING, 16, Tr(L"git.push"));
             if (inRepo && onGitStash)
@@ -308,6 +311,7 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 22: if (onGitBranchDel) onGitBranchDel(); break;
         case 23: if (onGitBranchRen) onGitBranchRen(); break;
         case 24: if (onGitBranchDelRemote) onGitBranchDelRemote(); break;
+        case 25: if (onGitMergeAbort) onGitMergeAbort(); break;
     }
 }
 

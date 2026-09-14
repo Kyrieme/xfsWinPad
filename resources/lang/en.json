@@ -680,6 +680,7 @@
    "git.fetch": "Fetch",
    "git.pull": "Pull",
    "git.merge": "Merge Branch",
+   "git.merge.abort": "Abort Merge",
    "git.stash": "Stash Changes",
    "git.unstash": "Restore Stash",
    "git.revert": "Discard changes",

@@ -680,6 +680,7 @@
   "git.fetch": "抓取",
   "git.pull": "拉取",
   "git.merge": "合併分支",
+  "git.merge.abort": "中止合併",
   "git.stash": "貯藏修改",
   "git.unstash": "恢復貯藏",
   "git.revert": "放棄修改",

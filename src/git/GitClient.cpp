@@ -322,6 +322,15 @@ bool GitClient::RenameBranch(const std::wstring& newName) {
     return true;
 }
 
+bool GitClient::MergeAbort() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    // Outside a conflicted merge git refuses ("no merge to abort") and the
+    // failure dialog surfaces it verbatim, same precedent as branch -d.
+    StartOp(GitOpKind::MergeAbort, L"merge --abort", L"");
+    Logger::Info("git: merge abort started");
+    return true;
+}
+
 bool GitClient::Push() {
     if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
     StartOp(GitOpKind::Push, L"push", L"", 120000, true);
