@@ -211,8 +211,9 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                    (inRepo && onGitCommit) || (inRepo && onGitBranch) ||
                    (inRepo && onGitBranchNew) || (inRepo && onGitPush) ||
                    (inRepo && onGitFetch) || (inRepo && onGitPull) ||
-                   (inRepo && onGitMerge) || (inRepo && onGitStash) ||
-                   (inRepo && onGitUnstash);
+                    (inRepo && onGitMerge) || (inRepo && onGitStash) ||
+                    (inRepo && onGitUnstash) || (inRepo && onGitBranchDel);
+
         if (any) {
             ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             if (isFile && onGitCompare && hasState)
@@ -230,6 +231,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                 ::AppendMenuW(menu, MF_STRING, 13, Tr(L"git.branch"));
             if (inRepo && onGitBranchNew)
                 ::AppendMenuW(menu, MF_STRING, 14, Tr(L"git.branch.new"));
+            if (inRepo && onGitBranchDel)
+                ::AppendMenuW(menu, MF_STRING, 22, Tr(L"git.branch.del"));
             if (inRepo && onGitFetch)
                 ::AppendMenuW(menu, MF_STRING, 15, Tr(L"git.fetch"));
             if (inRepo && onGitPull)
@@ -293,6 +296,7 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 19: if (onGitMerge) onGitMerge(); break;
         case 20: if (onGitStash) onGitStash(); break;
         case 21: if (onGitUnstash) onGitUnstash(); break;
+        case 22: if (onGitBranchDel) onGitBranchDel(); break;
     }
 }
 
