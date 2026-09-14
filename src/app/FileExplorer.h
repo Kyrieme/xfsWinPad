@@ -41,6 +41,8 @@ public:
     std::function<void()> onGitPush;
     std::function<void()> onGitFetch;
     std::function<void()> onGitPull;
+    // discard uncommitted changes (tracked files only; unset hides the item)
+    std::function<void(const std::wstring& path)> onGitRevert;
 
     // git working-set coloring: lowercase abs path -> state (shared snapshot)
     void SetGitStates(std::shared_ptr<const git::StateMap> states) {

@@ -671,6 +671,8 @@
   "git.branch.bad": "无效的分支名称。",
   "git.fetch": "抓取",
   "git.pull": "拉取",
+  "git.revert": "放弃修改",
+  "git.revert.confirm": "确定放弃 \"{0}\" 的未提交修改吗？此操作不可撤销。",
   "git.push": "推送",
 
   "term.copy": "复制\tCtrl+C",

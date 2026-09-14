@@ -427,6 +427,27 @@ int main() {
                       lo3.find("divergent branches") != std::string::npos ||
                       lo3.find("Need to specify how to reconcile") != std::string::npos);
             }
+            {   // batch 54: revert single file discards local modifications
+                { std::ofstream(repo / "mine53.txt") << "changed54\n"; }
+                std::string so;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -z", so));
+                CHECK(so.find("M ") != std::string::npos ||
+                      so.find(" M ") != std::string::npos);
+                std::string rv;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"checkout -- mine53.txt", rv));
+                std::string so2;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -z", so2));
+                CHECK(so2.find("mine53.txt") == std::string::npos);
+                std::string got;
+                std::ifstream in(repo / "mine53.txt");
+                std::getline(in, got);
+                CHECK(got == "m");
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"checkout HEAD -- mine53.txt", rv));
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }
