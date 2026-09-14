@@ -261,6 +261,16 @@ bool GitClient::CreateBranch(const std::wstring& branch) {
     return true;
 }
 
+bool GitClient::Merge(const std::wstring& branch) {
+    if (!HasRoot() || disabled_ || branch.empty() || cmdBusy_->exchange(true))
+        return false;
+    // --no-edit: merge commit uses the default message, never opens $EDITOR.
+    StartOp(GitOpKind::Merge, L"merge --no-edit " + git::QuoteArg(branch),
+            branch);
+    Logger::Info("git: merge started " + WideToUtf8(branch));
+    return true;
+}
+
 bool GitClient::Push() {
     if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
     StartOp(GitOpKind::Push, L"push", L"", 120000, true);

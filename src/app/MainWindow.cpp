@@ -3968,8 +3968,17 @@ void MainWindow::WireExplorerGit() {
         GitCommitDialog();
     };
     explorer_->onGitBranch = [this]() {
+        gitPickMerge_ = false;
         if (!git_.ListBranches())
             Logger::Warn("git: branch list could not start");
+    };
+    explorer_->onGitMerge = [this]() {
+        if (!git_.HasRoot()) return;
+        gitPickMerge_ = true;
+        if (!git_.ListBranches()) {
+            gitPickMerge_ = false;
+            Logger::Warn("git: branch list could not start");
+        }
     };
     explorer_->onGitBranchNew = [this]() {
         if (!git_.HasRoot()) return;
@@ -4035,6 +4044,8 @@ void MainWindow::GitCommitDialog() {
 void MainWindow::OnGitOp(GitOpResult* res) {
     if (!res) return;
     std::unique_ptr<GitOpResult> guard(res);
+    bool pickForMerge = gitPickMerge_;
+    gitPickMerge_ = false;   // consumed once, whatever the outcome
     if (res->kind == GitOpKind::ListBranches && res->ok) {
         auto branches = git::ParseBranchList(res->output);
         if (branches.empty()) {
@@ -4062,6 +4073,13 @@ void MainWindow::OnGitOp(GitOpResult* res) {
                         names, cur, sel))
             return;
         const std::wstring& target = checkoutName[sel];
+        if (pickForMerge) {
+            // git itself refuses merges that would clobber uncommitted
+            // changes, so no extra dirty-guard here.
+            if (!git_.Merge(target))
+                Logger::Warn("git: merge could not start");
+            return;
+        }
         bool dirty = false;
         if (auto st = git_.States())
             for (auto& [path, state] : *st)
@@ -4086,6 +4104,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Push ? Tr(L"git.push") :
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
+        res->kind == GitOpKind::Merge ? Tr(L"git.merge") :
         res->kind == GitOpKind::Revert ? Tr(L"git.revert") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
