@@ -463,6 +463,32 @@ int main() {
                 auto tr = ParseTracking(so);
                 CHECK(tr.hasUpstream && tr.ahead == 2 && tr.behind == 0);
             }
+            {   // batch 56: stash push/pop round-trip
+                { std::ofstream(repo / "mine53.txt") << "stashed56\n"; }
+                std::string so;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -z", so));
+                CHECK(so.find("mine53.txt") != std::string::npos);
+                std::string sto;
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"stash push -m " + QuoteArg(L"t56"),
+                    sto, nullptr, 60000, false));
+                std::string got;
+                { std::ifstream in(repo / "mine53.txt"); std::getline(in, got); }
+                CHECK(got == "m");
+                std::string lst;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"stash list", lst));
+                CHECK(lst.find("stash@{0}") != std::string::npos);
+                std::string pop;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"stash pop", pop,
+                                          nullptr, 60000, false));
+                { std::ifstream in(repo / "mine53.txt"); std::getline(in, got); }
+                CHECK(got == "stashed56");
+                std::string lst2;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"stash list", lst2));
+                CHECK(lst2.find("stash@{") == std::string::npos);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

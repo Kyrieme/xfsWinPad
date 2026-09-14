@@ -672,6 +672,8 @@
   "git.fetch": "抓取",
   "git.pull": "拉取",
   "git.merge": "合并分支",
+  "git.stash": "贮藏修改",
+  "git.unstash": "恢复贮藏",
   "git.revert": "放弃修改",
   "git.revert.confirm": "确定放弃 \"{0}\" 的未提交修改吗？此操作不可撤销。",
   "git.push": "推送",

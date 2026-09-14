@@ -42,6 +42,8 @@ public:
     std::function<void()> onGitFetch;
     std::function<void()> onGitPull;
     std::function<void()> onGitMerge;
+    std::function<void()> onGitStash;
+    std::function<void()> onGitUnstash;
     // discard uncommitted changes (tracked files only; unset hides the item)
     std::function<void(const std::wstring& path)> onGitRevert;
 

@@ -672,6 +672,8 @@
    "git.fetch": "Fetch",
    "git.pull": "Pull",
    "git.merge": "Merge Branch",
+   "git.stash": "Stash Changes",
+   "git.unstash": "Restore Stash",
    "git.revert": "Discard changes",
    "git.revert.confirm": "Discard uncommitted changes in \"{0}\"? This cannot be undone.",
    "git.push": "Push",

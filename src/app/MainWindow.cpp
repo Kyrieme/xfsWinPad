@@ -4003,6 +4003,12 @@ void MainWindow::WireExplorerGit() {
     explorer_->onGitPull = [this]() {
         if (!git_.Pull()) Logger::Warn("git: pull could not start");
     };
+    explorer_->onGitStash = [this]() {
+        if (!git_.Stash()) Logger::Warn("git: stash could not start");
+    };
+    explorer_->onGitUnstash = [this]() {
+        if (!git_.Unstash()) Logger::Warn("git: unstash could not start");
+    };
     explorer_->onGitRevert = [this](const std::wstring& path) {
         if (!git_.HasRoot()) return;
         std::wstring msg = I18n::Instance().Fmt(Tr(L"git.revert.confirm"),
@@ -4105,6 +4111,8 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
         res->kind == GitOpKind::Merge ? Tr(L"git.merge") :
+        res->kind == GitOpKind::Stash ? Tr(L"git.stash") :
+        res->kind == GitOpKind::Unstash ? Tr(L"git.unstash") :
         res->kind == GitOpKind::Revert ? Tr(L"git.revert") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
