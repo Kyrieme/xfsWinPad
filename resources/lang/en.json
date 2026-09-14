@@ -671,6 +671,7 @@
    "git.branch.bad": "Invalid branch name.",
    "git.fetch": "Fetch",
    "git.pull": "Pull",
+   "git.merge": "Merge Branch",
    "git.revert": "Discard changes",
    "git.revert.confirm": "Discard uncommitted changes in \"{0}\"? This cannot be undone.",
    "git.push": "Push",

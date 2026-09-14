@@ -212,6 +212,7 @@ private:
     std::unique_ptr<CommandPalette> palette_;
     std::unique_ptr<FileExplorer> explorer_;
     GitClient git_;
+    bool gitPickMerge_ = false;   // next branch picker result -> merge target
     std::unique_ptr<HexPanel> hex_;
     std::unique_ptr<StdfPanel> stdf_;
     std::unique_ptr<CsvPanel> csv_;

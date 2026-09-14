@@ -448,6 +448,21 @@ int main() {
                 CHECK(xfs::GitClient::Run(repo.wstring(),
                                           L"checkout HEAD -- mine53.txt", rv));
             }
+            {   // batch 55: merge the remote branch into the diverged head
+                std::string mo;
+                CHECK(xfs::GitClient::Run(
+                    repo.wstring(),
+                    std::wstring(id) + L"-c core.editor=true merge --no-edit " +
+                        QuoteArg(L"or52/" + head2),
+                    mo, nullptr, 60000, false));
+                std::error_code ec55;
+                CHECK(fs::exists(repo / "rr.txt", ec55));
+                std::string so;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"status --porcelain=v1 -b -z", so));
+                auto tr = ParseTracking(so);
+                CHECK(tr.hasUpstream && tr.ahead == 2 && tr.behind == 0);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

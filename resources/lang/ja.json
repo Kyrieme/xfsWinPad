@@ -671,6 +671,7 @@
    "git.branch.bad": "無効なブランチ名です。",
    "git.fetch": "フェッチ",
    "git.pull": "プル",
+   "git.merge": "ブランチをマージ",
    "git.revert": "変更を破棄",
    "git.revert.confirm": "\"{0}\" の未コミット変更を破棄しますか？元に戻せません。",
    "git.push": "プッシュ",

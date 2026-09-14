@@ -671,6 +671,7 @@
   "git.branch.bad": "잘못된 브랜치 이름입니다.",
   "git.fetch": "페치",
   "git.pull": "풀",
+  "git.merge": "브랜치 병합",
   "git.revert": "변경 내용 버리기",
   "git.revert.confirm": "\"{0}\"의 커밋되지 않은 변경을 버립니까? 되돌릴 수 없습니다.",
   "git.push": "푸시",
