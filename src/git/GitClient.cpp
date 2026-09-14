@@ -1,5 +1,6 @@
 #include "git/GitClient.h"
 
+#include <cstdio>
 #include <thread>
 #include <vector>
 
@@ -300,6 +301,28 @@ bool GitClient::RevertFile(const std::wstring& absPath) {
     if (rel.empty()) { *cmdBusy_ = false; return false; }
     StartOp(GitOpKind::Revert, L"checkout -- " + git::QuoteArg(rel), absPath);
     Logger::Info("git: revert " + WideToUtf8(rel));
+    return true;
+}
+
+bool GitClient::Stash() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    // Auto-timestamped message so `stash push -m` never needs an editor.
+    SYSTEMTIME st;
+    ::GetLocalTime(&st);
+    wchar_t stamp[40];
+    std::swprintf(stamp, 40, L"%04d-%02d-%02d %02d:%02d:%02d",
+                  st.wYear, st.wMonth, st.wDay,
+                  st.wHour, st.wMinute, st.wSecond);
+    std::wstring msg = std::wstring(L"xfsWinPad ") + stamp;
+    StartOp(GitOpKind::Stash, L"stash push -m " + git::QuoteArg(msg), L"");
+    Logger::Info("git: stash started");
+    return true;
+}
+
+bool GitClient::Unstash() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    StartOp(GitOpKind::Unstash, L"stash pop", L"");
+    Logger::Info("git: unstash started");
     return true;
 }
 

@@ -672,6 +672,8 @@
    "git.fetch": "フェッチ",
    "git.pull": "プル",
    "git.merge": "ブランチをマージ",
+   "git.stash": "変更を一時保存",
+   "git.unstash": "一時保存を復元",
    "git.revert": "変更を破棄",
    "git.revert.confirm": "\"{0}\" の未コミット変更を破棄しますか？元に戻せません。",
    "git.push": "プッシュ",

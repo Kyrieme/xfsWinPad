@@ -36,6 +36,7 @@ struct GitBlobResult {
 enum class GitOpKind : int {
     Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
     CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8, Revert = 9, Merge = 10,
+    Stash = 11, Unstash = 12,
 };
 
 struct GitOpResult {
@@ -77,6 +78,10 @@ public:
     // Discard uncommitted changes in one file: `git checkout -- <rel>`.
     // Refuses for untracked paths (nothing to revert from HEAD).
     bool RevertFile(const std::wstring& absPath);
+    // Stash tracked local changes under an auto-timestamped message, and
+    // pop the most recent stash back (both whole-repo ops).
+    bool Stash();
+    bool Unstash();
 
     void ClearNow();  // folder closed / non-repo: drop everything synchronously
 
