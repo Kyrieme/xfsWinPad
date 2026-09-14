@@ -284,6 +284,15 @@ bool GitClient::Pull() {
     return true;
 }
 
+bool GitClient::RevertFile(const std::wstring& absPath) {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    std::wstring rel = RelOf(absPath);
+    if (rel.empty()) { *cmdBusy_ = false; return false; }
+    StartOp(GitOpKind::Revert, L"checkout -- " + git::QuoteArg(rel), absPath);
+    Logger::Info("git: revert " + WideToUtf8(rel));
+    return true;
+}
+
 std::wstring GitClient::RelOf(const std::wstring& absPath) const {
     if (root_.empty()) return std::wstring();
     std::wstring r = root_;

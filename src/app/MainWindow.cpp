@@ -3994,6 +3994,18 @@ void MainWindow::WireExplorerGit() {
     explorer_->onGitPull = [this]() {
         if (!git_.Pull()) Logger::Warn("git: pull could not start");
     };
+    explorer_->onGitRevert = [this](const std::wstring& path) {
+        if (!git_.HasRoot()) return;
+        std::wstring msg = I18n::Instance().Fmt(Tr(L"git.revert.confirm"),
+                                                {path});
+        if (::MessageBoxW(hwnd_, msg.c_str(), L"xfsWinPad",
+                           MB_OKCANCEL | MB_ICONWARNING) != IDOK) {
+            Logger::Info("git: revert cancelled " + WideToUtf8(path));
+            return;
+        }
+        if (!git_.RevertFile(path))
+            Logger::Warn("git: revert could not start");
+    };
     explorer_->onGitPush = [this]() {
         if (!git_.Push()) Logger::Warn("git: push could not start");
     };
@@ -4074,6 +4086,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Push ? Tr(L"git.push") :
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
+        res->kind == GitOpKind::Revert ? Tr(L"git.revert") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
     if (!res->ok) {

@@ -35,7 +35,7 @@ struct GitBlobResult {
 
 enum class GitOpKind : int {
     Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
-    CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8,
+    CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8, Revert = 9,
 };
 
 struct GitOpResult {
@@ -73,6 +73,9 @@ public:
     bool Push();
     bool Fetch();
     bool Pull();
+    // Discard uncommitted changes in one file: `git checkout -- <rel>`.
+    // Refuses for untracked paths (nothing to revert from HEAD).
+    bool RevertFile(const std::wstring& absPath);
 
     void ClearNow();  // folder closed / non-repo: drop everything synchronously
 
