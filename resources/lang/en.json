@@ -670,6 +670,7 @@
    "git.branch.new.prompt": "New branch name (created from the current commit and switched to):",
    "git.branch.bad": "Invalid branch name.",
    "git.fetch": "Fetch",
+   "git.pull": "Pull",
    "git.push": "Push",
 
   "term.copy": "Copy\tCtrl+C",

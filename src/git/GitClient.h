@@ -35,7 +35,7 @@ struct GitBlobResult {
 
 enum class GitOpKind : int {
     Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
-    CreateBranch = 5, Push = 6, Fetch = 7,
+    CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8,
 };
 
 struct GitOpResult {
@@ -72,6 +72,7 @@ public:
     bool CreateBranch(const std::wstring& branch);
     bool Push();
     bool Fetch();
+    bool Pull();
 
     void ClearNow();  // folder closed / non-repo: drop everything synchronously
 

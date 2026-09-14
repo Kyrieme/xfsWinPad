@@ -275,6 +275,15 @@ bool GitClient::Fetch() {
     return true;
 }
 
+bool GitClient::Pull() {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    // ff-only: never surprises the user with surprise merges; a divergence
+    // exits non-zero and is surfaced via the generic op-fail dialog.
+    StartOp(GitOpKind::Pull, L"pull --ff-only", L"", 120000, true);
+    Logger::Info("git: pull started");
+    return true;
+}
+
 std::wstring GitClient::RelOf(const std::wstring& absPath) const {
     if (root_.empty()) return std::wstring();
     std::wstring r = root_;

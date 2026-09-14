@@ -3991,6 +3991,9 @@ void MainWindow::WireExplorerGit() {
     explorer_->onGitFetch = [this]() {
         if (!git_.Fetch()) Logger::Warn("git: fetch could not start");
     };
+    explorer_->onGitPull = [this]() {
+        if (!git_.Pull()) Logger::Warn("git: pull could not start");
+    };
     explorer_->onGitPush = [this]() {
         if (!git_.Push()) Logger::Warn("git: push could not start");
     };
@@ -4070,6 +4073,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::CreateBranch ? Tr(L"git.branch.new") :
         res->kind == GitOpKind::Push ? Tr(L"git.push") :
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :
+        res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
     if (!res->ok) {

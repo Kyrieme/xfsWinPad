@@ -40,6 +40,7 @@ public:
     std::function<void()> onGitBranchNew;
     std::function<void()> onGitPush;
     std::function<void()> onGitFetch;
+    std::function<void()> onGitPull;
 
     // git working-set coloring: lowercase abs path -> state (shared snapshot)
     void SetGitStates(std::shared_ptr<const git::StateMap> states) {
