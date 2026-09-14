@@ -666,6 +666,9 @@
    "git.branch": "ブランチを切り替え…",
    "git.branch.pick": "切り替え先のブランチを選択:",
    "git.checkout.dirty": "未コミットの変更があり、切り替え先と衝突する可能性があります。続行しますか?",
+   "git.branch.new": "新しいブランチ…",
+   "git.branch.new.prompt": "新しいブランチ名 (現在のコミットから作成して切り替えます):",
+   "git.branch.bad": "無効なブランチ名です。",
 
   "term.copy": "コピー\tCtrl+C",
   "term.pasteinput": "入力行へ貼り付け\tCtrl+V",

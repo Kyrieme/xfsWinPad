@@ -129,6 +129,8 @@ BranchTracking ParseTracking(const std::string& out) {
 
 std::vector<BranchEntry> ParseBranchList(const std::string& out) {
     std::vector<BranchEntry> list;
+    static const char kHeads[] = "refs/heads/";
+    static const char kRemotes[] = "refs/remotes/";
     size_t pos = 0;
     while (pos < out.size()) {
         size_t nl = out.find('\n', pos);
@@ -137,12 +139,43 @@ std::vector<BranchEntry> ParseBranchList(const std::string& out) {
         pos = nl + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.size() < 2) continue;
+        bool current = line[0] == '*';
+        std::string ref = line.substr(1);
         BranchEntry e;
-        e.current = line[0] == '*';
-        e.name = Utf8ToWide(line.substr(1));
+        e.current = current;
+        if (ref.rfind(kHeads, 0) == 0) {
+            e.name = Utf8ToWide(ref.substr(sizeof(kHeads) - 1));
+        } else if (ref.rfind(kRemotes, 0) == 0) {
+            std::string rem = ref.substr(sizeof(kRemotes) - 1);  // origin/main
+            if (rem == "HEAD" || (rem.size() > 5 && rem.compare(rem.size() - 5, 5, "/HEAD") == 0))
+                continue;  // remote HEAD symref, not a branch
+            e.name = Utf8ToWide(rem);
+            e.remote = true;
+        } else {
+            continue;
+        }
         if (!e.name.empty()) list.push_back(std::move(e));
     }
     return list;
+}
+
+bool BranchNameOk(const std::wstring& name) {
+    if (name.empty()) return false;
+    if (name.front() == L'/' || name.back() == L'/' || name.back() == L'.')
+        return false;
+    if (name.front() == L'-') return false;
+    if (name.find(L"..") != std::wstring::npos) return false;
+    if (name.find(L"//") != std::wstring::npos) return false;
+    if (name.find(L"@{") != std::wstring::npos) return false;
+    if (name.size() >= 5 && name.compare(name.size() - 5, 5, L".lock") == 0)
+        return false;
+    for (wchar_t c : name) {
+        if (c <= L' ' || c == 0x7F) return false;
+        if (c == L'~' || c == L'^' || c == L':' || c == L'?' || c == L'*' ||
+            c == L'[' || c == L'\\')
+            return false;
+    }
+    return true;
 }
 
 static int ColorRank(FileState s) {

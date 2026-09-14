@@ -666,6 +666,9 @@
   "git.branch": "切换分支…",
   "git.branch.pick": "选择要切换到的分支：",
   "git.checkout.dirty": "存在未提交的更改，可能与目标分支冲突。仍要切换吗？",
+  "git.branch.new": "新建分支…",
+  "git.branch.new.prompt": "新分支名称（基于当前提交创建并切换）：",
+  "git.branch.bad": "无效的分支名称。",
 
   "term.copy": "复制\tCtrl+C",
   "term.pasteinput": "粘贴到输入行\tCtrl+V",

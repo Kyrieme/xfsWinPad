@@ -666,6 +666,9 @@
    "git.branch": "Switch Branch…",
    "git.branch.pick": "Select a branch to switch to:",
    "git.checkout.dirty": "You have uncommitted changes that may conflict with the target branch. Switch anyway?",
+   "git.branch.new": "New Branch…",
+   "git.branch.new.prompt": "New branch name (created from the current commit and switched to):",
+   "git.branch.bad": "Invalid branch name.",
 
   "term.copy": "Copy\tCtrl+C",
   "term.pasteinput": "Paste to Input\tCtrl+V",

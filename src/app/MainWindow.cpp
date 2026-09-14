@@ -3971,6 +3971,23 @@ void MainWindow::WireExplorerGit() {
         if (!git_.ListBranches())
             Logger::Warn("git: branch list could not start");
     };
+    explorer_->onGitBranchNew = [this]() {
+        if (!git_.HasRoot()) return;
+        std::wstring name;
+        if (!InputBox(hwnd_, inst_, Tr(L"git.branch.new"),
+                      Tr(L"git.branch.new.prompt"), name))
+            return;
+        while (!name.empty() && name.back() == L' ') name.pop_back();
+        while (!name.empty() && name.front() == L' ') name.erase(name.begin());
+        if (name.empty()) return;
+        if (!git::BranchNameOk(name)) {
+            MessageBoxW(hwnd_, Tr(L"git.branch.bad"), L"xfsWinPad",
+                        MB_OK | MB_ICONWARNING);
+            return;
+        }
+        if (!git_.CreateBranch(name))
+            Logger::Warn("git: branch create could not start");
+    };
 }
 
 void MainWindow::GitStagePath(const std::wstring& absPath, bool unstage) {
@@ -4004,16 +4021,26 @@ void MainWindow::OnGitOp(GitOpResult* res) {
             return;
         }
         std::vector<std::wstring> names;
+        std::vector<std::wstring> checkoutName;
         int cur = -1;
         for (size_t i = 0; i < branches.size(); ++i) {
             names.push_back(branches[i].name);
+            if (branches[i].remote) {
+                // "origin/main" -> "main": git DWIM creates the tracking branch
+                auto slash = branches[i].name.find(L'/');
+                checkoutName.push_back(slash == std::wstring::npos
+                                           ? branches[i].name
+                                           : branches[i].name.substr(slash + 1));
+            } else {
+                checkoutName.push_back(branches[i].name);
+            }
             if (branches[i].current) cur = (int)i;
         }
         int sel = -1;
         if (!ListPicker(hwnd_, inst_, Tr(L"git.branch"), Tr(L"git.branch.pick"),
                         names, cur, sel))
             return;
-        const std::wstring& target = names[sel];
+        const std::wstring& target = checkoutName[sel];
         bool dirty = false;
         if (auto st = git_.States())
             for (auto& [path, state] : *st)
@@ -4034,6 +4061,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Commit ? Tr(L"git.commit") :
         res->kind == GitOpKind::Unstage ? Tr(L"git.unstage") :
         res->kind == GitOpKind::Checkout ? Tr(L"git.branch") :
+        res->kind == GitOpKind::CreateBranch ? Tr(L"git.branch.new") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
     if (!res->ok) {

@@ -48,13 +48,20 @@ struct BranchTracking {
 };
 BranchTracking ParseTracking(const std::string& out);
 
-// Parses `for-each-ref --format=%(HEAD)%(refname:short) refs/heads` stdout:
-// one line per branch, first char '*' (current) or ' ', UTF-8 name after.
+// Parses `for-each-ref --format=%(HEAD)%(refname) refs/heads refs/remotes`
+// stdout: one line per ref, first char '*' (current) or ' ', full UTF-8 ref
+// name after. refs/heads/* become local entries; refs/remotes/<r>/<b> become
+// remote entries named "<r>/<b>" (the <r>/HEAD symref line is skipped).
 struct BranchEntry {
     std::wstring name;
     bool current = false;
+    bool remote = false;
 };
 std::vector<BranchEntry> ParseBranchList(const std::string& out);
+
+// Cheap client-side sanity check for a new branch name (git check-ref-format
+// stays the authority; this only blocks clearly broken input early).
+bool BranchNameOk(const std::wstring& name);
 
 // Trims a `rev-parse --abbrev-ref HEAD` stdout line.
 std::wstring ParseBranch(const std::string& out);
