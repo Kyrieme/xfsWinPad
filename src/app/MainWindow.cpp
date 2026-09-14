@@ -3968,9 +3968,12 @@ void MainWindow::WireExplorerGit() {
         GitCommitDialog();
     };
     explorer_->onGitBranch = [this]() {
-        gitPick_ = GitPick::None;
-        if (!git_.ListBranches())
-            Logger::Warn("git: branch list could not start");
+        if (!git_.HasRoot()) return;
+        gitPick_ = GitPick::Switch;   // OnGitOp(Fetch) chains into the picker
+        if (!git_.Fetch()) {
+            gitPick_ = GitPick::None;
+            Logger::Warn("git: pre-switch fetch could not start");
+        }
     };
     explorer_->onGitMerge = [this]() {
         if (!git_.HasRoot()) return;
@@ -4084,6 +4087,18 @@ void MainWindow::OnGitOp(GitOpResult* res) {
     std::unique_ptr<GitOpResult> guard(res);
     GitPick pick = gitPick_;
     gitPick_ = GitPick::None;   // consumed once, whatever the outcome
+    if (res->kind == GitOpKind::Fetch && pick == GitPick::Switch) {
+        // pre-switch fetch: a dead network must only degrade the picker to
+        // local refs, so failures are logged, never dialogged.
+        if (!res->ok)
+            Logger::Warn("git: pre-switch fetch failed: " + res->output);
+        else
+            Logger::Info("git: pre-switch fetch ok");
+        git_.RequestForPath(git_.Root());   // refresh ahead/behind from new refs
+        if (!git_.ListBranches())
+            Logger::Warn("git: branch list could not start");
+        return;
+    }
     if (res->kind == GitOpKind::ListBranches && res->ok) {
         auto branches = git::ParseBranchList(res->output);
         if (branches.empty()) {
