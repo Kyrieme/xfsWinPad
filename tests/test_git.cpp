@@ -557,6 +557,20 @@ int main() {
                 CHECK(xfs::GitClient::Run(repo.wstring(),
                                           L"branch -D side58", bl));
             }
+            {   // batch 59: fetch surfaces fresh remote branches for the picker
+                std::string o59;
+                CHECK(xfs::GitClient::Run(w2.wstring(),
+                                          L"checkout -qb new59", o59));
+                CHECK(xfs::GitClient::Run(w2.wstring(),
+                                          L"push -q -u origin new59", o59));
+                std::string ba;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"branch -a", ba));
+                CHECK(ba.find("or52/new59") == std::string::npos);
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"fetch -q or52", o59));
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"branch -a", ba));
+                CHECK(ba.find("or52/new59") != std::string::npos);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }
