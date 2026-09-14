@@ -4163,6 +4163,22 @@ void MainWindow::OnGitOp(GitOpResult* res) {
                 return;
             }
         }
+        if (branches[sel].remote) {
+            // A remote row whose short name also sits on another remote is
+            // DWIM-ambiguous; with no local counterpart git would refuse it
+            // opaquely, so --track the exact ref the user clicked instead.
+            bool otherRemote = false, localSame = false;
+            for (size_t i = 0; i < branches.size(); ++i) {
+                if (i == (size_t)sel || checkoutName[i] != target) continue;
+                if (branches[i].remote) otherRemote = true;
+                else localSame = true;
+            }
+            if (otherRemote && !localSame) {
+                if (!git_.CheckoutTrack(branches[sel].name))
+                    Logger::Warn("git: track checkout could not start");
+                return;
+            }
+        }
         if (!git_.Checkout(target))
             Logger::Warn("git: checkout could not start");
         return;
@@ -4171,6 +4187,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Commit ? Tr(L"git.commit") :
         res->kind == GitOpKind::Unstage ? Tr(L"git.unstage") :
         res->kind == GitOpKind::Checkout ? Tr(L"git.branch") :
+        res->kind == GitOpKind::CheckoutTrack ? Tr(L"git.branch") :
         res->kind == GitOpKind::CreateBranch ? Tr(L"git.branch.new") :
         res->kind == GitOpKind::Push ? Tr(L"git.push") :
         res->kind == GitOpKind::Fetch ? Tr(L"git.fetch") :

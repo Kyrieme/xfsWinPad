@@ -253,6 +253,19 @@ bool GitClient::Checkout(const std::wstring& branch) {
     return true;
 }
 
+bool GitClient::CheckoutTrack(const std::wstring& remoteBranch) {
+    if (!HasRoot() || disabled_ || remoteBranch.empty() ||
+        cmdBusy_->exchange(true))
+        return false;
+    // Explicit --track skips DWIM, which on multi-remote name clashes dies
+    // with an opaque "matched multiple remote tracking branches"; the picker
+    // row already encodes the user's remote choice in the full ref.
+    StartOp(GitOpKind::CheckoutTrack,
+            L"checkout --track " + git::QuoteArg(remoteBranch), remoteBranch);
+    Logger::Info("git: track checkout started " + WideToUtf8(remoteBranch));
+    return true;
+}
+
 bool GitClient::CreateBranch(const std::wstring& branch) {
     if (!HasRoot() || disabled_ || branch.empty() || cmdBusy_->exchange(true))
         return false;
