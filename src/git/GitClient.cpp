@@ -296,6 +296,21 @@ bool GitClient::DeleteBranch(const std::wstring& branch) {
     return true;
 }
 
+bool GitClient::DeleteRemoteBranch(const std::wstring& remote,
+                                   const std::wstring& branch) {
+    if (!HasRoot() || disabled_ || remote.empty() || branch.empty() ||
+        cmdBusy_->exchange(true))
+        return false;
+    // Irreversible for other clones, so callers must confirm beforehand.
+    StartOp(GitOpKind::DeleteRemoteBranch,
+            L"push --delete " + git::QuoteArg(remote) + L" " +
+                git::QuoteArg(branch),
+            remote + L"/" + branch, 120000, true);
+    Logger::Info("git: remote branch delete started " +
+                 WideToUtf8(remote + L"/" + branch));
+    return true;
+}
+
 bool GitClient::RenameBranch(const std::wstring& newName) {
     if (!HasRoot() || disabled_ || newName.empty() || cmdBusy_->exchange(true))
         return false;

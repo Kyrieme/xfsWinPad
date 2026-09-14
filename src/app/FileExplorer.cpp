@@ -213,7 +213,8 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                    (inRepo && onGitFetch) || (inRepo && onGitPull) ||
                     (inRepo && onGitMerge) || (inRepo && onGitStash) ||
                     (inRepo && onGitUnstash) ||
-                    (inRepo && onGitBranchDel) || (inRepo && onGitBranchRen);
+                    (inRepo && onGitBranchDel) || (inRepo && onGitBranchRen) ||
+                    (inRepo && onGitBranchDelRemote);
 
 
 
@@ -238,6 +239,9 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
                 ::AppendMenuW(menu, MF_STRING, 22, Tr(L"git.branch.del"));
             if (inRepo && onGitBranchRen)
                 ::AppendMenuW(menu, MF_STRING, 23, Tr(L"git.branch.ren"));
+            if (inRepo && onGitBranchDelRemote)
+                ::AppendMenuW(menu, MF_STRING, 24,
+                              Tr(L"git.branch.delremote"));
             if (inRepo && onGitFetch)
                 ::AppendMenuW(menu, MF_STRING, 15, Tr(L"git.fetch"));
             if (inRepo && onGitPull)
@@ -303,6 +307,7 @@ void FileExplorer::ShowContextMenu(POINT screenPt) {
         case 21: if (onGitUnstash) onGitUnstash(); break;
         case 22: if (onGitBranchDel) onGitBranchDel(); break;
         case 23: if (onGitBranchRen) onGitBranchRen(); break;
+        case 24: if (onGitBranchDelRemote) onGitBranchDelRemote(); break;
     }
 }
 

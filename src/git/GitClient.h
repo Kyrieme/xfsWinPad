@@ -37,7 +37,7 @@ enum class GitOpKind : int {
     Stage = 0, Unstage = 1, Commit = 2, ListBranches = 3, Checkout = 4,
     CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8, Revert = 9, Merge = 10,
     Stash = 11, Unstash = 12, DeleteBranch = 13, RenameBranch = 14,
-    CheckoutTrack = 15,
+    CheckoutTrack = 15, DeleteRemoteBranch = 16,
 };
 
 struct GitOpResult {
@@ -77,6 +77,8 @@ public:
     // Safe delete of a local branch: `git branch -d <name>`. Git itself
     // refuses unmerged branches, so no extra confirmation is needed.
     bool DeleteBranch(const std::wstring& branch);
+    bool DeleteRemoteBranch(const std::wstring& remote,
+                            const std::wstring& branch);
     bool RenameBranch(const std::wstring& newName);
     bool Push();
     bool Fetch();
