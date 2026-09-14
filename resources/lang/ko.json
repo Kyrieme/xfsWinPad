@@ -669,6 +669,8 @@
   "git.branch.new": "새 브랜치…",
   "git.branch.new.prompt": "새 브랜치 이름(현재 커밋에서 생성 및 전환):",
   "git.branch.bad": "잘못된 브랜치 이름입니다.",
+  "git.fetch": "페치",
+  "git.push": "푸시",
 
   "term.copy": "복사\tCtrl+C",
   "term.pasteinput": "입력 줄에 붙여넣기\tCtrl+V",
