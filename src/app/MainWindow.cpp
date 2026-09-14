@@ -3991,6 +3991,14 @@ void MainWindow::WireExplorerGit() {
             Logger::Warn("git: branch list could not start");
         }
     };
+    explorer_->onGitBranchDelRemote = [this]() {
+        if (!git_.HasRoot()) return;
+        gitPick_ = GitPick::DeleteRemoteBranch;
+        if (!git_.ListBranches()) {
+            gitPick_ = GitPick::None;
+            Logger::Warn("git: branch list could not start");
+        }
+    };
     explorer_->onGitBranchNew = [this]() {
         if (!git_.HasRoot()) return;
         std::wstring name;
@@ -4123,6 +4131,40 @@ void MainWindow::OnGitOp(GitOpResult* res) {
                 Logger::Warn("git: branch delete could not start");
             return;
         }
+        if (pick == GitPick::DeleteRemoteBranch) {
+            // refs/remotes entries already have HEAD pruned by ParseBranchList
+            std::vector<std::wstring> rems;
+            for (const auto& b : branches)
+                if (b.remote) rems.push_back(b.name);  // "or52/head2"
+            if (rems.empty()) {
+                Logger::Info("git: no remote branch to delete");
+                return;
+            }
+            int selR = -1;
+            if (!ListPicker(hwnd_, inst_, Tr(L"git.branch.delremote"),
+                             Tr(L"git.branch.delremote.pick"), rems, -1, selR))
+                return;
+            // remote name stops at the first '/', the branch may contain more
+            const std::wstring& full = rems[selR];
+            size_t slash = full.find(L'/');
+            if (slash == std::wstring::npos) {
+                Logger::Warn("git: malformed remote branch " + WideToUtf8(full));
+                return;
+            }
+            std::wstring remote = full.substr(0, slash);
+            std::wstring branch = full.substr(slash + 1);
+            std::wstring msg = std::wstring(Tr(L"git.branch.delremote.confirm")) +
+                               L"\n" + full;
+            if (MessageBoxW(hwnd_, msg.c_str(), L"xfsWinPad",
+                            MB_OKCANCEL | MB_ICONWARNING) != IDOK) {
+                Logger::Info("git: remote branch delete cancelled " +
+                             WideToUtf8(full));
+                return;
+            }
+            if (!git_.DeleteRemoteBranch(remote, branch))
+                Logger::Warn("git: remote branch delete could not start");
+            return;
+        }
         std::vector<std::wstring> names;
         std::vector<std::wstring> checkoutName;
         int cur = -1;
@@ -4194,6 +4236,8 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Pull ? Tr(L"git.pull") :
         res->kind == GitOpKind::Merge ? Tr(L"git.merge") :
         res->kind == GitOpKind::DeleteBranch ? Tr(L"git.branch.del") :
+        res->kind == GitOpKind::DeleteRemoteBranch ?
+            Tr(L"git.branch.delremote") :
         res->kind == GitOpKind::RenameBranch ? Tr(L"git.branch.ren") :
         res->kind == GitOpKind::Stash ? Tr(L"git.stash") :
         res->kind == GitOpKind::Unstash ? Tr(L"git.unstash") :

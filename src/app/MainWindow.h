@@ -212,7 +212,9 @@ private:
     std::unique_ptr<CommandPalette> palette_;
     std::unique_ptr<FileExplorer> explorer_;
     GitClient git_;
-    enum class GitPick : int { None = 0, Merge, DeleteBranch, Switch };
+    enum class GitPick : int {
+        None = 0, Merge, DeleteBranch, Switch, DeleteRemoteBranch
+    };
     GitPick gitPick_ = GitPick::None;  // next branch picker result -> target op
     std::unique_ptr<HexPanel> hex_;
     std::unique_ptr<StdfPanel> stdf_;

@@ -621,6 +621,18 @@ int main() {
                                           L"branch -D amb60", o60));
                 fs::remove_all(bare3, ec52);
             }
+            {   // batch 61: remote branch delete via push --delete
+                std::string b61;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"push --delete or52 new59", b61));
+                std::string ba61;
+                CHECK(xfs::GitClient::Run(repo.wstring(), L"branch -a", ba61));
+                CHECK(ba61.find("or52/new59") == std::string::npos);
+                std::string lr61;
+                CHECK(xfs::GitClient::Run(repo.wstring(),
+                                          L"ls-remote --heads or52", lr61));
+                CHECK(lr61.find("new59") == std::string::npos);
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }
