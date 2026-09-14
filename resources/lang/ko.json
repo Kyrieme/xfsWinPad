@@ -681,6 +681,7 @@
   "git.pull": "풀",
   "git.merge": "브랜치 병합",
   "git.merge.abort": "병합 됝단",
+  "git.log": "파일 이력",
   "git.stash": "변경 내용 임시 저장",
   "git.unstash": "임시 저장 복원",
   "git.revert": "변경 내용 버리기",

@@ -161,13 +161,20 @@ bool GitClient::OnDone(GitSnapshot* snap) {
 
 bool GitClient::FetchHeadBlob(const std::wstring& absPath,
                               const std::wstring& tempPath) {
-    if (!HasRoot() || blobBusy_.exchange(true)) return false;
+    return FetchBlobRev(L"HEAD", absPath, tempPath);
+}
+
+bool GitClient::FetchBlobRev(const std::wstring& rev,
+                             const std::wstring& absPath,
+                             const std::wstring& tempPath) {
+    if (!HasRoot() || rev.empty() || blobBusy_->exchange(true)) return false;
     std::wstring rel = RelOf(absPath);
-    if (rel.empty()) { blobBusy_ = false; return false; }
+    if (rel.empty()) { blobBusy_->store(false); return false; }
     std::wstring root = root_;
-    std::wstring args = L"show --textconv \"HEAD:" + rel + L"\"";
+    std::shared_ptr<std::atomic<bool>> busy = blobBusy_;
+    std::wstring args = L"show --textconv \"" + rev + L":" + rel + L"\"";
     HWND main = main_;
-    std::thread([main, root, args, absPath, tempPath]() {
+    std::thread([main, root, args, absPath, tempPath, busy]() {
         auto* res = new GitBlobResult;
         res->absPath = absPath;
         res->tempPath = tempPath;
@@ -184,6 +191,7 @@ bool GitClient::FetchHeadBlob(const std::wstring& absPath,
                 res->ok = false;
             }
         }
+        busy->store(false);
         if (main) ::PostMessageW(main, WM_APP_GIT_BLOB, 0, (LPARAM)res);
         else delete res;
     }).detach();
@@ -328,6 +336,16 @@ bool GitClient::MergeAbort() {
     // failure dialog surfaces it verbatim, same precedent as branch -d.
     StartOp(GitOpKind::MergeAbort, L"merge --abort", L"");
     Logger::Info("git: merge abort started");
+    return true;
+}
+
+bool GitClient::FileHistory(const std::wstring& absPath) {
+    if (!HasRoot() || disabled_ || cmdBusy_->exchange(true)) return false;
+    std::wstring rel = RelOf(absPath);
+    if (rel.empty()) { *cmdBusy_ = false; return false; }
+    StartOp(GitOpKind::History,
+            L"log --oneline -n 30 -- " + git::QuoteArg(rel), absPath);
+    Logger::Info("git: file history started " + WideToUtf8(rel));
     return true;
 }
 

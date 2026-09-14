@@ -3927,6 +3927,23 @@ void MainWindow::GitCompareWithHead(const std::wstring& absPath) {
     Logger::Info("git: compare HEAD started for " + WideToUtf8(absPath));
 }
 
+void MainWindow::GitShowRevision(const std::wstring& absPath,
+                                 const std::wstring& rev) {
+    if (!git_.HasRoot() || rev.empty()) return;
+    wchar_t base[MAX_PATH]{};
+    if (!::GetTempPathW(MAX_PATH, base)) return;
+    std::wstring dir = std::wstring(base) + L"xfsWinPad\\git\\";
+    ::SHCreateDirectoryExW(hwnd_, dir.c_str(), nullptr);
+    std::wstring name = std::filesystem::path(absPath).filename().wstring();
+    size_t h = std::hash<std::wstring>{}(absPath + rev);
+    std::wstring temp = dir + name + L"." + rev + L"-" + std::to_wstring(h) + L".txt";
+    if (!git_.FetchBlobRev(rev, absPath, temp)) {
+        MessageBoxW(hwnd_, Tr(L"git.noblob"), L"xfsWinPad", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    Logger::Info("git: history blob fetch started for " + WideToUtf8(absPath));
+}
+
 void MainWindow::OnGitBlob(GitBlobResult* res) {
     if (!res) return;
     std::unique_ptr<GitBlobResult> guard(res);
@@ -3957,6 +3974,10 @@ void MainWindow::WireExplorerGit() {
     if (!explorer_) return;
     explorer_->onGitCompare = [this](const std::wstring& path) {
         GitCompareWithHead(path);
+    };
+    explorer_->onGitHistory = [this](const std::wstring& path) {
+        if (!git_.FileHistory(path))
+            Logger::Warn("git: file history could not start");
     };
     explorer_->onGitStage = [this](const std::wstring& path) {
         GitStagePath(path, false);
@@ -4111,6 +4132,35 @@ void MainWindow::OnGitOp(GitOpResult* res) {
             Logger::Warn("git: branch list could not start");
         return;
     }
+    if (res->kind == GitOpKind::History && res->ok) {
+        // `git log --oneline` rows: "<hash> <subject>"; the hash feeds the
+        // blob fetch, the whole line is what the user reads.
+        std::vector<std::wstring> rows;
+        std::vector<std::wstring> revs;
+        size_t pos = 0;
+        const std::string& out = res->output;
+        while (pos < out.size()) {
+            size_t nl = out.find('\n', pos);
+            std::string line = out.substr(
+                pos, nl == std::string::npos ? std::string::npos : nl - pos);
+            pos = nl == std::string::npos ? out.size() : nl + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t sp = line.find(' ');
+            if (line.empty() || sp == std::string::npos) continue;
+            revs.push_back(Utf8ToWide(line.substr(0, sp)));
+            rows.push_back(Utf8ToWide(line));
+        }
+        if (rows.empty()) {
+            Logger::Info("git: file history empty");
+            return;
+        }
+        int selH = -1;
+        if (!ListPicker(hwnd_, inst_, Tr(L"git.log"), Tr(L"git.log"),
+                        rows, -1, selH))
+            return;
+        GitShowRevision(res->arg, revs[selH]);
+        return;
+    }
     if (res->kind == GitOpKind::ListBranches && res->ok) {
         auto branches = git::ParseBranchList(res->output);
         if (branches.empty()) {
@@ -4247,6 +4297,7 @@ void MainWindow::OnGitOp(GitOpResult* res) {
         res->kind == GitOpKind::Stash ? Tr(L"git.stash") :
         res->kind == GitOpKind::Unstash ? Tr(L"git.unstash") :
         res->kind == GitOpKind::Revert ? Tr(L"git.revert") :
+        res->kind == GitOpKind::History ? Tr(L"git.log") :
         res->kind == GitOpKind::ListBranches ? Tr(L"git.branch") :
         Tr(L"git.stage");
     if (!res->ok) {

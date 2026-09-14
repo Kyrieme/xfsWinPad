@@ -662,6 +662,41 @@ int main() {
                 CHECK(cur62.find("new59") != std::string::npos);
                 CHECK(xfs::GitClient::Run(w, L"branch -D c62one", o62));
             }
+            {   // batch 63: per-file log + revision blob plumbing
+                std::string o63;
+                const std::wstring r = repo.wstring();
+                { std::ofstream(repo / "h63.txt") << "v1\n"; }
+                CHECK(xfs::GitClient::Run(r, std::wstring(id) + L"add -- h63.txt",
+                                          o63));
+                CHECK(xfs::GitClient::Run(r, std::wstring(id) + L"commit -qm h63-one",
+                                          o63));
+                { std::ofstream(repo / "h63.txt") << "v2\n"; }
+                CHECK(xfs::GitClient::Run(r, std::wstring(id) + L"add -- h63.txt",
+                                          o63));
+                CHECK(xfs::GitClient::Run(r, std::wstring(id) + L"commit -qm h63-two",
+                                          o63));
+                std::string log63;
+                CHECK(xfs::GitClient::Run(r, L"log --oneline -n 30 -- h63.txt",
+                                          log63));
+                size_t nl63 = 0;
+                for (char c : log63) if (c == '\n') ++nl63;
+                CHECK(nl63 == 2);
+                std::string oldest = log63.substr(log63.find('\n') + 1);
+                oldest = oldest.substr(0, oldest.find(' '));
+                std::string blob63;
+                CHECK(xfs::GitClient::Run(
+                    r, L"show --textconv \"" + xfs::Utf8ToWide(oldest) +
+                           L":h63.txt\"", blob63));
+                CHECK(blob63 == "v1\n");
+                std::string gone63;
+                CHECK(!xfs::GitClient::Run(
+                    r, L"show --textconv \"" + xfs::Utf8ToWide(oldest) +
+                           L"^:h63.txt\"", gone63));
+                std::string none63;
+                CHECK(xfs::GitClient::Run(r, L"log --oneline -n 30 -- nofile63.txt",
+                                          none63));
+                CHECK(none63.empty());
+            }
             fs::remove_all(bare2, ec52);
             fs::remove_all(w2, ec52);
         }

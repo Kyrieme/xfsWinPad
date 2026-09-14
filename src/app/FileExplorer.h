@@ -32,6 +32,7 @@ public:
     std::function<void(const std::wstring& path)> onOpenFile;
     // "compare with HEAD" request (git repo files only; unset hides the item)
     std::function<void(const std::wstring& path)> onGitCompare;
+    std::function<void(const std::wstring& path)> onGitHistory;
     // git stage/unstage (item must carry a git state); commit opens dialog
     std::function<void(const std::wstring& path)> onGitStage;
     std::function<void(const std::wstring& path)> onGitUnstage;

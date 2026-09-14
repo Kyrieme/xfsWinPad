@@ -38,6 +38,7 @@ enum class GitOpKind : int {
     CreateBranch = 5, Push = 6, Fetch = 7, Pull = 8, Revert = 9, Merge = 10,
     Stash = 11, Unstash = 12, DeleteBranch = 13, RenameBranch = 14,
     CheckoutTrack = 15, DeleteRemoteBranch = 16, MergeAbort = 17,
+    History = 18,
 };
 
 struct GitOpResult {
@@ -62,6 +63,9 @@ public:
     // One-shot async `git show HEAD:<rel>` -> posted WM_APP_GIT_BLOB.
     // Returns false when preconditions fail (no repo / another fetch busy).
     bool FetchHeadBlob(const std::wstring& absPath, const std::wstring& tempPath);
+    // Same but for an arbitrary revision (commit hash from the history picker).
+    bool FetchBlobRev(const std::wstring& rev, const std::wstring& absPath,
+                      const std::wstring& tempPath);
 
     // Async file/folder ops on the working tree (path must be inside repo).
     // `git add`/`git restore --staged` take a repo-relative path; commit takes
@@ -75,6 +79,9 @@ public:
     bool CreateBranch(const std::wstring& branch);
     bool Merge(const std::wstring& branch);
     bool MergeAbort();
+    // `git log --oneline -n 30 -- <rel>` for one file; the picker then feeds
+    // a chosen hash back into FetchBlobRev for a read-only view.
+    bool FileHistory(const std::wstring& absPath);
     // Safe delete of a local branch: `git branch -d <name>`. Git itself
     // refuses unmerged branches, so no extra confirmation is needed.
     bool DeleteBranch(const std::wstring& branch);
@@ -124,7 +131,7 @@ private:
     std::wstring root_, branch_;
     git::BranchTracking track_;
     std::shared_ptr<git::StateMap> states_;
-    std::atomic<bool> blobBusy_{false};
+    std::shared_ptr<std::atomic<bool>> blobBusy_ = std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<std::atomic<bool>> cmdBusy_ = std::make_shared<std::atomic<bool>>(false);
 };
 
