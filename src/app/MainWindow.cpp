@@ -704,31 +704,33 @@ void MainWindow::BuildMenus() {
 
     HMENU enc = popup(menu_, Tr(L"menu.encoding"));
     HMENU conv = popup(enc, Tr(L"menu.encoding.convert"));
-    item(conv, L"UTF-8",            Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF8);
-    item(conv, L"UTF-8 with &BOM",  Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF8BOM);
-    item(conv, L"UTF-16 &LE",       Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF16LE);
-    item(conv, L"UTF-16 &BE",       Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF16BE);
-    item(conv, L"&ANSI",            Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::ANSI);
+    item(conv, Tr(L"enc.utf8"),      Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF8);
+    item(conv, Tr(L"enc.utf8bom"),   Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF8BOM);
+    item(conv, Tr(L"enc.utf16le"),   Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF16LE);
+    item(conv, Tr(L"enc.utf16be"),   Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF16BE);
+    item(conv, Tr(L"enc.ansi"),      Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::ANSI);
     // batch 39: extended encodings (UTF-32 BOM auto-detects on load; the
     // legacy codepage ones are convert/reload-as only)
-    item(conv, L"UTF-32 L&E",       Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF32LE);
-    item(conv, L"UTF-32 B&E",       Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF32BE);
-    item(conv, L"&Big5",            Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::Big5);
-    item(conv, L"&Shift-JIS",       Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::ShiftJIS);
-    item(conv, L"&KOI8-R",          Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::KOI8R);
-    item(conv, L"&ISO-8859-1",      Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::ISO88591);
+    // batch 65: menu labels are now Tr()-driven (single key set shared with
+    // the reload-as submenu, so no &-mnemonics)
+    item(conv, Tr(L"enc.utf32le"),   Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF32LE);
+    item(conv, Tr(L"enc.utf32be"),   Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::UTF32BE);
+    item(conv, Tr(L"enc.big5"),      Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::Big5);
+    item(conv, Tr(L"enc.shiftjis"),  Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::ShiftJIS);
+    item(conv, Tr(L"enc.koi8r"),     Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::KOI8R);
+    item(conv, Tr(L"enc.iso88591"),  Cmd::EncConvertFirst + (unsigned int)encoding::EncodingType::ISO88591);
     HMENU relas = popup(enc, Tr(L"menu.encoding.reload"));
-    item(relas, L"UTF-8",           Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF8);
-    item(relas, L"UTF-8 with BOM",  Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF8BOM);
-    item(relas, L"UTF-16 LE",       Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF16LE);
-    item(relas, L"UTF-16 BE",       Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF16BE);
-    item(relas, L"ANSI",            Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::ANSI);
-    item(relas, L"UTF-32 LE",       Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF32LE);
-    item(relas, L"UTF-32 BE",       Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF32BE);
-    item(relas, L"Big5",            Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::Big5);
-    item(relas, L"Shift-JIS",       Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::ShiftJIS);
-    item(relas, L"KOI8-R",          Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::KOI8R);
-    item(relas, L"ISO-8859-1",      Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::ISO88591);
+    item(relas, Tr(L"enc.utf8"),     Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF8);
+    item(relas, Tr(L"enc.utf8bom"),  Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF8BOM);
+    item(relas, Tr(L"enc.utf16le"),  Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF16LE);
+    item(relas, Tr(L"enc.utf16be"),  Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF16BE);
+    item(relas, Tr(L"enc.ansi"),     Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::ANSI);
+    item(relas, Tr(L"enc.utf32le"),  Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF32LE);
+    item(relas, Tr(L"enc.utf32be"),  Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::UTF32BE);
+    item(relas, Tr(L"enc.big5"),     Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::Big5);
+    item(relas, Tr(L"enc.shiftjis"), Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::ShiftJIS);
+    item(relas, Tr(L"enc.koi8r"),    Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::KOI8R);
+    item(relas, Tr(L"enc.iso88591"), Cmd::EncReloadAsFirst + (unsigned int)encoding::EncodingType::ISO88591);
 
     HMENU settingsMenu = popup(menu_, Tr(L"menu.settings"));
     item(settingsMenu, Tr(L"menu.settings.prefs"), Cmd::Preferences);
