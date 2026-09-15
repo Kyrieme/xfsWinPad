@@ -972,12 +972,13 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
             std::string sel;
             if (d && d->editor.Hwnd()) {
                 const sptr_t bytes = Sci(d->editor.Hwnd(), SCI_GETSELTEXT, 0, 0);
-                if (bytes > 1) {
-                    // SCI_GETSELTEXT 写 bytes 字节（文本+NUL），缓冲区多留 1
-                    sel.resize((size_t)(bytes - 1) + 1);
+                if (bytes > 0) {
+                    // SCI_GETSELTEXT 返回字节数（不含 NUL），写入仍补结尾
+                    // NUL，缓冲区多留 1；旧代码误按"含 NUL"再 -1 少最后一字符
+                    sel.resize((size_t)bytes + 1);
                     Sci(d->editor.Hwnd(), SCI_GETSELTEXT, 0,
                         (LPARAM)sel.data());
-                    sel.resize((size_t)(bytes - 1));
+                    sel.resize((size_t)bytes);
                 }
             }
             return WideStrTwoCall(Utf8ToWide(sel), wp, lp);
