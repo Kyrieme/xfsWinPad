@@ -44,6 +44,9 @@ struct StartupOptions {
     bool autoDiff = false;   // --diff: compare the first two opened files
     std::wstring logFile;    // --log <file>: open in the log analyzer panel
     bool forceNew = false;   // --new: bypass single-instance forwarding
+    bool firstInstance = true;  // set by wWinMain: owns the legacy session.json
+    bool noRestore = false;  // --no-restore: start blank, skip session restore
+    std::wstring restoreFile;   // --restore <file>: load this session slot only
 };
 
 // 解析命令行（wWinMain 与 WM_COPYDATA 单实例转发共用同一实现）
@@ -176,6 +179,11 @@ private:
     void RunWindowList();         // 窗口 > 窗口列表…（N++ WindowsDlg 风格）
     void RebuildWindowMenuItems();   // 窗口菜单动态文档条目（OnWorkspaceChanged）
     void SpawnWindow(const std::wstring& file); // launch a second xfsWinPad.exe
+    void SpawnWithArgs(const std::wstring& args);
+    void SpawnRestoreWindow(const std::wstring& slotFile);  // --new --restore slot
+    void NewWindowProcess();   // File > New Window (blank, unshared session)
+    void StartupSession();   // CLI files / --restore / legacy restore + fan-out
+    void RestoreSession(const struct SessionState& ss);
     void OpenCliFiles(const StartupOptions& opts); // 单实例转发/启动共用：开文件进标签
 
     HINSTANCE inst_ = nullptr;

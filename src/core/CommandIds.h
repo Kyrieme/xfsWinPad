@@ -15,8 +15,9 @@ enum Cmd : unsigned int {
     FileCloseAll,
     FileReload,
     FileExit,
-    FileOpenFolder,     // 108: open a folder as project workspace
-    FileCloseFolder,    // 109
+    FileOpenFolder,     // 110: open a folder as project workspace
+    FileCloseFolder,    // 111
+    FileNewWindow = 112, // 批次 67 独立新窗口（--new --no-restore）
     FileRecentFirst = 200,       // 200..219 reserved for recent file entries
     FileRecentFolderFirst = 230, // 230..239 reserved for recent folder entries
 

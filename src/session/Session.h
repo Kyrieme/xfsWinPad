@@ -35,7 +35,18 @@ struct SessionState {
     int activeView = 0;                  // which view had focus: 0 = left, 1 = right
 };
 
+std::wstring SessionDir();
 std::wstring SessionFilePath();
+// Multi-window sessions: the first (primary) instance keeps writing the
+// legacy session.json; every extra window writes its own per-pid slot file
+// (session-<pid>.json) so concurrent processes never clobber each other.
+std::wstring SessionSlotPath(bool primary);
+// Lists slot files in `dir` (session-<digits>.json), excluding the one for
+// `excludePid`. Slots untouched for more than `maxAgeDays` are deleted
+// (crash orphans). Pure over `dir` so tests can point it at a temp folder.
+std::vector<std::wstring> SessionSlots(const std::wstring& dir,
+                                       unsigned long excludePid,
+                                       unsigned int maxAgeDays = 30);
 bool SessionSave(const std::wstring& path, const SessionState& s);
 bool SessionLoad(const std::wstring& path, SessionState* out);
 

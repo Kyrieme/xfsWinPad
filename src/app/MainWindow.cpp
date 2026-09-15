@@ -196,6 +196,10 @@ StartupOptions ParseCommandLine(LPCWSTR cmd) {
         } else if (a == L"--new") {
             // 绕过单实例转发：显式开新进程/新窗口
             opts.forceNew = true;
+        } else if (a == L"--no-restore") {
+            opts.noRestore = true;   // 空白窗口：不恢复会话（New Window 命令）
+        } else if (a == L"--restore" && i + 1 < argc) {
+            opts.restoreFile = argv[++i];   // 恢复指定槽位会话（多窗口扇出）
         } else if (!a.empty() && a[0] != L'-') {
             opts.files.push_back(a);
         }
@@ -421,116 +425,9 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
         if (logPanel_) logPanel_->LoadFile(startup_.logFile);
     }
 
-    // startup files from CLI, or restore last session
-    if (!startup_.files.empty()) {
-        OpenCliFiles(startup_);
-    } else {
-        // try session restore
-        SessionState ss;
-        if (SessionLoad(SessionFilePath(), &ss)) {
-            int restored = 0;
-            // 恢复语言菜单手动选择（批次 66 后补：langIndex 入 session.json）。
-            // lang 越界（旧目录版本/手改文件）当作未选，走扩展名探测。
-            auto applyLang = [&](Document* doc, int lang) {
-                if (!doc || lang < 0) return;
-                const LanguageMenuItem* cat = LanguageMenuCatalog();
-                int n = 0;
-                for (; cat[n].label; ++n) {}
-                if (lang >= n) return;
-                doc->langIndex = lang;
-                const char* kw[2] = { cat[lang].keywords[0], cat[lang].keywords[1] };
-                doc->editor.SetLexerByName(cat[lang].lexerName, kw, theme_);
-            };
-            for (auto& e : ss.entries) {
-                if (!e.path.empty() && std::filesystem::exists(e.path)) {
-                    workspace_->OpenPath(e.path);
-                    if (workspace_->Count() > 0) {
-                        Document* doc = workspace_->DocumentAt(workspace_->Count()-1);
-                        if (doc && e.line > 1)
-                            doc->editor.GotoLine(e.line);
-                        if (doc && e.locked) {   // 批次 38：锁定状态入 session
-                            doc->locked = true;
-                            doc->editor.SetReadOnly(true);
-                        }
-                        applyLang(doc, e.lang);
-                        ++restored;
-                    }
-                } else if (!e.text.empty()) {
-                    // untitled snapshot: recreate the scratch tab with its text
-                    workspace_->NewDocument();
-                    Document* doc = workspace_->Active();
-                    if (doc) {
-                        if (!e.name.empty()) doc->SetUntitledName(e.name);
-                        doc->editor.SetTextUtf8(WideToUtf8(e.text));
-                        if (e.line > 1) doc->editor.GotoLine(e.line);
-                        if (e.locked) {
-                            doc->locked = true;
-                            doc->editor.SetReadOnly(true);
-                        }
-                        applyLang(doc, e.lang);
-                        ++restored;
-                    }
-                }
-            }
-
-            // right/other split view: open each file then move it across so a
-            // split session survives the restart.
-            int restored1 = 0;
-            for (auto& e : ss.entries1) {
-                if (!e.path.empty() && std::filesystem::exists(e.path)) {
-                    workspace_->OpenPath(e.path);              // lands in left view
-                    workspace_->MoveActiveToOtherView();       // now in right view
-                    if (e.line > 1 && workspace_->Count1() > 0) {
-                        Document* d = workspace_->Active1();
-                        if (d) d->editor.GotoLine(e.line);
-                    }
-                    if (e.locked && workspace_->Count1() > 0) {
-                        Document* d = workspace_->Active1();
-                        if (d) { d->locked = true; d->editor.SetReadOnly(true); }
-                    }
-                    if (e.lang >= 0 && workspace_->Count1() > 0)
-                        applyLang(workspace_->Active1(), e.lang);
-                    ++restored1;
-                } else if (!e.text.empty()) {
-                    // untitled snapshot in the right view
-                    workspace_->NewDocument();
-                    Document* doc = workspace_->Active();
-                    if (doc) {
-                        if (!e.name.empty()) doc->SetUntitledName(e.name);
-                        doc->editor.SetTextUtf8(WideToUtf8(e.text));
-                        if (e.line > 1) doc->editor.GotoLine(e.line);
-                        if (e.locked) {
-                            doc->locked = true;
-                            doc->editor.SetReadOnly(true);
-                        }
-                        applyLang(doc, e.lang);
-                        workspace_->MoveActiveToOtherView();
-                        if (e.line > 1 && workspace_->Count1() > 0) {
-                            Document* d = workspace_->Active1();
-                            if (d) d->editor.GotoLine(e.line);
-                        }
-                        ++restored1;
-                    }
-                }
-            }
-
-            if (ss.activeView == 1 && restored1 > 0) {
-                int idx = ss.activeIndex1;
-                int cnt = workspace_->Count1();
-                if (idx < 0) idx = 0;
-                if (idx >= cnt) idx = cnt - 1;
-                workspace_->ActivateView1(idx);
-            } else if (ss.activeIndex >= 0 &&
-                       ss.activeIndex < workspace_->Count()) {
-                workspace_->Activate(ss.activeIndex);
-            }
-            Logger::Info("Session restored: " + std::to_string(restored) +
-                         " + " + std::to_string(restored1) + " file(s)");
-        }
-        // 会话缺失/损坏/全部失效 → 兜底空白文档（仅在两视图都为空时）
-        if (workspace_->Count() == 0 && workspace_->Count1() == 0)
-            workspace_->NewDocument();
-    }
+    // 启动会话分派（批次 67 多实例：CLI 文件 / --restore 槽位 / primary 恢复
+    // + 扇出 / 空白窗口），见 StartupSession()。
+    StartupSession();
 
     UpdateWindow(hwnd_);
     if (settings_.winMax) ShowWindow(hwnd_, SW_MAXIMIZE);
@@ -622,6 +519,8 @@ void MainWindow::BuildMenus() {
     item(file, Tr(L"menu.file.closeall"), Cmd::FileCloseAll);
     sep(file);
     item(file, Tr(L"menu.file.reopenclosed"), Cmd::ReopenClosedTab);
+    sep(file);
+    item(file, Tr(L"menu.file.newwindow"), Cmd::FileNewWindow);
     sep(file);
     item(file, Tr(L"menu.file.exit"), Cmd::FileExit);
 
@@ -1037,6 +936,7 @@ const wchar_t* CmdLabel(unsigned int cmd) {
         case Cmd::ViewMoveToOtherView: return Tr(L"cmd.moveother");
         case Cmd::ViewMoveToNewView:   return Tr(L"cmd.movenew");
         case Cmd::ReopenClosedTab:     return Tr(L"menu.file.reopenclosed");
+        case Cmd::FileNewWindow:      return Tr(L"menu.file.newwindow");
         default:                 return L"";
     }
 }
@@ -3159,6 +3059,139 @@ void MainWindow::ApplyAll(const AppSettings& s) {
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+// 批次 67：多实例会话分派。
+//   1) CLI 文件优先，完全绕过会话；
+//   2) --restore <slot>：父进程扇出的子窗口，恢复指定槽位后认领（删除旧槽，
+//      退出时以自身 pid 写新槽）；
+//   3) --no-restore / 非 primary 无参：空白窗口；
+//   4) primary 无参：恢复 session.json，并把其余存活槽位逐个 spawn 成独立
+//      窗口（孤儿槽由 SessionSlots 的 30 天 GC 兜底回收）。
+void MainWindow::StartupSession() {
+    if (!startup_.files.empty()) { OpenCliFiles(startup_); return; }
+    if (!startup_.restoreFile.empty()) {
+        SessionState ss;
+        if (SessionLoad(startup_.restoreFile, &ss)) RestoreSession(ss);
+        std::error_code ec;
+        std::filesystem::remove(startup_.restoreFile, ec);   // claim the slot
+        if (workspace_->Count() == 0 && workspace_->Count1() == 0)
+            workspace_->NewDocument();
+        return;
+    }
+    if (startup_.noRestore || !startup_.firstInstance) {
+        workspace_->NewDocument();
+        return;
+    }
+    SessionState ss;
+    if (SessionLoad(SessionFilePath(), &ss)) RestoreSession(ss);
+    for (const auto& slot : SessionSlots(SessionDir(),
+                                         (unsigned long)::GetCurrentProcessId()))
+        SpawnRestoreWindow(slot);
+    // 会话缺失/损坏/全部失效 → 兜底空白文档（仅在两视图都为空时）
+    if (workspace_->Count() == 0 && workspace_->Count1() == 0)
+        workspace_->NewDocument();
+}
+
+void MainWindow::RestoreSession(const SessionState& ss) {
+    int restored = 0;
+    // 恢复语言菜单手动选择（批次 66 后补：langIndex 入 session.json）。
+    // lang 越界（旧目录版本/手改文件）当作未选，走扩展名探测。
+    auto applyLang = [&](Document* doc, int lang) {
+        if (!doc || lang < 0) return;
+        const LanguageMenuItem* cat = LanguageMenuCatalog();
+        int n = 0;
+        for (; cat[n].label; ++n) {}
+        if (lang >= n) return;
+        doc->langIndex = lang;
+        const char* kw[2] = { cat[lang].keywords[0], cat[lang].keywords[1] };
+        doc->editor.SetLexerByName(cat[lang].lexerName, kw, theme_);
+    };
+    for (auto& e : ss.entries) {
+        if (!e.path.empty() && std::filesystem::exists(e.path)) {
+            workspace_->OpenPath(e.path);
+            if (workspace_->Count() > 0) {
+                Document* doc = workspace_->DocumentAt(workspace_->Count()-1);
+                if (doc && e.line > 1)
+                    doc->editor.GotoLine(e.line);
+                if (doc && e.locked) {   // 批次 38：锁定状态入 session
+                    doc->locked = true;
+                    doc->editor.SetReadOnly(true);
+                }
+                applyLang(doc, e.lang);
+                ++restored;
+            }
+        } else if (!e.text.empty()) {
+            // untitled snapshot: recreate the scratch tab with its text
+            workspace_->NewDocument();
+            Document* doc = workspace_->Active();
+            if (doc) {
+                if (!e.name.empty()) doc->SetUntitledName(e.name);
+                doc->editor.SetTextUtf8(WideToUtf8(e.text));
+                if (e.line > 1) doc->editor.GotoLine(e.line);
+                if (e.locked) {
+                    doc->locked = true;
+                    doc->editor.SetReadOnly(true);
+                }
+                applyLang(doc, e.lang);
+                ++restored;
+            }
+        }
+    }
+
+    // right/other split view: open each file then move it across so a
+    // split session survives the restart.
+    int restored1 = 0;
+    for (auto& e : ss.entries1) {
+        if (!e.path.empty() && std::filesystem::exists(e.path)) {
+            workspace_->OpenPath(e.path);              // lands in left view
+            workspace_->MoveActiveToOtherView();       // now in right view
+            if (e.line > 1 && workspace_->Count1() > 0) {
+                Document* d = workspace_->Active1();
+                if (d) d->editor.GotoLine(e.line);
+            }
+            if (e.locked && workspace_->Count1() > 0) {
+                Document* d = workspace_->Active1();
+                if (d) { d->locked = true; d->editor.SetReadOnly(true); }
+            }
+            if (e.lang >= 0 && workspace_->Count1() > 0)
+                applyLang(workspace_->Active1(), e.lang);
+            ++restored1;
+        } else if (!e.text.empty()) {
+            // untitled snapshot in the right view
+            workspace_->NewDocument();
+            Document* doc = workspace_->Active();
+            if (doc) {
+                if (!e.name.empty()) doc->SetUntitledName(e.name);
+                doc->editor.SetTextUtf8(WideToUtf8(e.text));
+                if (e.line > 1) doc->editor.GotoLine(e.line);
+                if (e.locked) {
+                    doc->locked = true;
+                    doc->editor.SetReadOnly(true);
+                }
+                applyLang(doc, e.lang);
+                workspace_->MoveActiveToOtherView();
+                if (e.line > 1 && workspace_->Count1() > 0) {
+                    Document* d = workspace_->Active1();
+                    if (d) d->editor.GotoLine(e.line);
+                }
+                ++restored1;
+            }
+        }
+    }
+
+    if (ss.activeView == 1 && restored1 > 0) {
+        int idx = ss.activeIndex1;
+        int cnt = workspace_->Count1();
+        if (idx < 0) idx = 0;
+        if (idx >= cnt) idx = cnt - 1;
+        workspace_->ActivateView1(idx);
+    } else if (ss.activeIndex >= 0 &&
+               ss.activeIndex < workspace_->Count()) {
+        workspace_->Activate(ss.activeIndex);
+    }
+    Logger::Info("Session restored: " + std::to_string(restored) +
+                 " + " + std::to_string(restored1) + " file(s)");
+}
+
 void MainWindow::MoveCurrentToNewWindow() {
     Document* d = workspace_->Active();
     if (!d) return;
@@ -3175,12 +3208,27 @@ void MainWindow::MoveCurrentToNewWindow() {
 }
 
 void MainWindow::SpawnWindow(const std::wstring& file) {
+    std::wstring args = L"--new";
+    if (!file.empty())
+        args += L" \"" + file + L"\"";
+    SpawnWithArgs(args);
+}
+
+// 批次 67：primary 扇出——把幸存的窗口槽位交给独立子进程恢复
+void MainWindow::SpawnRestoreWindow(const std::wstring& slotFile) {
+    SpawnWithArgs(L"--new --no-restore --restore \"" + slotFile + L"\"");
+}
+
+// 批次 67：File > New Window (Ctrl+Shift+N)——独立空窗口，不重复恢复会话
+void MainWindow::NewWindowProcess() {
+    SpawnWithArgs(L"--new --no-restore");
+}
+
+void MainWindow::SpawnWithArgs(const std::wstring& args) {
     wchar_t exe[MAX_PATH] = {};
     GetModuleFileNameW(GetModuleHandleW(nullptr), exe, MAX_PATH);
     // --new：绕过单实例转发，真的开一个新进程窗口
-    std::wstring cmd = L"\"" + std::wstring(exe) + L"\" --new";
-    if (!file.empty())
-        cmd += L" \"" + file + L"\"";
+    std::wstring cmd = L"\"" + std::wstring(exe) + L"\" " + args;
     STARTUPINFOW si{ sizeof(si) };
     PROCESS_INFORMATION pi{};
     // second xfsWinPad window in a fresh process keeps this one alive
@@ -3189,7 +3237,7 @@ void MainWindow::SpawnWindow(const std::wstring& file) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
     } else {
-        Logger::Error("SpawnWindow CreateProcessW failed gle=" +
+        Logger::Error("SpawnWithArgs CreateProcessW failed gle=" +
                       std::to_string(::GetLastError()));
     }
 }
@@ -4387,6 +4435,7 @@ void MainWindow::ExecuteCommand(unsigned int id) {
         case Cmd::FileSaveAll: workspace_->SaveAll(); break;
         case Cmd::FileClose:   workspace_->CloseActive(); break;
         case Cmd::ReopenClosedTab: workspace_->ReopenClosedTab(); break;
+        case Cmd::FileNewWindow: NewWindowProcess(); break;
         case Cmd::FileReload:  workspace_->ReloadActive(); break;
         case Cmd::FileCloseAll:
             if (workspace_->CloseAll()) PostMessageW(hwnd_, WM_CLOSE, 0, 0);
@@ -5041,7 +5090,9 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             ss.activeIndex = workspace_->ActiveIndex();
             ss.activeIndex1 = workspace_->ActiveIndex1();
             ss.activeView = workspace_->CurrentView();
-            SessionSave(SessionFilePath(), ss);
+            // 批次 67：primary 写 legacy session.json，额外窗口各写自己的
+            // session-<pid>.json 槽位，多进程并发退出互不覆盖。
+            SessionSave(SessionSlotPath(startup_.firstInstance), ss);
 
             if (workspace_->CloseAll(/*keepOneDoc=*/false)) {
                 // delete autosave files (clean exit)

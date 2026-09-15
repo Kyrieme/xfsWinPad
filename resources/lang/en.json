@@ -14,6 +14,7 @@
   "menu.file.closefolder": "C&lose Folder",
   "menu.file.closeall": "C&lose All",
   "menu.file.reopenclosed": "Reopen Closed Ta&b",
+  "menu.file.newwindow": "New &Window",
   "menu.file.exit": "E&xit",
 
   "menu.edit": "&Edit",
