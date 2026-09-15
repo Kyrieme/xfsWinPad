@@ -1640,10 +1640,13 @@ void MainWindow::ShowFindDialog(const std::wstring& prefill, int pageIndex) {
     }
     if (!prefill.empty()) findDlg_->SetSearchText(prefill);
     else if (Document* d = workspace_->Active()) {
-        // prefill from selection
-        sptr_t len = d->editor.Send(SCI_GETSELTEXT, 0, 0) - 1;
+        // prefill from selection. 本仓库 vendored Scintilla 的 SCI_GETSELTEXT
+        // 返回值【不含】结尾 NUL（Editor.cxx: return selectedText.Length()），
+        // 旧代码按"含 NUL"先 -1 再截断，prefill 永远少最后一个字符
+        // （2026-09-15 报告：选中 PAD_IOVDD_4 只带入 PAD_IOVDD_）。
+        sptr_t len = d->editor.Send(SCI_GETSELTEXT, 0, 0);
         if (len > 0 && len < 512) {
-            // SCI_GETSELTEXT 写 len+1 字节（含 NUL），缓冲区多留 1 字节
+            // 但写入仍是 len+1 字节（补结尾 NUL），缓冲区照旧多留 1 字节
             std::string sel((size_t)len + 1, '\0');
             d->editor.Send(SCI_GETSELTEXT, 0, (LPARAM)sel.data());
             sel.resize((size_t)len);
@@ -2592,12 +2595,14 @@ AiContext MainWindow::BuildAiContext() {
     std::wstring blk = L"[Editor context]\n" + note + L"File: " + path;
 
     // 选区文本（UTF-8 → 宽字符；8000 字符上限防 prompt 爆量）
-    // 注意 SCI_GETSELTEXT 写入 len+1 字节（含 NUL）——缓冲区必须多留 1 字节，
-    // 否则 1 字节堆越界 → 延迟堆损坏（2026-09-04 真机 AV@memcpy 现挂现修）。
+    // 注意 SCI_GETSELTEXT 返回值不含结尾 NUL，但写入仍是 长度+1 字节——
+    // 缓冲区必须多留 1 字节，否则 1 字节堆越界 → 延迟堆损坏
+    // （2026-09-04 真机 AV@memcpy 现挂现修；2026-09-15 又因"返回含 NUL"
+    // 的误判先 -1 导致选区末字符被截，一并修正）。
     std::wstring sel;
     int selLines = 0;
     if (hasSel) {
-        long long len = d->editor.Send(SCI_GETSELTEXT, 0, 0) - 1;   // 不含 NUL
+        long long len = d->editor.Send(SCI_GETSELTEXT, 0, 0);
         if (len > 0) {
             if (len > 8000) len = 8000;
             std::string raw((size_t)len + 1, '\0');
