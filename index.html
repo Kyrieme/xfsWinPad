@@ -55,10 +55,10 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.4.0 · 2026-09-12 · Windows 10/11 x64</span>
+  <span class="ver">v0.5.0 · 2026-09-15 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（4.9 MB）</a>
-    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.3 MB）</a>
+    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.2 MB）</a>
   </div>
   <p class="dl-note">便携版解压即用，不写注册表；两个版本功能完全一致。</p>
 </header>
@@ -93,14 +93,23 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">6168B03121856B156073B8E0AE79C36AE0898E7593F8ABAE5F1601CD5AB77393</p>
+    <p class="hash">45D355C3EDDD332BA9EB86A537A4BAFDADB3D2B0B9FFA6B297C00D570E7D78F4</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">95A7CD7343D7CE341D1358D6746BBD20445344F16B5DF92F3C7E2C618A025002</p>
+    <p class="hash">04E3A62FAE1E9E739FAFCA53FEE0D9B0842B69C38D65AF695881E78E9F921A5C</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.4.0</b>（2026-09-12）</p>
+    <p><b>v0.5.0</b>（2026-09-15）</p>
+    <ul>
+      <li>内置 Git 面板：文件状态 / 暂存 / 提交 / 分支切换，侧栏内完成</li>
+      <li>插件进程隔离升级：单代理进程承载 8 插件，崩溃插件精准归因隔离，存活插件自动迁移</li>
+      <li>编码菜单补齐 ANSI 代码页子菜单</li>
+      <li>CSV 表格模式稳定性修复</li>
+      <li>修复：手动选择的语法高亮语言重启后不恢复（现已写入会话）</li>
+      <li>修复：插件菜单偶发条目失效</li>
+    </ul>
+    <p style="margin-top:14px"><b>v0.4.0</b>（2026-09-12）</p>
     <ul>
       <li>CSV 打印表格：GDI 真实渲染，自动分页、每页重复表头、页码页脚</li>
       <li>CSV 跳转到行、导出选中行（右键菜单）</li>
