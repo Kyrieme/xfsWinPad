@@ -29,9 +29,14 @@ int main() {
     // ---- 1. round-trip a two-view session --------------------------------
     {
         SessionState in;
-        in.entries.push_back(SessionEntry{L"D:\\a.txt", 3, 1});
-        in.entries.push_back(SessionEntry{L"D:\\b.txt", 5, 7});
-        in.entries1.push_back(SessionEntry{L"E:\\c.cpp", 12, 4});
+        SessionEntry e0{L"D:\\a.txt", 3, 1};
+        e0.lang = 5;                      // manual Language-menu pick
+        in.entries.push_back(e0);
+        in.entries.push_back(SessionEntry{L"D:\\b.txt", 5, 7});   // lang stays -1
+        SessionEntry e2{L"E:\\c.cpp", 12, 4};
+        e2.locked = true;
+        e2.lang = 2;
+        in.entries1.push_back(e2);
         in.entries1.push_back(SessionEntry{L"E:\\d.cpp", 99, 2});
         in.activeIndex = 1;
         in.activeIndex1 = 0;
@@ -43,9 +48,13 @@ int main() {
         CHECK(out.entries.size() == 2);
         CHECK(out.entries1.size() == 2);
         CHECK(out.entries[0].path == L"D:\\a.txt" && out.entries[0].line == 3);
+        CHECK(out.entries[0].lang == 5);
+        CHECK(out.entries[1].lang == -1);
         CHECK(out.entries[1].path == L"D:\\b.txt" && out.entries[1].line == 5 && out.entries[1].col == 7);
         CHECK(out.entries1[0].path == L"E:\\c.cpp" && out.entries1[0].line == 12);
+        CHECK(out.entries1[0].lang == 2 && out.entries1[0].locked);
         CHECK(out.entries1[1].path == L"E:\\d.cpp" && out.entries1[1].line == 99);
+        CHECK(out.entries1[1].lang == -1);
         CHECK(out.activeIndex == 1);
         CHECK(out.activeIndex1 == 0);
         CHECK(out.activeView == 1);
@@ -68,6 +77,7 @@ int main() {
         CHECK(SessionLoad(old, &out));
         CHECK(out.entries.size() == 2);
         CHECK(out.entries1.empty());
+        CHECK(out.entries[0].lang == -1);   // legacy file: no manual pick
         CHECK(out.activeIndex == 1);
         CHECK(out.activeIndex1 == 0);   // default
         CHECK(out.activeView == 0);     // default = left view (legacy)
