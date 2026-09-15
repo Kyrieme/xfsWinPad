@@ -19,10 +19,16 @@ public static class I18 {
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr h);
-    [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr m);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuStringW(IntPtr m, uint item, StringBuilder s, int n, uint flags);
-    [DllImport("user32.dll")] public static extern bool SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+[DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr h);
+[DllImport("user32.dll")] public static extern IntPtr GetSubMenu(IntPtr m, int pos);
+[DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr m);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuStringW(IntPtr m, uint item, StringBuilder s, int n, uint flags);
+[DllImport("user32.dll")] public static extern bool SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+public static string SubItem(IntPtr menu, int i) {
+  var sb = new StringBuilder(256);
+  GetMenuStringW(menu, (uint)i, sb, 256, MF_BYPOSITION);
+  return sb.ToString();
+}
     public static IntPtr H = IntPtr.Zero;
     static bool Cb(IntPtr h, IntPtr l) {
         uint p; GetWindowThreadProcessId(h, out p);
@@ -126,6 +132,33 @@ foreach ($lang in @('ja','zh-TW','ko')) {
         Fail "menu title mismatch for $lang"
     }
     if ($items -contains $baseline) { Fail "zh-CN baseline still present for $lang" }
+
+    # batch 65: Encoding > Convert to / Reload as must be fully localized
+    # and match resources\lang\<lang>.json (enc.* keys, 11 items each).
+    $langPath = Join-Path (Split-Path $PSScriptRoot -Parent) "resources\lang\$lang.json"
+    $langJson = [IO.File]::ReadAllText($langPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    $encTitle = $langJson.'menu.encoding'
+    $encIdx = -1
+    for ($i = 0; $i -lt $count; $i++) {
+        if (([I18]::TopItem($menu, $i)) -ceq $encTitle) { $encIdx = $i; break }
+    }
+    if ($encIdx -lt 0) { Fail "no Encoding top menu for $lang" }
+    $encMenu = [I18]::GetSubMenu($menu, $encIdx)
+    if ($encMenu -eq [IntPtr]::Zero) { Fail "no Encoding popup for $lang" }
+    $convPop = [I18]::GetSubMenu($encMenu, 0)
+    $relasPop = [I18]::GetSubMenu($encMenu, 1)
+    if ([I18]::GetMenuItemCount($convPop) -ne 11) { Fail "conv item count for $lang" }
+    if ([I18]::GetMenuItemCount($relasPop) -ne 11) { Fail "relas item count for $lang" }
+    $encKeys = @('enc.utf8','enc.utf8bom','enc.utf16le','enc.utf16be','enc.ansi',
+                 'enc.utf32le','enc.utf32be','enc.big5','enc.shiftjis','enc.koi8r','enc.iso88591')
+    for ($k = 0; $k -lt 11; $k++) {
+        $want = [string]$langJson.($encKeys[$k])
+        $t1 = [I18]::SubItem($convPop, $k)
+        $t2 = [I18]::SubItem($relasPop, $k)
+        if ($t1 -cne $want) { Fail ("conv[{0}] '{1}' != '{2}' for $lang" -f $k, $t1, $want) }
+        if ($t2 -cne $want) { Fail ("relas[{0}] '{1}' != '{2}' for $lang" -f $k, $t2, $want) }
+    }
+    Write-Output "ENC-OK $lang encoding menus localized"
     Write-Output "PASS $lang File menu = $($expect[$lang])"
 
     [I18]::SendMessageW($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null  # WM_CLOSE
