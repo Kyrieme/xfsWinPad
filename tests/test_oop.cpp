@@ -8,11 +8,16 @@
 //  3. oop_crasher：命令回调访问违例 → 代理 SEH 捕获（EXEC 被拒），
 //     代理存活、编辑器无感。
 //  4. ShutdownAll：干净退出路径（watchdog join、SHUTDOWN 送达）。
+//  5. 一代理多插件（批次 66）：good+crasher+multi 共享单代理，独立执行/通知。
+//  6. 死亡归因+幸存者重加：killer 毒死共享代理 → 只记 killer oop-died，
+//     good/multi 撤销命令后重进新代理并可执行。
+//  7. 装载卡死：hang 插件 setInfo 永不返回 → 代理看门狗自杀 → 同 6 归因。
 //
 // 命令行参数 1：测试插件 DLL 所在目录（ctest 传 $<TARGET_FILE_DIR:oop_good>）。
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <filesystem>
 
@@ -23,9 +28,10 @@
 
 using namespace xfs;
 
-// ---- 观察标记（与 oop_good.cpp 约定一致）------------------------------------
+// ---- 观察标记（与 oop_good / oop_multi 约定一致）-----------------------------
 struct Marker { UINT_PTR tag; INT_PTR value; };
 static constexpr UINT_PTR kMarkerMagic = 0x474F4F44;   // 'GOOD'
+static constexpr UINT_PTR kMultiMagic  = 0x4D554C54;   // 'MULT'
 
 // ---- 测试观察窗口：接收插件回传的 Marker（WM_COPYDATA）-----------------------
 static UINT_PTR g_markers[64];
@@ -35,7 +41,8 @@ static int g_markerCount = 0;
 static LRESULT CALLBACK TestWndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     if (m == WM_COPYDATA) {
         auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lp);
-        if (cds && cds->dwData == kMarkerMagic && cds->cbData == sizeof(Marker)) {
+        if (cds && (cds->dwData == kMarkerMagic || cds->dwData == kMultiMagic) &&
+            cds->cbData == sizeof(Marker)) {
             auto* mk = reinterpret_cast<const Marker*>(cds->lpData);
             if (g_markerCount < 64) {
                 g_markers[g_markerCount] = mk->tag;
@@ -65,6 +72,37 @@ static void PumpMessages() {
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
+}
+
+// 观察标记接收窗（插件以 WM_COPYDATA 直发此窗；同时充当 nppHandle）
+static HWND MakeRecv() {
+    static bool reg = false;
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = TestWndProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"test_oop_recv";
+    if (!reg) { RegisterClassExW(&wc); reg = true; }
+    return CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0,
+                           HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
+}
+
+static void ResetMarkers() { g_markerCount = 0; }
+
+// 等待 until 谓词为真（至多 ms），期间泵消息——幸存者重加是异步收敛过程
+static bool WaitUntil(const std::function<bool()>& until, DWORD ms) {
+    DWORD end = GetTickCount() + ms;
+    while (GetTickCount() < end) {
+        if (until()) return true;
+        Sleep(50);
+        PumpMessages();
+    }
+    return until();
+}
+
+static bool HasName(const std::vector<OopPluginInfo>& v, const wchar_t* name) {
+    for (auto& p : v) if (p.name == name) return true;
+    return false;
 }
 
 int main(int argc, char** argv) {
@@ -155,6 +193,105 @@ int main(int argc, char** argv) {
     // 墓碑插件的进程外结果 = 场景 2（Launch 失败 + oop-died 记账），
     // PluginManager 侧仅多一次 TakeFailures 并账，逻辑已覆盖。
     std::printf("PASS: tombstone path equivalence (covered by scenario 2)\n");
+
+    // ---- 场景 5：一代理多插件共享（批次 66）----------------------------------
+    {
+        ResetMarkers();
+        PluginManager mgr;
+        OopHost host;
+        HWND recv = MakeRecv();
+        CHECK(host.Launch(mgr, (dllDir / L"oop_good.dll").wstring(), recv, nullptr, 15000),
+              "multi-tenant: oop_good launched");
+        CHECK(host.Launch(mgr, (dllDir / L"oop_crasher.dll").wstring(), recv, nullptr, 15000),
+              "multi-tenant: oop_crasher shares the proxy");
+        CHECK(host.Launch(mgr, (dllDir / L"oop_multi.dll").wstring(), recv, nullptr, 15000),
+              "multi-tenant: oop_multi shares the proxy");
+        CHECK(host.ProcessCount() == 1,
+              "multi-tenant: three plugins live in ONE proxy process");
+        CHECK(host.Alive().size() == 3, "multi-tenant: three plugins alive");
+        CHECK(mgr.CommandCount() == 5, "multi-tenant: 2+1+2 commands registered");
+
+        unsigned mid = mgr.Commands()[3].id;      // Multi Alpha（multi 首命令）
+        CHECK(mgr.Execute(mid), "multi-tenant: Execute multi cmd dispatched");
+        Sleep(200); PumpMessages();
+        CHECK(FindMarker(5, (INT_PTR)mid),
+              "multi-tenant: multi EXEC ran with own backfilled cmdID");
+
+        host.BroadcastNotify(777, 0);
+        Sleep(200); PumpMessages();
+        CHECK(FindMarker(2, (INT_PTR)777), "multi-tenant: NOTIFY reached good");
+        CHECK(FindMarker(6, (INT_PTR)777), "multi-tenant: NOTIFY reached multi");
+
+        host.ShutdownAll();
+        CHECK(host.Alive().empty() && host.ProcessCount() == 0,
+              "multi-tenant: clean shutdown of shared proxy");
+        DestroyWindow(recv);
+    }
+
+    // ---- 场景 6：死亡归因 + 幸存者重加（killer 毒死共享代理）-----------------
+    {
+        ResetMarkers();
+        PluginManager mgr;
+        OopHost host;
+        HWND recv = MakeRecv();
+        CHECK(host.Launch(mgr, (dllDir / L"oop_good.dll").wstring(), recv, nullptr, 15000),
+              "attribution: good on shared proxy");
+        CHECK(host.Launch(mgr, (dllDir / L"oop_multi.dll").wstring(), recv, nullptr, 15000),
+              "attribution: multi on same proxy");
+        CHECK(host.ProcessCount() == 1, "attribution: two plugins, one proxy");
+
+        bool ok = host.Launch(mgr, (dllDir / L"oop_killer.dll").wstring(), recv, nullptr, 15000);
+        CHECK(!ok, "attribution: killer Launch failed (proxy died), test survived");
+        auto fails = host.TakeFailures();
+        CHECK(fails.size() == 1 && fails[0].reason == L"oop-died" &&
+              fails[0].path.find(L"oop_killer.dll") != std::wstring::npos,
+              "attribution: exactly the killer recorded oop-died");
+        CHECK(host.Alive().size() == 2 &&
+              HasName(host.Alive(), L"oop-good") && HasName(host.Alive(), L"oop-multi"),
+              "attribution: survivors good+multi alive");
+        CHECK(WaitUntil([&] { return host.ProcessCount() == 1; }, 5000),
+              "attribution: survivors re-added into exactly ONE fresh proxy");
+        CHECK(mgr.CommandCount() == 4,
+              "attribution: stale commands withdrawn, survivors re-registered (4)");
+
+        unsigned gid = mgr.Commands()[0].id;
+        CHECK(mgr.Execute(gid), "attribution: good Execute after re-add");
+        Sleep(200); PumpMessages();
+        CHECK(FindMarker(1, (INT_PTR)gid), "attribution: good EXEC marker after re-add");
+        unsigned mid = mgr.Commands()[2].id;
+        CHECK(mgr.Execute(mid), "attribution: multi Execute after re-add");
+        Sleep(200); PumpMessages();
+        CHECK(FindMarker(5, (INT_PTR)mid), "attribution: multi EXEC marker after re-add");
+
+        host.ShutdownAll();
+        DestroyWindow(recv);
+    }
+
+    // ---- 场景 7：装载卡死 → 代理看门狗自杀 → 同死亡归因回收 -------------------
+    {
+        ResetMarkers();
+        PluginManager mgr;
+        OopHost host;
+        HWND recv = MakeRecv();
+        CHECK(host.Launch(mgr, (dllDir / L"oop_good.dll").wstring(), recv, nullptr, 15000),
+              "hang: good on shared proxy");
+        CHECK(host.Launch(mgr, (dllDir / L"oop_multi.dll").wstring(), recv, nullptr, 15000),
+              "hang: multi on same proxy");
+        bool ok = host.Launch(mgr, (dllDir / L"oop_hang.dll").wstring(), recv, nullptr, 4000);
+        CHECK(!ok, "hang: hung load recycled proxy (watchdog), test survived");
+        auto fails = host.TakeFailures();
+        CHECK(fails.size() == 1 && fails[0].reason == L"oop-died" &&
+              fails[0].path.find(L"oop_hang.dll") != std::wstring::npos,
+              "hang: hung plugin attributed, survivors recycled");
+        CHECK(host.Alive().size() == 2 && host.ProcessCount() == 1,
+              "hang: survivors alive in one fresh proxy");
+        unsigned gid = mgr.Commands()[0].id;
+        CHECK(mgr.Execute(gid), "hang: Execute works after recycling");
+        Sleep(200); PumpMessages();
+        CHECK(FindMarker(1, (INT_PTR)gid), "hang: EXEC marker after recycling");
+        host.ShutdownAll();
+        DestroyWindow(recv);
+    }
 
     std::printf("== %s ==\n", g_fail ? "FAILED" : "ALL PASSED");
     return g_fail ? 1 : 0;

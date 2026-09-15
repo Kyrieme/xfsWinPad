@@ -19,6 +19,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <deque>
 #include <memory>
 #include <string>
 #include <functional>
@@ -132,7 +133,9 @@ public:
     void UnloadAll(bool freeDlls = true);
 
     size_t CommandCount() const { return commands_.size(); }
-    const std::vector<PluginCommand>& Commands() const { return commands_; }
+    // deque：HostRemoveCommand 的 erase 只失效迭代器，g_handleToCmd 里存的
+    // 元素指针保持有效（OOP v2 幸存者重加会在存活命令存在时删命令）。
+    const std::deque<PluginCommand>& Commands() const { return commands_; }
 
     // 最近一次 LoadAll/LoadAllFrom 的加载失败清单（不兼容页数据源）
     const std::vector<PluginLoadFailure>& LoadFailures() const { return failures_; }
@@ -248,7 +251,7 @@ private:
     HMENU pluginMenu_ = nullptr;    // "Plugins" 子菜单（NPPM_GETMENUHANDLE 0）
     HMENU mainMenu_ = nullptr;      // 主菜单栏（NPPM_GETMENUHANDLE 1 / GETMENUBAR）
     std::vector<Loaded> loaded_;
-    std::vector<PluginCommand> commands_;
+    std::deque<PluginCommand> commands_;
     std::vector<PluginLoadFailure> failures_;   // LoadAll 失败记录（每次扫描重置）
     std::function<void()> onChanged_;           // LoadNew 成功加载后通知 UI 重建菜单
     std::wstring pendingFailReason_;            // 分支内置的原因令牌（abi/export/ansi）
