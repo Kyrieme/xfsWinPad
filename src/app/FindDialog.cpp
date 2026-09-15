@@ -224,13 +224,29 @@ void FindDialog::Show(HWND parent, HINSTANCE hInst, int pageIndex) {
     const DWORD exStyle = WS_EX_DLGMODALFRAME;
     RECT rc{0, 0, u(500), u(248)};
     ::AdjustWindowRectEx(&rc, style, FALSE, exStyle);
-    RECT work{};
-    ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    int x = work.left + ((work.right - work.left) - (rc.right - rc.left)) / 2;
-    int y = work.top + u(100);
+    // center over the editor window itself: SPI_GETWORKAREA always returns
+    // the primary monitor, which dumped the dialog on the wrong screen for
+    // multi-monitor users (2026-09-15 report). Clamp into the monitor the
+    // parent lives on so it stays fully visible when the parent is maximized
+    // or partly off-screen.
+    const int dlgW = rc.right - rc.left;
+    const int dlgH = rc.bottom - rc.top;
+    RECT pr{};
+    ::GetWindowRect(parent, &pr);
+    int x = pr.left + ((pr.right - pr.left) - dlgW) / 2;
+    int y = pr.top + ((pr.bottom - pr.top) - dlgH) / 2;
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(::MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST), &mi)) {
+        const RECT wa = mi.rcWork;
+        if (x + dlgW > wa.right)  x = wa.right - dlgW;
+        if (x < wa.left)          x = wa.left;
+        if (y + dlgH > wa.bottom) y = wa.bottom - dlgH;
+        if (y < wa.top)           y = wa.top;
+    }
 
     hwnd_ = ::CreateWindowExW(exStyle | WS_EX_CONTROLPARENT, kDlgClass, Tr(L"find.title"),
-                              style, x, y, rc.right - rc.left, rc.bottom - rc.top,
+                              style, x, y, dlgW, dlgH,
                               nullptr, nullptr, hInst, this);
     if (!hwnd_) { hwnd_ = nullptr; return; }
 
