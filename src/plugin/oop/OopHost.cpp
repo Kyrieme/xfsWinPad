@@ -1,11 +1,12 @@
-// OopHost.cpp — 进程外插件桥（编辑器侧编排器），v1 实现。
+// OopHost.cpp — 进程外插件桥（编辑器侧编排器），v2 多槽位共享代理实现。
 //
-// 启动（Launch，UI 线程同步）：CreateProcess(代理) → 循环
-// { MsgWaitForMultipleObjects(进程句柄, QS_SENDMESSAGE) + PeekMessage 泵 }。
-// 代理的 SendMessage(HANDSHAKE) 只在本线程泵消息时投递；Handle() 收到后
-// 注册命令并经 OOPM_CMDIDS 同步回填，代理收到即完成启动。
-// 运行期：命令 → OOPM_EXEC（ctx 携带 index）；通知 → OOPM_NOTIFY。
-// 代理死亡：看门狗线程等进程句柄 → PostMessage(WM_APP+x) → UI 线程记账。
+// 代理池：PickProcess 找有空位的活代理，无则 SpawnProcess 新建并泵到
+// OOPM_READY。装载经 AddOne：对 slot0 发 OOPM_ADD（同步语义——阻塞期间
+// HANDSHAKE/REJECT 以 incoming sent message 送达本线程，CMDIDS 再同步回
+// 槽窗，链条与 v1 启动序列同构，无死锁）。死亡归因：Launch 期间代理死亡
+// 记在正被装载的插件头上（v1 killer 语义），同车幸存者撤销命令后连同
+// 未试者重进新代理；每轮死亡净淘汰一个嫌疑插件，必然收敛（最坏退化为
+// 一插件一代理）。运行期死亡（无装载在途）：同车全部记账 oop-died。
 #define WIN32_LEAN_AND_MEAN
 #include "OopHost.h"
 #include "../PluginManager.h"
@@ -17,7 +18,7 @@ namespace xfs {
 namespace {
 constexpr wchar_t kHostExe[] = L"xfsWinPadPluginHost.exe";
 constexpr wchar_t kRecvClass[] = L"xfsWinPadOopHostWnd";
-constexpr UINT kDeadMsg = WM_APP + 0x0F01;   // wp=index into proxies_, lp=exit code
+constexpr UINT kDeadMsg = WM_APP + 0x0F01;   // wp=procs_ 下标，lp=退出码
 
 void AddFailure(std::vector<PluginLoadFailure>& out, const std::wstring& path,
                 const wchar_t* reason) {
@@ -26,35 +27,110 @@ void AddFailure(std::vector<PluginLoadFailure>& out, const std::wstring& path,
     f.reason = reason;
     out.push_back(std::move(f));
 }
+
+const wchar_t* MapReject(UINT_PTR reason) {
+    switch (reason) {
+        case xfs::oop::kExitLoadFail: return L"oop-load";
+        case xfs::oop::kExitAnsi:     return L"oop-ansi";
+        case xfs::oop::kExitExport:   return L"oop-export";
+        case xfs::oop::kExitFault:    return L"oop-fault";
+        default:                      return L"oop-reject";
+    }
+}
 } // namespace
 
 // ---- 生命周期 ---------------------------------------------------------------
 
 OopHost::~OopHost() { ShutdownAll(); }
 
+bool OopHost::EnsureSelfWnd() {
+    if (selfWnd_) return true;
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = WndProcThunk;
+    wc.hInstance = ::GetModuleHandleW(nullptr);
+    wc.lpszClassName = kRecvClass;
+    ::RegisterClassExW(&wc);
+    selfWnd_ = ::CreateWindowExW(0, kRecvClass, L"", 0, 0, 0, 0, 0,
+                                 HWND_MESSAGE, nullptr, wc.hInstance, this);
+    if (!selfWnd_)
+        Logger::Error("OopHost: receiver window creation failed");
+    return selfWnd_ != nullptr;
+}
+
 bool OopHost::Launch(PluginManager& mgr, const std::wstring& dllPath,
                      HWND editorWnd, HWND sciMain, unsigned timeoutMs) {
     mgr_ = &mgr;
     editorWnd_ = editorWnd;
-
-    // message-only 接收窗（首次 Launch 创建）
-    if (!selfWnd_) {
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = WndProcThunk;
-        wc.hInstance = ::GetModuleHandleW(nullptr);
-        wc.lpszClassName = kRecvClass;
-        ::RegisterClassExW(&wc);
-        selfWnd_ = ::CreateWindowExW(0, kRecvClass, L"", 0, 0, 0, 0, 0,
-                                     HWND_MESSAGE, nullptr, wc.hInstance, this);
-        if (!selfWnd_) {
-            Logger::Error("OopHost: receiver window creation failed");
-            AddFailure(failures_, dllPath, L"oop-host");
-            return false;
-        }
+    sciMain_ = sciMain;
+    if (!EnsureSelfWnd()) {
+        AddFailure(failures_, dllPath, L"oop-host");
+        return false;
     }
 
-    // 代理 exe 与编辑器同目录
+    std::vector<std::wstring> todo(1, dllPath);
+    int guard = 0;
+    while (!todo.empty() && guard++ < kPluginsPerProxy * 8) {
+        size_t pi = PickProcess();
+        if (pi == static_cast<size_t>(-1)) {
+            std::wstring err;
+            if (!SpawnProcess(timeoutMs, err)) {
+                Logger::Error("OopHost: proxy spawn failed (" + WideToUtf8(err) + ")");
+                for (auto& d : todo) AddFailure(failures_, d, L"oop-spawn");
+                todo.clear();
+                break;
+            }
+            pi = procs_.size() - 1;
+        }
+
+        size_t i = 0;
+        bool died = false;
+        for (; i < todo.size(); ++i) {
+            UINT_PTR reason = 0;
+            AddResult r = AddOne(pi, todo[i], timeoutMs, reason);
+            if (r == AddResult::kAdded) continue;
+            if (r == AddResult::kRejected) {
+                AddFailure(failures_, todo[i], MapReject(reason));
+                continue;
+            }
+            died = true;   // kDied
+            break;
+        }
+        if (!died) { todo.clear(); break; }
+
+        // 死亡归因：元凶 = 正被装载的 todo[i]；同车幸存者先重加（大概率
+        // 无辜，尽快恢复服务），未试者随后，元凶出局记 oop-died。
+        std::vector<std::wstring> requeue;
+        CollectSurvivors(pi, requeue);
+        AddFailure(failures_, todo[i], L"oop-died");
+        Logger::Info("OopHost: attribution: '" + WideToUtf8(todo[i]) +
+                     "' killed proxy #" + std::to_string(pi) +
+                     "; re-adding " + std::to_string(requeue.size()) +
+                     " survivor(s), " +
+                     std::to_string(todo.size() - i - 1) + " untried");
+        std::vector<std::wstring> next;
+        for (auto& s : requeue) next.push_back(s);
+        for (size_t j = i + 1; j < todo.size(); ++j) next.push_back(todo[j]);
+        todo.swap(next);
+    }
+
+    for (auto& p : plugins_)
+        if (!p->dead && p->info.dllPath == dllPath) return true;
+    return false;
+}
+
+size_t OopHost::PickProcess() {
+    for (size_t i = 0; i < procs_.size(); ++i) {
+        if (procs_[i]->dead || !procs_[i]->ready) continue;
+        int live = 0;
+        for (auto& p : plugins_)
+            if (p->procIdx == static_cast<int>(i) && !p->dead) ++live;
+        if (live < kPluginsPerProxy) return i;
+    }
+    return static_cast<size_t>(-1);
+}
+
+bool OopHost::SpawnProcess(unsigned deadline, std::wstring& err) {
     wchar_t exePath[MAX_PATH] = {};
     ::GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     std::wstring exeDir = exePath;
@@ -63,113 +139,196 @@ bool OopHost::Launch(PluginManager& mgr, const std::wstring& dllPath,
     std::wstring hostExe = exeDir + kHostExe;
 
     wchar_t parentHex[24] = {}, nppHex[24] = {}, sciHex[24] = {};
-    // parent = 本类接收窗（OOPM_HANDSHAKE/CMDIDS/EXEC 通道落地端）；
+    // parent = 本类接收窗（READY/HANDSHAKE/REJECT/CMDIDS 通道落地端）；
     // npp    = 编辑器主窗口（插件 setInfo 的 nppHandle，NPPM_* 跨进程直达）。
-    // 两者分离：消息窗口不是合法的 NPPM_* 目标，主窗口不处理 OOP 魔数。
     swprintf_s(parentHex, L"%llx",
                static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(selfWnd_)));
     swprintf_s(nppHex, L"%llx",
-               static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(editorWnd)));
+               static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(editorWnd_)));
     swprintf_s(sciHex, L"%llx",
-               static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(sciMain)));
+               static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(sciMain_)));
 
     std::wstring args = L"\"" + hostExe + L"\" --parent " + parentHex +
-                        L" --plugin \"" + dllPath + L"\" --npp " + nppHex +
-                        L" --sci " + sciHex;
+                        L" --npp " + nppHex + L" --sci " + sciHex +
+                        L" --deadline " + std::to_wstring(deadline);
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
     if (!::CreateProcessW(hostExe.c_str(), args.data(), nullptr, nullptr, FALSE,
                           CREATE_NO_WINDOW, nullptr, exeDir.c_str(), &si, &pi)) {
+        err = L"createprocess-gle" + std::to_wstring(::GetLastError());
         Logger::Error("OopHost: CreateProcess(" + WideToUtf8(kHostExe) +
                       ") failed gle=" + std::to_string(::GetLastError()));
-        AddFailure(failures_, dllPath, L"oop-spawn");
         return false;
     }
     ::CloseHandle(pi.hThread);
 
-    // ---- 握手等待：泵消息直到 HANDSHAKE 处理完成（pendingProxy_ 就绪）----
-    auto proxy = std::make_unique<Proxy>();
+    auto pr = std::make_unique<Process>();
+    pr->proc = pi.hProcess;
+    procs_.push_back(std::move(pr));
+    const size_t idx = procs_.size() - 1;
+    StartWatchdog(idx);
+
+    pendingReady_ = false;
+    pendingReadyWnd_ = nullptr;
     const DWORD start = ::GetTickCount();
-    bool ok = false;
-    while (::GetTickCount() - start < timeoutMs) {
-        DWORD w = ::MsgWaitForMultipleObjects(1, &pi.hProcess, FALSE, 100,
-                                              QS_SENDMESSAGE);
-        if (w == WAIT_OBJECT_0) {              // 代理在握手期死亡
+    while (::GetTickCount() - start < deadline) {
+        HANDLE h = procs_[idx]->proc;
+        DWORD w = ::MsgWaitForMultipleObjects(1, &h, FALSE, 100, QS_ALLINPUT);
+        if (w == WAIT_OBJECT_0 || procs_[idx]->dead) {
+            err = L"died-before-ready";
             DWORD code = 0;
-            ::GetExitCodeProcess(pi.hProcess, &code);
-            Logger::Error("OopHost: proxy died during handshake exit=" +
-                          std::to_string(code) + " plugin=" + WideToUtf8(dllPath));
-            AddFailure(failures_, dllPath, L"oop-died");
-            ::CloseHandle(pi.hProcess);
+            ::GetExitCodeProcess(h, &code);
+            HandleProcessDead(idx, code, /*recordFailures=*/false);
             return false;
         }
-        PumpOnce(pi.hProcess, 60);
-        if (pendingProxy_) { ok = true; break; }
-    }
-    if (!ok) {                                  // 超时：杀代理（看门狗多半已自尽）
-        Logger::Error("OopHost: handshake timeout " + std::to_string(timeoutMs) +
-                      "ms plugin=" + WideToUtf8(dllPath));
-        ::TerminateProcess(pi.hProcess, xfs::oop::kExitWatchdog);
-        ::CloseHandle(pi.hProcess);
-        AddFailure(failures_, dllPath, L"oop-timeout");
-        return false;
-    }
-
-    *proxy = std::move(*pendingProxy_);
-    pendingProxy_.reset();
-    proxy->proc = pi.hProcess;
-    StartWatchdog(*proxy);
-    proxies_.push_back(std::move(proxy));
-
-    Logger::Info("OopHost: '" + WideToUtf8(proxies_.back()->info.name) +
-                 "' out-of-process, " +
-                 std::to_string(proxies_.back()->info.itemCount) + " command(s)");
-    return true;
-}
-
-bool OopHost::PumpOnce(HANDLE, unsigned sliceMs) {
-    DWORD end = ::GetTickCount() + sliceMs;
-    MSG m;
-    while (::GetTickCount() < end) {
-        while (::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
-            ::TranslateMessage(&m);
-            ::DispatchMessageW(&m);
+        PumpOnce(40);
+        if (pendingReady_) {
+            procs_[idx]->addWnd = pendingReadyWnd_;
+            procs_[idx]->ready = true;
+            Logger::Info("OopHost: proxy #" + std::to_string(idx) + " ready");
+            return true;
         }
-        ::Sleep(10);
     }
-    return true;
+    err = L"ready-timeout";
+    ::TerminateProcess(procs_[idx]->proc, xfs::oop::kExitWatchdog);
+    return false;
 }
 
-// ---- WM_COPYDATA 落地端（HANDSHAKE）-----------------------------------------
+OopHost::AddResult OopHost::AddOne(size_t pi, const std::wstring& dllPath,
+                                   unsigned deadline, UINT_PTR& rejectReason) {
+    Process* P = procs_[pi].get();
+    pendingCookie_ = ++cookieSeq_;
+    pendingPath_ = dllPath;
+    pendingPlugin_.reset();
+    pendingReject_ = false;
+    pendingReason_ = 0;
+
+    if (dllPath.size() >= xfs::oop::kAddPathMax) {
+        rejectReason = xfs::oop::kExitLoadFail;
+        pendingCookie_ = 0;
+        return AddResult::kRejected;
+    }
+    xfs::oop::AddWire w{};
+    w.magic = xfs::oop::kMagic;
+    w.msg = xfs::oop::OOPM_ADD;
+    w.cookie = pendingCookie_;
+    w.deadlineMs = deadline;
+    wcsncpy_s(w.path, dllPath.c_str(), _TRUNCATE);
+    COPYDATASTRUCT cds{};
+    cds.dwData = xfs::oop::kMagic;
+    cds.cbData = sizeof(w);
+    cds.lpData = &w;
+
+    // ADD 在代理侧同步完成装载+握手（含插件 setInfo）；SMTO_ABORTIFHUNG
+    // 只挡真挂死，忙（插件在回调里跑长任务）不误杀。上限：装载看门狗时限
+    // + 富余——代理看门狗必先到场，超时兜底是异常中的异常。
+    ::SendMessageTimeoutW(P->addWnd, WM_COPYDATA,
+                          reinterpret_cast<WPARAM>(selfWnd_),
+                          reinterpret_cast<LPARAM>(&cds),
+                          SMTO_ABORTIFHUNG, deadline + 5000, nullptr);
+
+    const DWORD start = ::GetTickCount();
+    const DWORD cap = deadline + 5000;
+    while (true) {
+        if (pendingPlugin_) {
+            pendingCookie_ = 0;
+            CommitPending(pi);
+            return AddResult::kAdded;
+        }
+        if (pendingReject_) {
+            pendingReject_ = false;
+            rejectReason = pendingReason_;
+            pendingCookie_ = 0;
+            return AddResult::kRejected;
+        }
+        if (P->dead || ::WaitForSingleObject(P->proc, 0) == WAIT_OBJECT_0) {
+            DWORD code = 0;
+            ::GetExitCodeProcess(P->proc, &code);
+            // 归因在途：记账与幸存者回收由 Launch 统一处理，此处不记失败
+            HandleProcessDead(pi, code, /*recordFailures=*/false);
+            pendingCookie_ = 0;
+            return AddResult::kDied;
+        }
+        if (::GetTickCount() - start > cap) {
+            // 代理存活却不应答：罕见病态（前插件回调长阻塞）。兜底整程
+            // 陪葬——幸存者走同一条重加路径，语义不变。
+            Logger::Error("OopHost: add timed out alive; recycling proxy");
+            ::TerminateProcess(P->proc, xfs::oop::kExitWatchdog);
+            ::WaitForSingleObject(P->proc, 2000);
+            DWORD code = 0;
+            ::GetExitCodeProcess(P->proc, &code);
+            HandleProcessDead(pi, code, /*recordFailures=*/false);
+            pendingCookie_ = 0;
+            return AddResult::kDied;
+        }
+        HANDLE h = P->proc;
+        ::MsgWaitForMultipleObjects(1, &h, FALSE, 100, QS_ALLINPUT);
+        PumpOnce(20);
+    }
+}
+
+void OopHost::CommitPending(size_t pi) {
+    pendingPlugin_->procIdx = static_cast<int>(pi);
+    Logger::Info("OopHost: '" + WideToUtf8(pendingPlugin_->info.name) +
+                 "' on proxy #" + std::to_string(pi) + ", " +
+                 std::to_string(pendingPlugin_->info.itemCount) + " command(s)");
+    plugins_.push_back(std::move(pendingPlugin_));
+    pendingPlugin_.reset();
+}
+
+void OopHost::CollectSurvivors(size_t pi, std::vector<std::wstring>& out) {
+    for (auto& p : plugins_) {
+        if (p->procIdx != static_cast<int>(pi) || p->dead) continue;
+        p->dead = true;
+        p->hostWnd = nullptr;
+        // 撤销旧命令：重加会重新注册；不撤销则统一命令表出现重复项，
+        // 且旧 ctx 指向已死槽窗。
+        if (mgr_)
+            for (auto* h : p->cmdHandles) mgr_->HostRemoveCommand(h);
+        p->cmdHandles.clear();
+        p->cmdIds.clear();
+        out.push_back(p->info.dllPath);
+    }
+}
+
+// ---- WM_COPYDATA 落地端（READY / HANDSHAKE / REJECT）-------------------------
 
 LRESULT CALLBACK OopHost::WndProcThunk(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_NCCREATE) {
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
         ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
                             reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-        return TRUE;
+        return ::DefWindowProcW(hwnd, msg, wp, lp);
     }
     if (msg == kDeadMsg) {   // 看门狗线程 → UI 线程：代理死亡记账
         auto* self = reinterpret_cast<OopHost*>(
             ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-        if (self) self->Handle(static_cast<size_t>(wp), static_cast<DWORD>(lp));
+        if (self)
+            self->HandleProcessDead(static_cast<size_t>(wp),
+                                    static_cast<DWORD>(lp),
+                                    /*recordFailures=*/self->pendingCookie_ == 0);
         return 0;
     }
     auto* self = reinterpret_cast<OopHost*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     return self ? self->Handle(msg, wp, lp) : ::DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-void OopHost::Handle(size_t index, DWORD exitCode) {
-    if (index >= proxies_.size()) return;
-    Proxy& p = *proxies_[index];
-    if (p.dead) return;
-    p.dead = true;
-    Logger::Error("OopHost: plugin '" + WideToUtf8(p.info.name) +
-                  "' proxy exited code=" + std::to_string(exitCode) +
+void OopHost::HandleProcessDead(size_t pi, DWORD exitCode, bool recordFailures) {
+    if (pi >= procs_.size()) return;
+    Process& P = *procs_[pi];
+    if (P.dead) return;
+    P.dead = true;
+    Logger::Error("OopHost: proxy #" + std::to_string(pi) +
+                  " exited code=" + std::to_string(exitCode) +
                   " (isolated; editor unaffected)");
-    AddFailure(failures_, p.info.dllPath, L"oop-died");
-    p.hostWnd = nullptr;
+    if (!recordFailures) return;   // 装载在途：Launch 归因路径接管
+    for (auto& p : plugins_) {
+        if (p->procIdx != static_cast<int>(pi) || p->dead) continue;
+        p->dead = true;
+        p->hostWnd = nullptr;
+        AddFailure(failures_, p->info.dllPath, L"oop-died");
+    }
 }
 
 LRESULT OopHost::Handle(UINT msg, WPARAM wp, LPARAM lp) {
@@ -182,18 +341,37 @@ LRESULT OopHost::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return FALSE;
     auto* wire = reinterpret_cast<const UINT_PTR*>(cds->lpData);
     if (wire[0] != xfs::oop::kMagic) return FALSE;
+
+    if (wire[1] == xfs::oop::OOPM_READY) {
+        pendingReady_ = true;
+        pendingReadyWnd_ = reinterpret_cast<HWND>(wp);
+        return TRUE;
+    }
+    if (wire[1] == xfs::oop::OOPM_REJECT) {
+        if (cds->cbData < sizeof(xfs::oop::RejectWire)) return FALSE;
+        auto* rj = reinterpret_cast<const xfs::oop::RejectWire*>(cds->lpData);
+        if (pendingCookie_ != 0 && rj->cookie == pendingCookie_) {
+            pendingReject_ = true;
+            pendingReason_ = rj->reason;
+        }
+        return TRUE;
+    }
     if (wire[1] != xfs::oop::OOPM_HANDSHAKE ||
         cds->cbData < sizeof(xfs::oop::HandshakeWire))
         return FALSE;
     auto* hs = reinterpret_cast<const xfs::oop::HandshakeWire*>(cds->lpData);
+    if (pendingCookie_ == 0 || hs->cookie != pendingCookie_) {
+        Logger::Error("OopHost: unexpected handshake cookie");
+        return FALSE;
+    }
     const int n = hs->itemCount;
     if (n < 0 || n > xfs::oop::kHandshakeItemsMax) return FALSE;
 
-    auto proxy = std::make_unique<Proxy>();
-    proxy->hostWnd = reinterpret_cast<HWND>(wp);
-    proxy->info.dllPath = pendingDllPath_;
-    proxy->info.name = hs->pluginName;
-    proxy->info.itemCount = n;
+    auto plugin = std::make_unique<Plugin>();
+    plugin->hostWnd = reinterpret_cast<HWND>(hs->slotWnd);
+    plugin->info.dllPath = pendingPath_;
+    plugin->info.name = hs->pluginName;
+    plugin->info.itemCount = n;
 
     std::vector<int> ids(static_cast<size_t>(n), 0);
     for (int i = 0; i < n; ++i) {
@@ -201,18 +379,18 @@ LRESULT OopHost::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         std::wstring label = it.name[0] ? it.name : L"(unnamed)";
         auto ctx = std::make_unique<OopExecCtx>();
         ctx->host = this;
-        ctx->hostWnd = proxy->hostWnd;
+        ctx->hostWnd = plugin->hostWnd;
         ctx->index = i;
 
         xfs_plugin_command* h =
             mgr_->HostAddCommand(WideToUtf8(label).c_str(),
-                                 WideToUtf8(proxy->info.name).c_str(),
+                                 WideToUtf8(plugin->info.name).c_str(),
                                  &OopHost::ExecTrampoline, ctx.get());
         if (!h) continue;
         ids[(size_t)i] = static_cast<int>(mgr_->CommandIdOfHandle(h));
-        proxy->cmdIds.push_back(ids[(size_t)i]);
-        proxy->cmdHandles.push_back(h);
-        proxy->ctxs.push_back(std::move(ctx));
+        plugin->cmdIds.push_back(ids[(size_t)i]);
+        plugin->cmdHandles.push_back(h);
+        plugin->ctxs.push_back(std::move(ctx));
 
         if (PluginCommand* pc = mgr_->CommandPtrAt(h)) {
             pc->grouped = true;
@@ -228,7 +406,7 @@ LRESULT OopHost::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
     }
 
-    // 回填 cmdID（同步：SendMessage 返回即已送达代理）
+    // 回填 cmdID（同步：SendMessage 返回即已送达槽窗）
     std::vector<unsigned char> buf(sizeof(xfs::oop::CmdIdsWire) +
                                    sizeof(int) * static_cast<size_t>(n));
     auto* out = reinterpret_cast<xfs::oop::CmdIdsWire*>(buf.data());
@@ -241,12 +419,25 @@ LRESULT OopHost::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     r.dwData = xfs::oop::kMagic;
     r.cbData = static_cast<DWORD>(buf.size());
     r.lpData = buf.data();
-    ::SendMessageW(proxy->hostWnd, WM_COPYDATA,
+    ::SendMessageW(plugin->hostWnd, WM_COPYDATA,
                    reinterpret_cast<WPARAM>(selfWnd_),
                    reinterpret_cast<LPARAM>(&r));
 
-    pendingProxy_ = std::move(proxy);
+    pendingPlugin_ = std::move(plugin);
     return TRUE;
+}
+
+bool OopHost::PumpOnce(unsigned sliceMs) {
+    DWORD end = ::GetTickCount() + sliceMs;
+    MSG m;
+    while (::GetTickCount() < end) {
+        while (::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+            ::TranslateMessage(&m);
+            ::DispatchMessageW(&m);
+        }
+        ::Sleep(10);
+    }
+    return true;
 }
 
 // ---- 命令执行 / 通知 ---------------------------------------------------------
@@ -274,7 +465,7 @@ void OopHost::SendExec(HWND hostWnd, int index) {
 }
 
 void OopHost::BroadcastNotify(int code, UINT_PTR idFrom) {
-    for (auto& p : proxies_) {
+    for (auto& p : plugins_) {
         if (p->dead || !p->hostWnd) continue;
         xfs::oop::ExecWire w{};
         w.magic = xfs::oop::kMagic;
@@ -294,58 +485,72 @@ void OopHost::BroadcastNotify(int code, UINT_PTR idFrom) {
 
 // ---- 代理生命周期观察 ---------------------------------------------------------
 
-void OopHost::StartWatchdog(Proxy& p) {
-    HANDLE proc = p.proc;
+void OopHost::StartWatchdog(size_t procIdx) {
+    HANDLE proc = procs_[procIdx]->proc;
     HWND self = selfWnd_;
-    // 代理在 proxies_ 的下标在 push_back 前已知
-    size_t index = proxies_.size();
-    p.watchdog = std::thread([proc, self, index]() {
+    procs_[procIdx]->watchdog = std::thread([this, proc, self, procIdx]() {
         ::WaitForSingleObject(proc, INFINITE);
         DWORD code = 0;
         ::GetExitCodeProcess(proc, &code);
-        ::PostMessageW(self, kDeadMsg, static_cast<WPARAM>(index),
+        ::PostMessageW(self, kDeadMsg, static_cast<WPARAM>(procIdx),
                        static_cast<LPARAM>(code));
     });
 }
 
 void OopHost::ShutdownAll() {
-    for (auto& p : proxies_) {
-        if (p->dead) continue;
-        // 先置 dead：看门狗随后的死亡通知被 Handle() 的 dead 短路忽略，
-        // 干净关停绝不记 oop-died 失败。
+    // 先置 dead：看门狗随后的死亡通知被 HandleProcessDead 的 dead 短路忽略，
+    // 干净关停绝不记 oop-died 失败。
+    for (auto& p : plugins_) {
         p->dead = true;
-        if (p->hostWnd) {
+        p->hostWnd = nullptr;
+    }
+    for (auto& pr : procs_) {
+        if (pr->dead) continue;
+        pr->dead = true;
+        if (pr->ready && pr->addWnd) {
             UINT_PTR m[2] = { xfs::oop::kMagic, xfs::oop::OOPM_SHUTDOWN };
             COPYDATASTRUCT cds{};
             cds.dwData = xfs::oop::kMagic;
             cds.cbData = sizeof(m);
             cds.lpData = m;
-            ::SendMessageTimeoutW(p->hostWnd, WM_COPYDATA,
+            ::SendMessageTimeoutW(pr->addWnd, WM_COPYDATA,
                                   reinterpret_cast<WPARAM>(selfWnd_),
                                   reinterpret_cast<LPARAM>(&cds),
                                   SMTO_ABORTIFHUNG, 1000, nullptr);
         }
-        if (p->proc &&
-            ::WaitForSingleObject(p->proc, 2000) != WAIT_OBJECT_0) {
-            ::TerminateProcess(p->proc, xfs::oop::kExitClean);
+        if (pr->proc &&
+            ::WaitForSingleObject(pr->proc, 2000) != WAIT_OBJECT_0) {
+            ::TerminateProcess(pr->proc, xfs::oop::kExitClean);
         }
     }
-    for (auto& p : proxies_)
-        if (p->watchdog.joinable()) p->watchdog.join();
+    for (auto& pr : procs_)
+        if (pr->watchdog.joinable()) pr->watchdog.join();
+    for (auto& pr : procs_)
+        if (pr->proc) { ::CloseHandle(pr->proc); pr->proc = nullptr; }
     // 先撤销命令再销毁 ctx（命令 impl 引用 ctx，悬空即 UAF 隐患）
     if (mgr_) {
-        for (auto& p : proxies_)
+        for (auto& p : plugins_)
             for (auto* h : p->cmdHandles) mgr_->HostRemoveCommand(h);
     }
-    proxies_.clear();
+    plugins_.clear();
+    procs_.clear();
+    pendingPlugin_.reset();
+    pendingCookie_ = 0;
     if (selfWnd_) { ::DestroyWindow(selfWnd_); selfWnd_ = nullptr; }
 }
 
 std::vector<OopPluginInfo> OopHost::Alive() const {
     std::vector<OopPluginInfo> out;
-    for (auto& p : proxies_)
+    for (auto& p : plugins_)
         if (!p->dead) out.push_back(p->info);
     return out;
+}
+
+int OopHost::ProcessCount() const {
+    int n = 0;
+    for (auto& pr : procs_)
+        if (!pr->dead) ++n;
+    return n;
 }
 
 std::vector<PluginLoadFailure> OopHost::TakeFailures() {
