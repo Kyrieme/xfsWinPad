@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.5.0 · 2026-09-15 · Windows 10/11 x64</span>
+  <span class="ver">v0.6.0 · 2026-09-15 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（4.9 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.2 MB）</a>
@@ -72,7 +72,7 @@
       <div class="feature"><b>🎨</b>27+ 语言语法高亮 + 自动补全（跨标签词汇、注释过滤）</div>
       <div class="feature"><b>🤖</b>AI 助手面板：opencode / OpenAI 兼容接口，diff 上屏、改盘自动重载</div>
       <div class="feature"><b>🧩</b>插件系统 + AI 插件工场：一句话让 AI 写好并装好插件</div>
-      <div class="feature"><b>🪟</b>多标签 + 双视图分屏，会话恢复、崩溃安全自动保存</div>
+      <div class="feature"><b>🪟</b>多标签 + 双视图分屏 + 多窗口，会话恢复、崩溃安全自动保存</div>
       <div class="feature"><b>🔬</b>STDF 半导体测试数据查看器 + 十六进制查看器</div>
       <div class="feature"><b>📊</b>CSV 表格模式：排序/筛选/编辑/保存/打印，64MB+ 大文件虚拟视图</div>
       <div class="feature"><b>⌨️</b>内置终端面板（ConPTY）、宏录制、行变换工具包</div>
@@ -93,14 +93,20 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">45D355C3EDDD332BA9EB86A537A4BAFDADB3D2B0B9FFA6B297C00D570E7D78F4</p>
+    <p class="hash">E4F073BD83B5E75441529A6962F923497CE1788A98BA64414B09AF2259B72B8C</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">04E3A62FAE1E9E739FAFCA53FEE0D9B0842B69C38D65AF695881E78E9F921A5C</p>
+    <p class="hash">4B90B043A794AA2D4063CBF22E3F6150ED54C6905B5FAA4F19A7EA0148BD6B3F</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.5.0</b>（2026-09-15）</p>
+    <p><b>v0.6.0</b>（2026-09-15）</p>
+    <ul>
+      <li>多窗口独立运行：File > 新窗口（Ctrl+Shift+N）开第二个进程窗口，互不干扰</li>
+      <li>多窗口会话恢复：退出时各窗口分别存档，重启自动逐一还原全部窗口</li>
+      <li>命令行新增 <code>--new</code> / <code>--no-restore</code> / <code>--restore</code> 会话参数</li>
+    </ul>
+    <p style="margin-top:14px"><b>v0.5.0</b>（2026-09-15）</p>
     <ul>
       <li>内置 Git 面板：文件状态 / 暂存 / 提交 / 分支切换，侧栏内完成</li>
       <li>插件进程隔离升级：单代理进程承载 8 插件，崩溃插件精准归因隔离，存活插件自动迁移</li>
