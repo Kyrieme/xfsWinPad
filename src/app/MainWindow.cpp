@@ -429,6 +429,18 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
         SessionState ss;
         if (SessionLoad(SessionFilePath(), &ss)) {
             int restored = 0;
+            // 恢复语言菜单手动选择（批次 66 后补：langIndex 入 session.json）。
+            // lang 越界（旧目录版本/手改文件）当作未选，走扩展名探测。
+            auto applyLang = [&](Document* doc, int lang) {
+                if (!doc || lang < 0) return;
+                const LanguageMenuItem* cat = LanguageMenuCatalog();
+                int n = 0;
+                for (; cat[n].label; ++n) {}
+                if (lang >= n) return;
+                doc->langIndex = lang;
+                const char* kw[2] = { cat[lang].keywords[0], cat[lang].keywords[1] };
+                doc->editor.SetLexerByName(cat[lang].lexerName, kw, theme_);
+            };
             for (auto& e : ss.entries) {
                 if (!e.path.empty() && std::filesystem::exists(e.path)) {
                     workspace_->OpenPath(e.path);
@@ -440,6 +452,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
                             doc->locked = true;
                             doc->editor.SetReadOnly(true);
                         }
+                        applyLang(doc, e.lang);
                         ++restored;
                     }
                 } else if (!e.text.empty()) {
@@ -454,6 +467,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
                             doc->locked = true;
                             doc->editor.SetReadOnly(true);
                         }
+                        applyLang(doc, e.lang);
                         ++restored;
                     }
                 }
@@ -474,6 +488,8 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
                         Document* d = workspace_->Active1();
                         if (d) { d->locked = true; d->editor.SetReadOnly(true); }
                     }
+                    if (e.lang >= 0 && workspace_->Count1() > 0)
+                        applyLang(workspace_->Active1(), e.lang);
                     ++restored1;
                 } else if (!e.text.empty()) {
                     // untitled snapshot in the right view
@@ -487,6 +503,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
                             doc->locked = true;
                             doc->editor.SetReadOnly(true);
                         }
+                        applyLang(doc, e.lang);
                         workspace_->MoveActiveToOtherView();
                         if (e.line > 1 && workspace_->Count1() > 0) {
                             Document* d = workspace_->Active1();
@@ -5003,6 +5020,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     e.line = st.line;
                     e.col = st.column;
                     e.locked = doc->locked;
+                    e.lang = doc->langIndex;
                     if (doc->HasPath()) {
                         e.path = doc->path.wstring();
                     } else {

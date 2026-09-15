@@ -146,6 +146,7 @@ bool SessionSave(const std::wstring& path, const SessionState& s) {
              L"\", \"line\": " + std::to_wstring(e.line) +
              L", \"col\": " + std::to_wstring(e.col);
         if (e.locked) j += L", \"locked\": 1";
+        if (e.lang >= 0) j += L", \"lang\": " + std::to_wstring(e.lang);
         if (!e.name.empty() || !e.text.empty()) {
             // untitled snapshot: keep the tab label and the full text
             j += L", \"name\": \"" + Escape(e.name) +
@@ -162,6 +163,7 @@ bool SessionSave(const std::wstring& path, const SessionState& s) {
              L"\", \"line\": " + std::to_wstring(e.line) +
              L", \"col\": " + std::to_wstring(e.col);
         if (e.locked) j += L", \"locked\": 1";
+        if (e.lang >= 0) j += L", \"lang\": " + std::to_wstring(e.lang);
         if (!e.name.empty() || !e.text.empty()) {
             j += L", \"name\": \"" + Escape(e.name) +
                  L"\", \"text\": \"" + Escape(e.text) + L"\"";
@@ -238,6 +240,7 @@ bool SessionLoad(const std::wstring& path, SessionState* out) {
                 }
                 else if (ek == L"name") ReadString(c, &e.name);
                 else if (ek == L"text") ReadString(c, &e.text);
+                else if (ek == L"lang") ReadInt(c, &e.lang);
                 else SkipValue(c);
             }
             if (!e.path.empty() || !e.text.empty()) outVec->push_back(std::move(e));

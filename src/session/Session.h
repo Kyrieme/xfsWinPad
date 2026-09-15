@@ -5,6 +5,8 @@
 // Format (session.json) carries both views of the split editor so a right/other
 // view survives a restart. Older single-view files (no entries1/active1/
 // activeView keys) load back as one view; the extra fields default to empty.
+// A manual Language-menu pick survives too ("lang" key); files without it
+// keep the -1 default and re-derive the lexer from the extension.
 
 #include <string>
 #include <vector>
@@ -20,6 +22,9 @@ struct SessionEntry {
     std::wstring name;          // "new 3" / "new1 2"
     std::wstring text;          // full document text (capped by the saver)
     bool locked = false;        // user tab lock (close protection + read-only)
+    // Language menu manual pick: index into LanguageMenuCatalog. -1 = never
+    // picked, fall back to extension auto-detect. Absent key (old files) = -1.
+    int lang = -1;
 };
 
 struct SessionState {
