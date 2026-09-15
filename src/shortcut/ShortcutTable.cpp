@@ -151,6 +151,7 @@ ShortcutTable::Defaults() {
             mk(Cmd::EditCopy, true, false, false, 'C'),
             mk(Cmd::EditPaste, true, false, false, 'V'),
             mk(Cmd::ReopenClosedTab, true, false, true, 'T'),   // Ctrl+Shift+T
+            mk(Cmd::FileNewWindow, true, false, true, 'N'),     // 批次 67 Ctrl+Shift+N
             mk(6001, true, false, false, VK_TAB),          // Ctrl+Tab 下一标签
             mk(6002, true, false, true, VK_TAB),           // 上一标签
             mk(Cmd::ViewZoomIn, true, false, false, VK_ADD),

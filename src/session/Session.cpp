@@ -7,7 +7,7 @@
 
 namespace xfs {
 
-std::wstring SessionFilePath() {
+std::wstring SessionDir() {
     wchar_t* appData = nullptr;
     std::wstring base;
     if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appData))) {
@@ -15,7 +15,56 @@ std::wstring SessionFilePath() {
         ::CoTaskMemFree(appData);
     }
     ::CreateDirectoryW((base + L"\\xfsWinPad").c_str(), nullptr);
-    return base + L"\\xfsWinPad\\session.json";
+    return base + L"\\xfsWinPad";
+}
+
+std::wstring SessionFilePath() {
+    return SessionDir() + L"\\session.json";
+}
+
+std::wstring SessionSlotPath(bool primary) {
+    if (primary) return SessionFilePath();
+    wchar_t name[64];
+    swprintf_s(name, L"\\session-%lu.json", (unsigned long)::GetCurrentProcessId());
+    return SessionDir() + name;
+}
+
+std::vector<std::wstring> SessionSlots(const std::wstring& dir,
+                                       unsigned long excludePid,
+                                       unsigned int maxAgeDays) {
+    std::vector<std::wstring> out;
+    WIN32_FIND_DATAW fd{};
+    const std::wstring pat = dir + L"\\session-*.json";
+    HANDLE h = ::FindFirstFileW(pat.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return out;
+    FILETIME now{};
+    ::GetSystemTimeAsFileTime(&now);
+    const ULONGLONG ageLimit = (ULONGLONG)maxAgeDays * 24ull * 60ull * 60ull *
+                               10ull * 1000ull * 1000ull;   // 100ns units
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        const std::wstring name = fd.cFileName;
+        // strict shape: "session-<digits>.json"
+        size_t digitsBegin = 8;                       // after "session-"
+        size_t digitsEnd = name.size() - 5;           // before ".json"
+        bool shaped = name.size() > 8 + 5 + 1;
+        for (size_t k = digitsBegin; shaped && k < digitsEnd; ++k)
+            if (name[k] < L'0' || name[k] > L'9') shaped = false;
+        if (!shaped || digitsEnd <= digitsBegin) continue;
+        unsigned long pid = 0;
+        swscanf_s(name.c_str() + digitsBegin, L"%lu", &pid);
+        const std::wstring full = dir + L"\\" + name;
+        ULONGLONG wt = ((ULONGLONG)fd.ftLastWriteTime.dwHighDateTime << 32) |
+                       fd.ftLastWriteTime.dwLowDateTime;
+        ULONGLONG nt = ((ULONGLONG)now.dwHighDateTime << 32) | now.dwLowDateTime;
+        if (nt > wt && nt - wt > ageLimit) {          // crash orphan: reclaim
+            ::DeleteFileW(full.c_str());
+            continue;
+        }
+        if (pid != excludePid) out.push_back(full);
+    } while (::FindNextFileW(h, &fd));
+    ::FindClose(h);
+    return out;
 }
 
 // --- flat JSON (same minimal format as Settings) ------------------------------

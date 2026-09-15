@@ -90,6 +90,52 @@ int main() {
         CHECK(!SessionLoad(TempPath(L"xfs_session_nope.json"), &out));
     }
 
+    // ---- 4. multi-window slots: listing / pid-exclusion / age GC ---------
+    {
+        std::wstring dir = TempPath(L"xfs_slots_test");
+        ::CreateDirectoryW(dir.c_str(), nullptr);
+        auto touch = [&](const wchar_t* name, bool old) {
+            std::wstring p = dir + L"\\" + name;
+            HANDLE h = ::CreateFileW(p.c_str(), GENERIC_WRITE, 0, nullptr,
+                                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            DWORD w = 0; ::WriteFile(h, "{}", 2, &w, nullptr);
+            if (old) {
+                FILETIME ft; ::GetSystemTimeAsFileTime(&ft);
+                ULARGE_INTEGER u; u.LowPart = ft.dwLowDateTime;
+                u.HighPart = ft.dwHighDateTime;
+                u.QuadPart -= 31ull * 24 * 60 * 60 * 1000 * 1000 * 10;
+                ft.dwLowDateTime = u.LowPart; ft.dwHighDateTime = u.HighPart;
+                ::SetFileTime(h, nullptr, nullptr, &ft);
+            }
+            ::CloseHandle(h);
+        };
+        touch(L"session-12345.json", false);
+        touch(L"session-99999.json", false);
+        touch(L"session-777.json", true);     // stale → reclaimed
+        touch(L"session-abc.json", false);    // malformed → ignored
+        touch(L"session.json", false);        // legacy → never a slot
+
+        auto slots = SessionSlots(dir, 99999);
+        CHECK(slots.size() == 1);
+        CHECK(!slots.empty() && slots[0] == dir + L"\\session-12345.json");
+        CHECK(::GetFileAttributesW((dir + L"\\session-777.json").c_str()) ==
+              INVALID_FILE_ATTRIBUTES);       // stale slot deleted
+        CHECK(::GetFileAttributesW((dir + L"\\session-abc.json").c_str()) !=
+              INVALID_FILE_ATTRIBUTES);       // malformed left untouched
+
+        // slot path shape: primary == legacy, secondary carries the pid
+        CHECK(SessionSlotPath(true) == SessionFilePath());
+        std::wstring sec = SessionSlotPath(false);
+        wchar_t needle[64];
+        swprintf_s(needle, L"session-%lu.json", (unsigned long)::GetCurrentProcessId());
+        CHECK(sec.size() >= 20 && sec.find(needle) != std::wstring::npos);
+
+        for (auto& n : { L"session-12345.json", L"session-99999.json",
+                         L"session-abc.json", L"session.json" })
+            ::DeleteFileW((dir + L"\\" + n).c_str());
+        ::RemoveDirectoryW(dir.c_str());
+    }
+
     ::DeleteFileW(path.c_str());
 
     if (g_fail == 0) { printf("ALL SESSION TESTS PASSED\n"); return 0; }
