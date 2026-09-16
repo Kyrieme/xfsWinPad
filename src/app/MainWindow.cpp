@@ -3110,8 +3110,8 @@ void MainWindow::RestoreSession(const SessionState& ss) {
             workspace_->OpenPath(e.path);
             if (workspace_->Count() > 0) {
                 Document* doc = workspace_->DocumentAt(workspace_->Count()-1);
-                if (doc && e.line > 1)
-                    doc->editor.GotoLine(e.line);
+                if (doc && (e.line > 1 || e.col > 1))
+                    doc->editor.GotoPosition(e.line, e.col);
                 if (doc && e.locked) {   // 批次 38：锁定状态入 session
                     doc->locked = true;
                     doc->editor.SetReadOnly(true);
@@ -3126,7 +3126,7 @@ void MainWindow::RestoreSession(const SessionState& ss) {
             if (doc) {
                 if (!e.name.empty()) doc->SetUntitledName(e.name);
                 doc->editor.SetTextUtf8(WideToUtf8(e.text));
-                if (e.line > 1) doc->editor.GotoLine(e.line);
+                if (e.line > 1 || e.col > 1) doc->editor.GotoPosition(e.line, e.col);
                 if (e.locked) {
                     doc->locked = true;
                     doc->editor.SetReadOnly(true);
@@ -3144,9 +3144,9 @@ void MainWindow::RestoreSession(const SessionState& ss) {
         if (!e.path.empty() && std::filesystem::exists(e.path)) {
             workspace_->OpenPath(e.path);              // lands in left view
             workspace_->MoveActiveToOtherView();       // now in right view
-            if (e.line > 1 && workspace_->Count1() > 0) {
+            if ((e.line > 1 || e.col > 1) && workspace_->Count1() > 0) {
                 Document* d = workspace_->Active1();
-                if (d) d->editor.GotoLine(e.line);
+                if (d) d->editor.GotoPosition(e.line, e.col);
             }
             if (e.locked && workspace_->Count1() > 0) {
                 Document* d = workspace_->Active1();
@@ -3162,16 +3162,16 @@ void MainWindow::RestoreSession(const SessionState& ss) {
             if (doc) {
                 if (!e.name.empty()) doc->SetUntitledName(e.name);
                 doc->editor.SetTextUtf8(WideToUtf8(e.text));
-                if (e.line > 1) doc->editor.GotoLine(e.line);
+                if (e.line > 1 || e.col > 1) doc->editor.GotoPosition(e.line, e.col);
                 if (e.locked) {
                     doc->locked = true;
                     doc->editor.SetReadOnly(true);
                 }
                 applyLang(doc, e.lang);
                 workspace_->MoveActiveToOtherView();
-                if (e.line > 1 && workspace_->Count1() > 0) {
+                if ((e.line > 1 || e.col > 1) && workspace_->Count1() > 0) {
                     Document* d = workspace_->Active1();
-                    if (d) d->editor.GotoLine(e.line);
+                    if (d) d->editor.GotoPosition(e.line, e.col);
                 }
                 ++restored1;
             }
@@ -3200,9 +3200,9 @@ void MainWindow::RestoreSession(const SessionState& ss) {
     // 存在丢失风险，统一攒到 WM_APP_RESTOREJUMP 后应用（覆盖左右两视图）。
     pendingJumps_.clear();
     for (const auto& e : ss.entries)
-        if (e.line > 1) pendingJumps_.push_back({e.path, e.name, e.line});
+        if (e.line > 1 || e.col > 1) pendingJumps_.push_back({e.path, e.name, e.line, e.col});
     for (const auto& e : ss.entries1)
-        if (e.line > 1) pendingJumps_.push_back({e.path, e.name, e.line});
+        if (e.line > 1 || e.col > 1) pendingJumps_.push_back({e.path, e.name, e.line, e.col});
     if (!pendingJumps_.empty())
         ::PostMessageW(hwnd_, WM_APP_RESTOREJUMP, 0, 0);
     Logger::Info("Session restored: " + std::to_string(restored) +
@@ -3228,7 +3228,7 @@ void MainWindow::ApplyRestoreJumps() {
                 if (d && !d->HasPath() && d->DisplayName() == j.name) { doc = d; break; }
             }
         }
-        if (doc) doc->editor.GotoLine(j.line);
+        if (doc) doc->editor.GotoPosition(j.line, j.col);
     }
 }
 

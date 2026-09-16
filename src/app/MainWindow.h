@@ -268,6 +268,7 @@ int aiWLogical_ = 360;               // AI panel width at 96 dpi, splitter-adjus
         std::wstring path;   // 有路径文档按全路径匹配
         std::wstring name;   // untitled 文档按显示名匹配
         int line = 1;        // 1-based
+        int col = 1;         // 1-based 显示列（GETCOLUMN+1）
     };
     std::vector<PendingJump> pendingJumps_;
     const ThemeDef* theme_ = nullptr;

@@ -788,6 +788,21 @@ void Editor::GotoLine(int line1based) {
     Send(SCI_ENSUREVISIBLE, line1based - 1);
     Send(SCI_GOTOLINE, line1based - 1);
 }
+void Editor::GotoPosition(int line1based, int columnDisplay) {
+    int max = (int)Send(SCI_GETLINECOUNT) - 1;
+    if (line1based > max) line1based = max;
+    if (line1based < 1) line1based = 1;
+    Send(SCI_ENSUREVISIBLE, line1based - 1);
+    // col 为 GETCOLUMN+1（含 tab 展开的显示列）；FINDCOLUMN 是其逆运算。
+    sptr_t col0 = columnDisplay > 1 ? columnDisplay - 1 : 0;
+    sptr_t pos = col0 > 0 ? Send(SCI_FINDCOLUMN, line1based - 1, col0) : -1;
+    if (pos < 0) {          // 越界/无列信息 → 退化为整行恢复
+        Send(SCI_GOTOLINE, line1based - 1);
+        return;
+    }
+    Send(SCI_SETSEL, pos, pos);
+    Send(SCI_SCROLLCARET);
+}
 void Editor::EnsureVisibleCurrent() {
     Send(SCI_ENSUREVISIBLEENFORCEPOLICY, Send(SCI_LINEFROMPOSITION, Send(SCI_GETCURRENTPOS)));
 }

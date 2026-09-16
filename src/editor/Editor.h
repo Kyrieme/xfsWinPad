@@ -117,6 +117,7 @@ public:
     void MarkDiffLine(int line0, bool added);
     void InsertTextAtCaret(const std::string& utf8) { Send(SCI_REPLACESEL, 0, (LPARAM)utf8.c_str()); }
     void GotoLine(int line1based);
+    void GotoPosition(int line1based, int columnDisplay);  // restore caret col too (GETCOLUMN 1-based)
     void EnsureVisibleCurrent();
     void SelectRange(sptr_t start, sptr_t end);
 
