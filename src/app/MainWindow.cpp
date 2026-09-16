@@ -3188,8 +3188,40 @@ void MainWindow::RestoreSession(const SessionState& ss) {
                ss.activeIndex < workspace_->Count()) {
         workspace_->Activate(ss.activeIndex);
     }
+    // 跳行延迟到消息循环：此刻编辑器可能尚未挂进可见窗口树，立即 SCI_GOTOLINE
+    // 存在丢失风险，统一攒到 WM_APP_RESTOREJUMP 后应用（覆盖左右两视图）。
+    pendingJumps_.clear();
+    for (const auto& e : ss.entries)
+        if (e.line > 1) pendingJumps_.push_back({e.path, e.name, e.line});
+    for (const auto& e : ss.entries1)
+        if (e.line > 1) pendingJumps_.push_back({e.path, e.name, e.line});
+    if (!pendingJumps_.empty())
+        ::PostMessageW(hwnd_, WM_APP_RESTOREJUMP, 0, 0);
     Logger::Info("Session restored: " + std::to_string(restored) +
                  " + " + std::to_string(restored1) + " file(s)");
+}
+
+void MainWindow::ApplyRestoreJumps() {
+    auto jumps = std::move(pendingJumps_);
+    pendingJumps_.clear();
+    for (const auto& j : jumps) {
+        Document* doc = nullptr;
+        if (!j.path.empty()) {
+            doc = workspace_->FindByPath(j.path);
+        } else if (!j.name.empty()) {
+            int n = workspace_->Count();
+            for (int i = 0; i < n; ++i) {
+                Document* d = workspace_->FindByTabIndex(i);
+                if (d && !d->HasPath() && d->DisplayName() == j.name) { doc = d; break; }
+            }
+            int n1 = workspace_->Count1();
+            for (int i = 0; i < n1 && !doc; ++i) {
+                Document* d = workspace_->FindByTabIndex1(i);
+                if (d && !d->HasPath() && d->DisplayName() == j.name) { doc = d; break; }
+            }
+        }
+        if (doc) doc->editor.GotoLine(j.line);
+    }
 }
 
 void MainWindow::MoveCurrentToNewWindow() {
@@ -5006,6 +5038,10 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_APP_SEARCHACT:
             HandleSearchAction((SearchAction)(int)lp);
+            return 0;
+
+        case WM_APP_RESTOREJUMP:
+            ApplyRestoreJumps();
             return 0;
 
         case WM_APP_GOTOHIT:

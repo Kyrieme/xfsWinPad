@@ -52,6 +52,10 @@ struct StartupOptions {
 // 解析命令行（wWinMain 与 WM_COPYDATA 单实例转发共用同一实现）
 StartupOptions ParseCommandLine(LPCWSTR cmd);
 
+// 会话恢复跳行（wParam/lParam=0）：RestoreSession 攒好 PendingJump 后 Post，
+// 消息循环侧 ApplyRestoreJumps 统一应用，避免编辑器未挂载时 SCI 跳行丢失。
+constexpr UINT WM_APP_RESTOREJUMP = WM_APP + 90;
+
 class MainWindow : public IPrefsApplier, public IStyleApplier, public IShortcutChange {
 public:
     ~MainWindow();
@@ -59,6 +63,7 @@ public:
     bool Create(HINSTANCE hInst, const StartupOptions& opts);
     int  RunMessageLoop();
     HWND Hwnd() const { return hwnd_; }
+    bool StartMaximized() const { return settings_.winMax; }
     Workspace& GetWorkspace() { return *workspace_; }
     // installs the macro key-hook onto a freshly created editor
     void AttachMacroHook(class Editor* ed);
@@ -109,6 +114,7 @@ private:
     void UpdateStatusBar();
     void UpdateUndoRedoState();   // 工具栏撤销/重做按钮禁用态（无操作/到底变灰）
     void DoGotoLine();
+    void ApplyRestoreJumps();   // WM_APP_RESTOREJUMP：窗口消息循环开始后再跳恢复行
     void HandleSearchAction(SearchAction act);
     void ShowSearchResults(std::vector<SearchHit> hits);
     void OnResultActivate(int row);
@@ -256,6 +262,14 @@ int aiWLogical_ = 360;               // AI panel width at 96 dpi, splitter-adjus
     MacroRecorder macro_;
 
     AppSettings settings_;
+    // 恢复跳行延迟队列：编辑器此时可能尚未挂进可见窗口树，SCI_GOTOLINE 会丢，
+    // 故攒到 WM_APP_RESTOREJUMP（消息循环开始、窗口已首显）再应用。
+    struct PendingJump {
+        std::wstring path;   // 有路径文档按全路径匹配
+        std::wstring name;   // untitled 文档按显示名匹配
+        int line = 1;        // 1-based
+    };
+    std::vector<PendingJump> pendingJumps_;
     const ThemeDef* theme_ = nullptr;
     StartupOptions startup_;
 };

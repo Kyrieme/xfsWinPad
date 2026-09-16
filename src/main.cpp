@@ -85,7 +85,9 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow) {
         return 1;
     }
 
-    ShowWindow(win.Hwnd(), nCmdShow);
+    // 上次退出为最大化时不能用 shell 的 nCmdShow(SW_SHOWNORMAL) 首显——
+    // 它会把 Create 里刚应用的 SW_MAXIMIZE 又还原掉。
+    ShowWindow(win.Hwnd(), win.StartMaximized() ? SW_SHOWMAXIMIZED : nCmdShow);
     UpdateWindow(win.Hwnd());
     Logger::Info("App initialized OK");
 

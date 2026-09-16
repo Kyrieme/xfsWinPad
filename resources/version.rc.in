@@ -4,8 +4,8 @@
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,0,0
- PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,0,0
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS VOS_NT_WINDOWS32
@@ -18,12 +18,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "xfsWinPad Project"
             VALUE "FileDescription", "xfsWinPad - Professional Windows Text Editor"
-            VALUE "FileVersion", "@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@.0.0"
+            VALUE "FileVersion", "@PROJECT_VERSION@.0"
             VALUE "InternalName", "xfsWinPad"
             VALUE "LegalCopyright", "Copyright (C) xfsWinPad Project"
             VALUE "OriginalFilename", "xfsWinPad.exe"
             VALUE "ProductName", "xfsWinPad"
-            VALUE "ProductVersion", "@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@.0.0"
+            VALUE "ProductVersion", "@PROJECT_VERSION@.0"
         END
     END
     BLOCK "VarFileInfo"
