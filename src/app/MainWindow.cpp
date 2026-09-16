@@ -3178,16 +3178,24 @@ void MainWindow::RestoreSession(const SessionState& ss) {
         }
     }
 
-    if (ss.activeView == 1 && restored1 > 0) {
-        int idx = ss.activeIndex1;
-        int cnt = workspace_->Count1();
-        if (idx < 0) idx = 0;
-        if (idx >= cnt) idx = cnt - 1;
-        workspace_->ActivateView1(idx);
-    } else if (ss.activeIndex >= 0 &&
-               ss.activeIndex < workspace_->Count()) {
-        workspace_->Activate(ss.activeIndex);
-    }
+    // 两视图的选中 tab 各自独立恢复；退出时处于激活态的视图最后处理，
+    // 以决定最终 currentView_ 与焦点（否则非激活侧的 activeIndex/activeIndex1 会被丢弃）。
+    const int cnt1r = workspace_->Count1();
+    const bool leftActive = (ss.activeView == 0);
+    auto restoreLeft = [&]() {
+        if (ss.activeIndex >= 0 && ss.activeIndex < workspace_->Count())
+            workspace_->Activate(ss.activeIndex);
+    };
+    auto restoreRight = [&]() {
+        if (cnt1r > 0) {
+            int idx = ss.activeIndex1;
+            if (idx < 0) idx = 0;
+            if (idx >= cnt1r) idx = cnt1r - 1;
+            workspace_->ActivateView1(idx);
+        }
+    };
+    if (leftActive) { restoreRight(); restoreLeft(); }
+    else            { restoreLeft(); restoreRight(); }
     // 跳行延迟到消息循环：此刻编辑器可能尚未挂进可见窗口树，立即 SCI_GOTOLINE
     // 存在丢失风险，统一攒到 WM_APP_RESTOREJUMP 后应用（覆盖左右两视图）。
     pendingJumps_.clear();
