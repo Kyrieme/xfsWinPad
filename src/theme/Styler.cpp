@@ -17,6 +17,7 @@ namespace {
 const char* const kRoleNames[SR_COUNT] = {
     "comment", "string", "number", "keyword", "keyword2",
     "operator", "class", "preproc", "special",
+    "pass", "fail", "dim",
 };
 
 // 词法器名是 ASCII；wstring 没有 char* 构造，逐字符加宽即可
@@ -107,6 +108,9 @@ COLORREF StylerStore::ResolveFg(const char* lexer, int role, const ThemeDef& the
         case SR_Class:    return theme.cls;
         case SR_Preproc:  return theme.preproc;
         case SR_Special:  return theme.special;
+        case SR_Pass:     return theme.pass;
+        case SR_Fail:     return theme.fail;
+        case SR_Dim:      return theme.dim;
     }
     return theme.editorFg;
 }
@@ -378,14 +382,22 @@ StylerStore& GlobalStyler() {
 }
 
 // 词法器家族清单：与 Editor.cpp 的 kFamilies 表保持同一组名字
-int StylerStore::LexerFamilyCount() { return 11; }
+namespace {
+const char* const kLexerFamilies[] = {
+    "cpp", "python", "hypertext", "xml", "css", "json",
+    "yaml", "sql", "bash", "powershell", "batch",
+    // 批次 72：ATE 族（自研 ILexer5，样式号从 64 起编）
+    "ate_pattern", "stil", "ate_log",
+};
+// 从表长推导计数：原来在两处各写了一次字面量 14，加一族就得记得改两处，
+// 漏一处就是「对话框少一项」或「越界返回空串」的静默 bug。
+const int kLexerFamilyCount = (int)(sizeof(kLexerFamilies) / sizeof(kLexerFamilies[0]));
+} // namespace
+
+int StylerStore::LexerFamilyCount() { return kLexerFamilyCount; }
 
 const char* StylerStore::LexerFamilyName(int i) {
-    static const char* const kFamilies[] = {
-        "cpp", "python", "hypertext", "xml", "css", "json",
-        "yaml", "sql", "bash", "powershell", "batch",
-    };
-    return (i >= 0 && i < 11) ? kFamilies[i] : "";
+    return (i >= 0 && i < kLexerFamilyCount) ? kLexerFamilies[i] : "";
 }
 
 } // namespace xfs

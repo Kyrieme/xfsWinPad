@@ -1,4 +1,5 @@
 #include "LanguageMap.h"
+#include "XfsLexer.h"   // 批次 72：自研 ATE 词法器名（kLexAtePattern 等）
 #include <cwctype>
 #include <cstring>
 
@@ -145,7 +146,7 @@ const wchar_t* ePy[]  = {L"py", L"pyw", L"pyi", nullptr};
 const wchar_t* eJs[]  = {L"js", L"mjs", L"cjs", L"jsx", nullptr};
 const wchar_t* eTs[]  = {L"ts", L"tsx", nullptr};
 const wchar_t* eHtml[]= {L"html", L"htm", L"xhtml", L"php", nullptr};
-const wchar_t* eXml[] = {L"xml", L"xsl", L"xslt", L"svg", L"plist", L"wsdl", L"stil", nullptr};
+const wchar_t* eXml[] = {L"xml", L"xsl", L"xslt", L"svg", L"plist", L"wsdl", nullptr};
 const wchar_t* eCss[] = {L"css", nullptr};
 const wchar_t* eJson[]= {L"json", L"jsonc", nullptr};
 const wchar_t* eYaml[]= {L"yaml", L"yml", nullptr};
@@ -170,6 +171,14 @@ const wchar_t* eMake[]= {L"mak", L"make", nullptr};
 const wchar_t* eCmake[]={L"cmake", nullptr};
 const wchar_t* eDiff[]= {L"diff", L"patch", nullptr};
 const wchar_t* eAsm[] = {L"asm", L"s", nullptr};
+
+// 批次 72：ATE 族。词表由词法器构造函数内置（LanguageInfo 只有两个
+// keyword 槽位，装不下 pin/timing/跳转四张表），所以这里的两列留空。
+// .cfg 有意**不**划给 ATE —— 它是通用 INI，归 props 词法器更合适；
+// ATE 配置里真正需要结构高亮的是 .pat/.stil。
+const wchar_t* eAtePat[] = {L"pat", L"patset", L"ptn", nullptr};
+const wchar_t* eStil[]   = {L"stil", nullptr};
+const wchar_t* eAteLog[] = {L"log", L"atelog", L"tstlog", L"datalog", nullptr};
 
 const LanguageInfo g_table[] = {
     LANG(eC,    "cpp",       kCppKw,   kCppTypes),
@@ -202,6 +211,10 @@ const LanguageInfo g_table[] = {
     LANG(eToml, "toml",      kYamlKw,  nullptr),
     LANG(eDiff, "diff",      nullptr,  nullptr),
     LANG(eAsm,  "asm",       nullptr,  nullptr),
+    // ATE 族（批次 72，自研 ILexer5；词表内置在词法器构造里）
+    LANG(eAtePat, kLexAtePattern, nullptr, nullptr),
+    LANG(eStil,   kLexStil,       nullptr, nullptr),
+    LANG(eAteLog, kLexAteLog,     nullptr, nullptr),
 };
 
 } // namespace
@@ -278,6 +291,12 @@ const LanguageMenuItem kMenuCatalog[] = {
     {L"C&Make",                "cmake",      {nullptr,      nullptr}},
     {L"&Diff",                 "diff",       {nullptr,      nullptr}},
     {L"&Assembler",            "asm",        {nullptr,      nullptr}},
+    // ---- 批次 72：ATE / 半导体语言（自研 ILexer5）----
+    // 助记符挑的是本菜单里尚未占用的字母（E / L）；&STIL 的 S 与 &Shell
+    // 重复，与表中既有的 M/J 多次重复同性质，不影响可用性。
+    {L"AT&E Pattern",          kLexAtePattern, {nullptr,    nullptr}},
+    {L"&STIL",                 kLexStil,       {nullptr,    nullptr}},
+    {L"ATE &Log",              kLexAteLog,     {nullptr,    nullptr}},
     // null terminator (label == nullptr marks the end of the catalog)
     {nullptr,                  nullptr,      {nullptr,      nullptr}},
 };
@@ -319,6 +338,11 @@ const char* LineCommentToken(const char* lexerName) {
         { "cmake",      "# "   },
         { "diff",       nullptr },
         { "asm",        "; "   },
+        // 批次 72：ATE 族。.pat 两种行注释都吃（# 与 //），切换行注释统一用 #；
+        // STIL 与 ATE Log 用 //。
+        { kLexAtePattern, "# " },
+        { kLexStil,       "//" },
+        { kLexAteLog,     "//" },
     };
     for (const auto& e : kTokens)
         if (strcmp(e.lexer, lexerName) == 0) return e.token;

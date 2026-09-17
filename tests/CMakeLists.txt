@@ -147,6 +147,24 @@ target_link_libraries(test_styler PRIVATE shlwapi)
 
 add_test(NAME styler COMMAND test_styler)
 
+# 自研 ATE 词法器（批次 72）：假 IDocument 驱动真实 ILexer5，
+# 覆盖 .pat/.stil/.log 的行分类、跨窗口状态、折叠与保守门。
+add_executable(test_atelexer test_atelexer.cpp
+    ../src/language/XfsLexer.cpp
+    ../src/language/AtePatternLexer.cpp
+    ../src/language/StilLexer.cpp
+    ../src/language/AteLogLexer.cpp)
+
+target_include_directories(test_atelexer PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include)
+target_compile_definitions(test_atelexer PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_atelexer PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME atelexer COMMAND test_atelexer)
+set_tests_properties(atelexer PROPERTIES TIMEOUT 120)
+
 add_executable(test_shortcut test_shortcut.cpp
     ../src/shortcut/ShortcutTable.cpp
     ../src/core/Util.cpp)
@@ -395,9 +413,9 @@ target_link_libraries(test_npp_msgs PRIVATE shlwapi user32)
 add_test(NAME npp_msgs COMMAND test_npp_msgs)
 
 # ---- 进程外插件桥 e2e（真实代理进程 + 真实 NPP 形态测试 DLL）-----------------
-# 五个自持契约的测试插件（好插件 / setInfo-exit / 命令回调 AV / 第二好插件 /
-# 装载卡死），独立输出目录。
-foreach(oopdll oop_good oop_killer oop_crasher oop_multi oop_hang)
+# 六个自持契约的测试插件（好插件 / setInfo-exit / 命令回调 AV / 第二好插件 /
+# 装载卡死 / messageProc 桥），独立输出目录。
+foreach(oopdll oop_good oop_killer oop_crasher oop_multi oop_hang oop_msg)
     add_library(${oopdll} SHARED oop_plugins/${oopdll}.cpp)
     target_compile_definitions(${oopdll} PRIVATE UNICODE _UNICODE NOMINMAX)
     if(MSVC)
@@ -426,7 +444,8 @@ target_include_directories(test_oop PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
     ${CMAKE_SOURCE_DIR}/third_party/scintilla/src)
 target_link_libraries(test_oop PRIVATE shlwapi user32 shell32)
-add_dependencies(test_oop oop_good oop_killer oop_crasher oop_multi oop_hang xfsWinPadPluginHost)
+add_dependencies(test_oop oop_good oop_killer oop_crasher oop_multi oop_hang oop_msg
+    xfsWinPadPluginHost)
 add_test(NAME oop COMMAND test_oop
     $<TARGET_FILE_DIR:oop_good>)
 set_tests_properties(oop PROPERTIES TIMEOUT 180)

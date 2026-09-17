@@ -356,6 +356,14 @@ LRESULT OopHost::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return TRUE;
     }
+    if (wire[1] == xfs::oop::OOPM_MSGREPLY) {
+        if (cds->cbData < sizeof(xfs::oop::MsgReplyWire)) return FALSE;
+        auto* rp = reinterpret_cast<const xfs::oop::MsgReplyWire*>(cds->lpData);
+        for (auto& w : msgWaits_) {
+            if (w.reqId == rp->reqId) { w.results.push_back(rp->result); break; }
+        }
+        return TRUE;   // 过期 reqId 静默丢弃
+    }
     if (wire[1] != xfs::oop::OOPM_HANDSHAKE ||
         cds->cbData < sizeof(xfs::oop::HandshakeWire))
         return FALSE;
@@ -483,10 +491,64 @@ void OopHost::BroadcastNotify(int code, UINT_PTR idFrom) {
     }
 }
 
+LRESULT OopHost::BroadcastMessage(UINT msg, WPARAM wp, LPARAM lp, bool* handled,
+                                  unsigned timeoutMs) {
+    if (handled) *handled = false;
+    std::vector<HWND> slots;
+    for (auto& p : plugins_)
+        if (!p->dead && p->hostWnd) slots.push_back(p->hostWnd);
+    if (slots.empty()) return 0;
+
+    msgWaits_.push_back(MsgWait{ ++msgReqSeq_, {} });
+    const UINT_PTR id = msgWaits_.back().reqId;
+    auto collected = [id, this]() {
+        for (auto& w : msgWaits_)
+            if (w.reqId == id) return static_cast<int>(w.results.size());
+        return 0;
+    };
+
+    int expected = 0;
+    for (HWND h : slots) {
+        xfs::oop::MsgWire w{};
+        w.magic = xfs::oop::kMagic;
+        w.msg = xfs::oop::OOPM_MSG;
+        w.reqId = id;
+        w.wndMsg = msg;
+        w.wParam = static_cast<UINT_PTR>(wp);
+        w.lParam = static_cast<LONG_PTR>(lp);
+        COPYDATASTRUCT cds{};
+        cds.dwData = xfs::oop::kMagic;
+        cds.cbData = sizeof(w);
+        cds.lpData = &w;
+        // WM_COPYDATA 同步语义：SMTO 正常返回时该槽回包已记入 Handle()。
+        // 被 ABORT 的慢槽可能在恢复后迟到回包，由下方短暂泵等收。
+        if (::SendMessageTimeoutW(h, WM_COPYDATA, reinterpret_cast<WPARAM>(selfWnd_),
+                                  reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
+                                  timeoutMs, nullptr))
+            ++expected;
+    }
+
+    DWORD end = ::GetTickCount() + 500;
+    while (collected() < expected && ::GetTickCount() < end) PumpOnce(20);
+
+    LRESULT result = 0;
+    for (auto it = msgWaits_.begin(); it != msgWaits_.end(); ++it) {
+        if (it->reqId != id) continue;
+        for (LONG_PTR r : it->results) {
+            if (r == 0) continue;
+            result = r;                       // 首个非零 = NPP 广播消费语义
+            if (handled) *handled = true;
+            break;
+        }
+        msgWaits_.erase(it);
+        break;
+    }
+    return result;
+}
+
 // ---- 代理生命周期观察 ---------------------------------------------------------
 
-void OopHost::StartWatchdog(size_t procIdx) {
-    HANDLE proc = procs_[procIdx]->proc;
+void OopHost::StartWatchdog(size_t procIdx) {    HANDLE proc = procs_[procIdx]->proc;
     HWND self = selfWnd_;
     procs_[procIdx]->watchdog = std::thread([this, proc, self, procIdx]() {
         ::WaitForSingleObject(proc, INFINITE);

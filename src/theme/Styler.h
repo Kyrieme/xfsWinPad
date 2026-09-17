@@ -26,9 +26,14 @@ namespace xfs {
 struct ThemeDef;   // Theme.h（避免把前向声明泄漏到全局命名空间）
 
 // 语法角色（Editor 的 per-lexer 样式表把 Sci 样式号映射到这些角色）
+// 注意：新增角色一律追加在 SR_Special 之后，保证已有角色的数值稳定
+// （stylers.json 以角色名为键，但数值稳定可避免任何按序索引的调用点错位）。
 enum StyleRoleEnum {
     SR_Comment = 0, SR_String, SR_Number, SR_Keyword, SR_Keyword2,
-    SR_Operator, SR_Class, SR_Preproc, SR_Special, SR_COUNT
+    SR_Operator, SR_Class, SR_Preproc, SR_Special,
+    SR_Pass, SR_Fail,   // 批次 72：ATE 语义色（PASS/FAIL 判定）
+    SR_Dim,             // 批次 72：弱化色（.pat 的 mask 向量 X/N/Z/U）
+    SR_COUNT
 };
 // 角色名 ↔ 枚举（stylers.json 的键）
 const char* StyleRoleName(int role);

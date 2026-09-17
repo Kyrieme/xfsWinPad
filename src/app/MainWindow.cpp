@@ -25,6 +25,7 @@
 #include "../theme/Theme.h"
 #include "../workspace/Workspace.h"
 #include "../plugin/Workshop.h"
+#include "../plugin/oop/OopHost.h"   // OOP messageProc 桥（v2.1，批次 71）
 #include <filesystem>
 
 #define WIN32_LEAN_AND_MEAN
@@ -4768,6 +4769,34 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         bool handled = false;
         LRESULT res = plugins_->ForwardNppMessage(msg, wp, lp, handled);
         if (handled) return res;
+    }
+
+    // OOP messageProc 桥（v2.1，批次 71）：白名单 OS 广播按值过桥到进程外
+    // 插件槽。红线：仅限 wp/lp 均为整数/句柄的消息——带指针参数的
+    // （WM_SETTINGCHANGE 的 LPWSTR、WM_POWERBROADCAST 的 setting 块）绝不过桥。
+    // 插件返回值仅诊断记录（OOPM_MSGREPLY 回带链路），不改变编辑器默认处理。
+    if (plugins_ && plugins_->OopHostPtr()) {
+        bool oopValued = false;
+        switch (msg) {
+            case WM_SYSCOLORCHANGE:
+            case WM_TIMECHANGE:
+            case WM_DISPLAYCHANGE:
+            case WM_DWMCOLORIZATIONCOLORCHANGED:
+            case WM_WTSSESSION_CHANGE:
+                oopValued = true;
+                break;
+            default:
+                break;
+        }
+        if (oopValued) {
+            bool pluginHandled = false;
+            plugins_->OopHostPtr()->BroadcastMessage(msg, wp, lp, &pluginHandled);
+            if (pluginHandled) {
+                wchar_t buf[96];
+                swprintf_s(buf, L"OOP: a plugin handled broadcast msg 0x%x", msg);
+                Logger::Info(WideToUtf8(buf));
+            }
+        }
     }
 
     switch (msg) {

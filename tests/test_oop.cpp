@@ -293,6 +293,41 @@ int main(int argc, char** argv) {
         DestroyWindow(recv);
     }
 
+    // ---- 场景 8：messageProc 双向同步桥（v2.1，批次 71）----------------------
+    {
+        ResetMarkers();
+        PluginManager mgr;
+        OopHost host;
+        HWND recv = MakeRecv();
+        CHECK(host.Launch(mgr, (dllDir / L"oop_good.dll").wstring(), recv, nullptr, 15000),
+              "msgbridge: good on proxy");
+        CHECK(host.Launch(mgr, (dllDir / L"oop_msg.dll").wstring(), recv, nullptr, 15000),
+              "msgbridge: msg plugin on same proxy");
+
+        bool handled = false;
+        LRESULT r = host.BroadcastMessage(WM_APP + 0x71, 0x1234, (LPARAM)0x5678, &handled);
+        PumpMessages();
+        CHECK(r == (LRESULT)0x1235 && handled,
+              "msgbridge: messageProc LRESULT synced back (first non-zero wins)");
+        CHECK(FindMarker(10, (INT_PTR)(WM_APP + 0x71)), "msgbridge: msg crossed intact");
+        CHECK(FindMarker(11, (INT_PTR)0x1234), "msgbridge: wParam crossed intact");
+        CHECK(FindMarker(12, (INT_PTR)0x5678), "msgbridge: lParam crossed intact");
+
+        host.ShutdownAll();
+
+        // 阴性：全部插件返回 0（oop_good stub）→ 0 + handled=false
+        ResetMarkers();
+        PluginManager mgr2;
+        OopHost host2;
+        CHECK(host2.Launch(mgr2, (dllDir / L"oop_good.dll").wstring(), recv, nullptr, 15000),
+              "msgbridge: negative baseline launched");
+        bool negHandled = true;
+        CHECK(host2.BroadcastMessage(WM_APP + 0x72, 1, 2, &negHandled) == 0 && !negHandled,
+              "msgbridge: all-zero replies aggregate to 0/unhandled");
+        host2.ShutdownAll();
+        DestroyWindow(recv);
+    }
+
     std::printf("== %s ==\n", g_fail ? "FAILED" : "ALL PASSED");
     return g_fail ? 1 : 0;
 }

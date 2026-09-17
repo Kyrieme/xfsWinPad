@@ -48,6 +48,46 @@ int main() {
         CHECK(light && dark && light != dark);
         CHECK(light->editorBg == RGB(0xFF, 0xFF, 0xFF));
         CHECK(wcscmp(theme::Find(L"不存在的主题")->name, L"light") == 0);  // 兜底
+
+        // 位置初始化护栏。Theme.cpp 的两套内建主题是按字段顺序填的，漏写一项
+        // **不会编译报错**（缺失项按 0 补），而是让后面所有字段整体错位——
+        // 本批真实事故：light 漏了一行 dim，dim 拿到 tabActiveBg 的白色，
+        // tab* 七个配色全体前移、tabEdge 退化成 0，视觉上很难一眼看出。
+        // 钉死首/中/尾三类字段，任何错位都会在这里当场失败。
+        CHECK(light->caret        == RGB(0x00, 0x00, 0x00));   // 首段
+        CHECK(light->dim          == RGB(0x8C, 0x8C, 0x8C));   // 中段（本批新增）
+        CHECK(light->tabActiveBg  == RGB(0xFF, 0xFF, 0xFF));   // 尾段
+        CHECK(light->tabEdge      == RGB(0xC8, 0xC8, 0xC8));   // 末项
+        CHECK(dark->caret         == RGB(0xF0, 0xF0, 0xF0));
+        CHECK(dark->dim           == RGB(0x80, 0x80, 0x80));
+        CHECK(dark->tabEdge       == RGB(0x3F, 0x3F, 0x46));   // 末项
+        // 字段表（Style Configurator 按索引读写、JSON 按名读写）必须覆盖全部字段，
+        // 否则新加的字段存不进主题 JSON。
+        CHECK(theme::ThemeFieldCount() == 28);
+    }
+    // --- ATE 语义角色（批次 72）-------------------------------------------------
+    // 锁两件事：
+    //  1. 角色名 ↔ 数值稳定（stylers.json 以名称为键，数值变动会让按序索引错位）
+    //  2. mask 用的 dim **不能等于 editorFg**。这是本批踩过的坑：mask 原先映射到
+    //     ROperator，而 op 在明暗两套主题里都等于正文前景色，于是 X/N/Z/U 和普通
+    //     标识符画成一样，「drive/expect/mask 一眼可分」的设计意图落空，而
+    //     单测/端到端当时都只断言「三者互不相同」，谁也不报错。
+    {
+        CHECK(strcmp(StyleRoleName(SR_Pass), "pass") == 0);
+        CHECK(strcmp(StyleRoleName(SR_Fail), "fail") == 0);
+        CHECK(strcmp(StyleRoleName(SR_Dim), "dim") == 0);
+        CHECK(StyleRoleFromName("dim") == SR_Dim);
+        CHECK(StyleRoleFromName("pass") == SR_Pass);
+
+        StylerStore s;
+        for (const wchar_t* nm : {L"light", L"dark"}) {
+            const ThemeDef* t = theme::Find(nm);
+            CHECK(t->dim != t->editorFg);      // 弱化色必须真的弱化
+            CHECK(t->dim != t->comment);
+            CHECK(t->dim != t->number);        // 不能撞 drive（drive 用 number）
+            CHECK(t->dim != t->special);       // 不能撞 expect（expect 用 special）
+            CHECK(s.ResolveFg("ate_pattern", SR_Dim, *t) == t->dim);
+        }
     }
     // --- 解析链：无覆盖时用主题角色色 -------------------------------------------
     {

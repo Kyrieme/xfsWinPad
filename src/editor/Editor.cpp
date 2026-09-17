@@ -2,6 +2,8 @@
 #include "../core/Log.h"
 #include "../core/Util.h"
 #include "../language/LanguageMap.h"
+#include "../language/XfsLexer.h"        // 批次 72：自研 ATE 词法器工厂
+#include "../language/XfsLexerStyles.h"  // 批次 72：ATE 族样式号（SCE_ATEP_* 等）
 #include "../settings/Settings.h"
 #include "../theme/Theme.h"
 #include "../theme/Styler.h"
@@ -381,7 +383,8 @@ namespace {
 
 enum Role { RComment = SR_Comment, RString = SR_String, RNumber = SR_Number,
             RKeyword = SR_Keyword, RKeyword2 = SR_Keyword2, ROperator = SR_Operator,
-            RClass = SR_Class, RPreproc = SR_Preproc, RSpecial = SR_Special };
+            RClass = SR_Class, RPreproc = SR_Preproc, RSpecial = SR_Special,
+            RPass = SR_Pass, RFail = SR_Fail, RDim = SR_Dim };
 
 struct StyleRole { int style; Role role; };
 
@@ -487,6 +490,51 @@ const StyleRole kBatStyles[] = {
     {SCE_BAT_OPERATOR, ROperator},
 };
 
+// ---- 批次 72：ATE 族（自研 ILexer5，样式号在 XfsLexerStyles.h）----------------
+//
+// 配色原则：族的 *_DEFAULT 样式（普通标识符）刻意**不列入**下表，让它们沿用
+// STYLECLEARALL 之后的默认前景色。ATE 文件里 pin 名/普通标识符是绝对多数派，
+// 把多数派染上颜色等于没高亮 —— 颜色必须留给少数有信息量的记号。
+//
+// 向量三态的角色分配是本批的核心取舍：
+//   drive(0/1) → number   ：数值感
+//   expect(H/L/T) → special：比较侧必须和数值一眼分开（pattern 调试最常问
+//                            「这一拍是驱动还是比较」）
+//   mask(X/N/Z) → dim      ：不关心位＝既没驱动也没比较，要比正文更淡才退得
+//                            下去（见下表里的长注释：曾经映射到 operator，
+//                            而 op 在明暗两套主题里都等于 editorFg，等于没上色）
+const StyleRole kAtePatternStyles[] = {
+    {SCE_ATEP_COMMENT, RComment},   {SCE_ATEP_OPCODE, RKeyword},
+    {SCE_ATEP_TIMING, RKeyword2},   {SCE_ATEP_LABEL, RPreproc},
+    {SCE_ATEP_DIRECTIVE, RPreproc}, {SCE_ATEP_PIN, RClass},
+    {SCE_ATEP_VECTOR, RNumber},     {SCE_ATEP_EXPECT, RSpecial},
+    // mask 必须有**自己的**颜色：X/N/Z/U 语义是「没驱动也没比较」，需要比正文
+    // 更淡才能退到背景。原先映射到 ROperator 看着「有颜色」，实际 op 在明暗两套
+    // 主题里都等于 editorFg，等于把 mask 和普通标识符画成一样，与
+    // SCE_ATEP_MASK 的注释所声明的设计意图直接冲突。
+    {SCE_ATEP_MASK, RDim},          {SCE_ATEP_HEX, RNumber},
+    {SCE_ATEP_NUMBER, RNumber},     {SCE_ATEP_STRING, RString},
+    {SCE_ATEP_OPERATOR, ROperator},
+};
+
+const StyleRole kStilStyles[] = {
+    {SCE_STIL_COMMENT, RComment},   {SCE_STIL_BLOCK, RKeyword},
+    {SCE_STIL_KEYWORD, RKeyword2},  {SCE_STIL_NAME, RClass},
+    {SCE_STIL_UNIT, RNumber},       {SCE_STIL_NUMBER, RNumber},
+    {SCE_STIL_EVENT, RSpecial},     {SCE_STIL_OPERATOR, ROperator},
+    {SCE_STIL_STRING, RString},
+};
+
+// ATE Log：PASS/FAIL 用批次 72 新增的语义角色，在 light/dark 下分别是
+// 深绿/深红与亮绿/亮红，且可被 Style Configurator 覆盖。
+const StyleRole kAteLogStyles[] = {
+    {SCE_ATEL_COMMENT, RComment},   {SCE_ATEL_TIMESTAMP, RComment},
+    {SCE_ATEL_SITE, RClass},        {SCE_ATEL_TESTNAME, RKeyword2},
+    {SCE_ATEL_NUMBER, RNumber},     {SCE_ATEL_LIMIT, RPreproc},
+    {SCE_ATEL_PASS, RPass},         {SCE_ATEL_FAIL, RFail},
+    {SCE_ATEL_WARN, RSpecial},      {SCE_ATEL_RECORD, RKeyword},
+};
+
 struct FamilyMap { const char* lexer; const StyleRole* styles; size_t n; };
 #define MAP(name) {name, name##Styles, ARRAYSIZE(name##Styles)}
 const FamilyMap kFamilies[] = {
@@ -501,13 +549,23 @@ const FamilyMap kFamilies[] = {
     {"bash",       kBashStyles,  ARRAYSIZE(kBashStyles)},
     {"powershell", kPsStyles,    ARRAYSIZE(kPsStyles)},
     {"batch",      kBatStyles,   ARRAYSIZE(kBatStyles)},
+    {"ate_pattern", kAtePatternStyles, ARRAYSIZE(kAtePatternStyles)},
+    {"stil",        kStilStyles,       ARRAYSIZE(kStilStyles)},
+    {"ate_log",     kAteLogStyles,     ARRAYSIZE(kAteLogStyles)},
 };
 
 } // namespace
 
 void Editor::SetLexerByName(const char* lexerName, const char* const* keywords,
                             const ThemeDef* t) {
-    ILexer5* lexer = lexerName ? ::CreateLexer(lexerName) : nullptr;
+    // 批次 72：先试自研 ATE 词法器（应用侧 ILexer5，见 language/XfsLexer.h），
+    // 未命中再回退 Lexilla。两者走同一条 SCI_SETILEXER 通道，所以后面的
+    // 关键字注入 / 主题角色配色 / 折叠属性逻辑完全不需要分支。
+    ILexer5* lexer = nullptr;
+    if (lexerName) {
+        lexer = XfsCreateLexer(lexerName);
+        if (!lexer) lexer = ::CreateLexer(lexerName);
+    }
     lexerName_ = lexerName ? lexerName : "";
     wordCacheValid_ = false;   // 词法器切换 → 关键词来源变化，词汇缓存重建
     Send(SCI_CLEARDOCUMENTSTYLE);

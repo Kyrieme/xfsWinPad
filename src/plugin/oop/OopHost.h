@@ -17,8 +17,10 @@
 //       必然收敛；最坏退化为 v1 的一插件一代理）；
 //     - 运行期死亡：同车全部插件记账 oop-died（不自动重启，与 v1 一致）。
 //
+// v2.1（批次 71）：messageProc 桥——OOPM_MSG 同步广播值类型窗口消息，
+// 各槽插件的 LRESULT 经 OOPM_MSGREPLY 回带（首个非零为消费结果）。
 // v2 范围：仍仅 NPP 形态；停靠族（NPPM_DMM*）在代理进程内无宿主，由
-// DockManager 的跨进程 hClient 守卫拒绝（记日志），后续桥接。
+// DockManager 的跨进程 hClient 守卫拒绝（记日志），批次 72 桥接。
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -58,6 +60,13 @@ public:
 
     // 广播一条 NPPN_* 通知给所有存活插件槽（1s SMTO_ABORTIFHUNG 防挂死）。
     void BroadcastNotify(int code, UINT_PTR idFrom);
+
+    // 同步广播一个值类型窗口消息到各存活槽的 messageProc（v2.1）。
+    // 返回首个非零 LRESULT（NPP 广播消费语义）；handled（可空）= 是否有
+    // 插件返回非零。仅限 wp/lp 都是整数/句柄的消息——指针参数禁止过桥。
+    // 内部泵消息等待回包；槽窗送达失败或超时按未处理（0）计。
+    LRESULT BroadcastMessage(UINT msg, WPARAM wp, LPARAM lp, bool* handled = nullptr,
+                             unsigned timeoutMs = 2000);
 
     // 关停全部代理：先逐个撤销其命令（命令 impl 引用的 ctx 随代理销毁），
     // 再对每个进程发 OOPM_SHUTDOWN、等 2s、超时强杀、join 看门狗。
@@ -138,6 +147,14 @@ private:
     UINT_PTR pendingReason_ = 0;
     bool pendingReady_ = false;                 // READY 完成（新代理）
     HWND pendingReadyWnd_ = nullptr;            // READY 携带的 slot0 窗
+
+    // ---- BroadcastMessage 等待栈（v2.1；嵌套泵时按 reqId 对账，可重入）----
+    struct MsgWait {
+        UINT_PTR reqId;
+        std::vector<LONG_PTR> results;          // 已回收的各槽 LRESULT
+    };
+    UINT_PTR msgReqSeq_ = 0;
+    std::vector<MsgWait> msgWaits_;
 };
 
 } // namespace xfs

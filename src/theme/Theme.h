@@ -16,6 +16,11 @@ struct ThemeDef {
     COLORREF lineNumFg, lineNumBack, foldArrow, bookmark;
     // syntax roles
     COLORREF keyword, keyword2, comment, str, number, op, cls, preproc, special;
+    // ATE 语义角色（批次 72）：PASS/FAIL 判定色，ATE Log 词法器用；
+    // dim = 弱化色，.pat 的 mask 向量（X/N/Z/U）用——它语义上是「没驱动、
+    // 没比较」，必须比正文**更淡**才能一眼退到背景里，不能复用 op（op 在
+    // 明暗两套主题里都等于 editorFg，复用等于没上色）。
+    COLORREF pass, fail, dim;
     // tab strip chrome (owner-drawn)
     COLORREF tabActiveBg, tabInactiveBg, tabActiveText, tabInactiveText,
              tabAccent, tabCloseGlyph, tabEdge;

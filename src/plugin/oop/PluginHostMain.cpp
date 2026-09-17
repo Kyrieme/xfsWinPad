@@ -50,6 +50,7 @@ struct Slot {
     const wchar_t* (*getName)(void) = nullptr;
     void* (*getFuncsArray)(int*) = nullptr;   // 实为 FuncItem* (*)(int*)
     void (*beNotified)(void*) = nullptr;
+    LRESULT (*messageProc)(UINT, WPARAM, LPARAM) = nullptr;  // 可选（v2.1 OOPM_MSG 桥）
     void* items = nullptr;                    // FuncItem 数组（152B 步长寻址）
     int itemCount = 0;
     HWND wnd = nullptr;
@@ -98,6 +99,15 @@ static bool CallNotifySeh(Slot* s, void* scn) {
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
+    }
+}
+
+// messageProc（v2.1 桥）：崩溃按 NPP「未处理」语义回 0，代理不自杀。
+static LRESULT CallMessageProcSeh(Slot* s, UINT m, WPARAM w, LPARAM l) {
+    __try {
+        return s->messageProc(m, w, l);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
     }
 }
 
@@ -150,7 +160,9 @@ static BOOL HandleAdd(xfs::oop::AddWire* aw) {
     s->getFuncsArray = reinterpret_cast<void* (*)(int*)>(::GetProcAddress(s->mod, "getFuncsArray"));
     s->beNotified    = reinterpret_cast<void(*)(void*)>(::GetProcAddress(s->mod, "beNotified"));
     auto isUnicode   = reinterpret_cast<BOOL(*)()>(::GetProcAddress(s->mod, "isUnicode"));
-    // messageProc 在代理进程内无桥接价值（v1：不转发窗口消息），不要求导出。
+    s->messageProc   = reinterpret_cast<LRESULT(*)(UINT, WPARAM, LPARAM)>(
+                           ::GetProcAddress(s->mod, "messageProc"));
+    // messageProc 可选（v2.1 起经 OOPM_MSG 桥接；缺省按未处理回 0），不要求导出。
     if (!s->setInfo || !s->getName || !s->getFuncsArray || !isUnicode) {
         ::FreeLibrary(s->mod);
         SendReject(cookie, xfs::oop::kExitExport);
@@ -308,6 +320,27 @@ static LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 // 不二次回调 beNotified。
                 ::PostQuitMessage(0);
                 return TRUE;
+            case xfs::oop::OOPM_MSG: {
+                // messageProc 桥（v2.1）：仅编辑器白名单（值类型参数）可达此处。
+                // 插件卡死 → 本消息处理不返回 → 编辑器侧 SMTO 超时自行放弃。
+                if (!slot || !slot->mod ||
+                    cds->cbData < sizeof(xfs::oop::MsgWire)) return FALSE;
+                auto* mw = reinterpret_cast<const xfs::oop::MsgWire*>(cds->lpData);
+                LRESULT res = 0;
+                if (slot->messageProc)
+                    res = CallMessageProcSeh(slot, static_cast<UINT>(mw->wndMsg),
+                                             static_cast<WPARAM>(mw->wParam),
+                                             static_cast<LPARAM>(mw->lParam));
+                xfs::oop::MsgReplyWire rp{};
+                rp.magic = xfs::oop::kMagic;
+                rp.msg = xfs::oop::OOPM_MSGREPLY;
+                rp.reqId = mw->reqId;
+                rp.wndMsg = mw->wndMsg;
+                rp.result = res;
+                rp.slotWnd = reinterpret_cast<UINT_PTR>(slot->wnd);
+                SendToParent(xfs::oop::OOPM_MSGREPLY, &rp, sizeof(rp));
+                return TRUE;
+            }
             default:
                 return FALSE;
         }

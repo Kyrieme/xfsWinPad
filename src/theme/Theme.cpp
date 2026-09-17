@@ -9,6 +9,16 @@
 namespace xfs {
 namespace {
 
+// ⚠ 两套内建主题都是**位置初始化**：列表里第 k 项就是 ThemeDef 的第 k 个字段。
+//   在 Theme.h 里插入/删除字段，必须**同时**改 g_light 与 g_dark；只改一处不会
+//   报错（缺失的项按 0 补，多出的项才报错），而是让后面所有字段整体错位。
+//   本批真实踩过：给 light 漏了一行 dim，于是 dim 拿到 tabActiveBg 的白色，
+//   tab* 七个配色全体前移一格、tabEdge 退化成 0。
+//   护栏：tests/test_styler.cpp 钉死了首/中/尾各几个字段的确切值 +
+//   ThemeFieldCount()，任何错位都会当场失败。
+//   更强的修法是改成 C++20 指定初始化（.editorBg = ...），插入字段不再引起
+//   位移——见 TODO.md「Next」里的候选。
+
 // Light theme (VS-light inspired, original values)
 constexpr ThemeDef g_light = {
     L"light",
@@ -30,6 +40,9 @@ constexpr ThemeDef g_light = {
     /*cls             */ RGB(0x26, 0x7F, 0x99),
     /*preproc         */ RGB(0x81, 0x00, 0x00),
     /*special         */ RGB(0x81, 0x1F, 0x3F),
+    /*pass            */ RGB(0x0B, 0x6E, 0x3B),
+    /*fail            */ RGB(0xC3, 0x1B, 0x1B),
+    /*dim             */ RGB(0x8C, 0x8C, 0x8C),
     /*tabActiveBg     */ RGB(0xFF, 0xFF, 0xFF),
     /*tabInactiveBg   */ RGB(0xDE, 0xE1, 0xE6),
     /*tabActiveText   */ RGB(0x1B, 0x1B, 0x1B),
@@ -60,6 +73,9 @@ constexpr ThemeDef g_dark = {
     /*cls             */ RGB(0x4E, 0xC9, 0xB0),
     /*preproc         */ RGB(0xC5, 0x86, 0xC0),
     /*special         */ RGB(0xD7, 0xBA, 0x7D),
+    /*pass            */ RGB(0x6A, 0xC9, 0x7A),
+    /*fail            */ RGB(0xF2, 0x7A, 0x7A),
+    /*dim             */ RGB(0x80, 0x80, 0x80),
     /*tabActiveBg     */ RGB(0x1E, 0x1E, 0x1E),
     /*tabInactiveBg   */ RGB(0x2D, 0x2D, 0x30),
     /*tabActiveText   */ RGB(0xD4, 0xD4, 0xD4),
@@ -116,6 +132,9 @@ const ThemeField kThemeFields[] = {
     {L"cls",             &ThemeDef::cls},
     {L"preproc",         &ThemeDef::preproc},
     {L"special",         &ThemeDef::special},
+    {L"pass",            &ThemeDef::pass},
+    {L"fail",            &ThemeDef::fail},
+    {L"dim",             &ThemeDef::dim},
     {L"tabActiveBg",     &ThemeDef::tabActiveBg},
     {L"tabInactiveBg",   &ThemeDef::tabInactiveBg},
     {L"tabActiveText",   &ThemeDef::tabActiveText},

@@ -46,6 +46,10 @@ set(XFS_APP_SOURCES
     editor/Wordscan.cpp
     document/Document.cpp
     language/LanguageMap.cpp
+    language/XfsLexer.cpp
+    language/AtePatternLexer.cpp
+    language/StilLexer.cpp
+    language/AteLogLexer.cpp
     theme/Styler.cpp
     plugin/PluginManager.cpp
     plugin/PluginCatalog.cpp

@@ -16,8 +16,10 @@
 //
 // 传输：WM_COPYDATA（SendMessage 同步语义，跨进程内核拷贝，无共享内存）。
 //   编辑器 → 插件宿主进程：OOPM_ADD / OOPM_EXEC / OOPM_NOTIFY / OOPM_SHUTDOWN
+//                             OOPM_MSG（messageProc 桥，v2.1）
 //   插件宿主进程 → 编辑器：  OOPM_HANDSHAKE（插件名 + FuncItem 表转录）
 //                             OOPM_REJECT（装载拒绝回执）
+//                             OOPM_MSGREPLY（messageProc 返回值，v2.1）
 //   编辑器应答：            OOPM_CMDIDS（宿主分配的命令 id 回填）
 // 插件 → 编辑器的 NPPM_* 消息不经本协议：setInfo 拿到的 nppHandle 就是编辑器
 // 主窗口 HWND，SendMessage 跨进程直达（复用 §5.6 消息垫片）。
@@ -46,6 +48,9 @@ enum OopMsg : UINT_PTR {
                           //   reason 取 kExit* 约定值）
     OOPM_READY     = 8,   // host→editor：代理进程就绪（v2 尾部追加；wp=slot0 窗，
                           //   载荷仅 magic+msg）
+    OOPM_MSG       = 9,   // editor→host：调用槽插件 messageProc(msg,wp,lp)，
+                          //   结果经 OOPM_MSGREPLY 回带（v2.1 尾部追加）
+    OOPM_MSGREPLY  = 10,  // host→editor：messageProc 的 LRESULT（v2.1 尾部追加）
 };
 
 // FuncItem 跨进程转录：内联名 + 快捷键。函数指针留在代理进程内，
@@ -106,11 +111,37 @@ struct RejectWire {
     UINT_PTR reason;
 };
 
+// OOPM_MSG 载荷（editor→host 槽窗）：messageProc 桥（v2.1）。安全红线：
+// 只允许 wp/lp 均为值类型（整数/HWND/HMENU）的消息过桥——编辑器侧白名单
+// 把关，任何指针参数（如 WM_SETTINGCHANGE 的 LPWSTR）一律不过桥。
+// reqId = 编辑器请求序号，回带对账；超时的回包按 reqId 失配丢弃。
+struct MsgWire {
+    UINT_PTR magic;
+    UINT_PTR msg;                        // 恒 OOPM_MSG（wire[1] 惯例不变）
+    UINT_PTR reqId;
+    UINT_PTR wndMsg;                     // 转发给 messageProc 的窗口消息（WM_*）
+    UINT_PTR wParam;
+    LONG_PTR lParam;
+};
+
+// OOPM_MSGREPLY 载荷（host→editor）：插件 messageProc 的返回值。
+// slotWnd = 应答槽窗（编辑器对账归属）；插件未导出 messageProc 时
+// 代理以 result=0 应答（NPP 语义：未处理）。
+struct MsgReplyWire {
+    UINT_PTR magic;
+    UINT_PTR msg;                        // 恒 OOPM_MSGREPLY
+    UINT_PTR reqId;
+    UINT_PTR wndMsg;                     // 被应答的窗口消息（诊断）
+    LONG_PTR result;
+    UINT_PTR slotWnd;
+};
+
 // 代理进程退出码约定（编辑器日志 / 不兼容页展示用）：
 //   0  正常（收到 OOPM_SHUTDOWN 后退出）
 //   2  LoadLibrary 失败（坏 DLL / 非 PE）
 //   3  isUnicode() != TRUE（ANSI 插件拒绝，与进程内策略一致）
-//   4  缺关键导出（setInfo / getFuncsArray / isUnicode / messageProc）
+//   4  缺关键导出（setInfo / getName / getFuncsArray / isUnicode；
+//      messageProc 可选，v2.1 起经 OOPM_MSG 桥接）
 //   5  启动看门狗超时（setInfo/getFuncsArray 卡死，主动自杀）
 //   6  插件代码访问违例（SEH 捕获后退出，绝不让 WER 弹窗拖累后台）
 //   其他任意值 = 插件自身调用 exit(n)（如 ComparePlus 的 exit(1)）——
