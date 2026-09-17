@@ -22,4 +22,14 @@ xfsWinPad.exe [options] [files...]
 ```
 
 ## Layout
-See `ARCHITECTURE.md`. Docs: `PROJECT.md`, `TODO.md`, `THIRD_PARTY_NOTICES.md`.
+- `src/`          application sources (app / core / document / editor / plugin / theme / stdf ...)
+- `resources/`    icons, `.rc` resource script, language packs (`lang/*.json`)
+- `tests/`        ctest suite
+- `third_party/`  vendored Scintilla 5 + Lexilla 5 (unmodified upstream trees)
+- `scripts/`      build / packaging / end-to-end test helpers
+
+## Plugin SDK
+Native plugins: see `src/plugin/sdk/PLUGIN_DEV_GUIDE.md` and `src/plugin/sdk/xfs_plugin_api.h`.
+
+## Third-party
+License notices for bundled components: `THIRD_PARTY_NOTICES.md`.

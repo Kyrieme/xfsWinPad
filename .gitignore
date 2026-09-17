@@ -29,3 +29,12 @@ docs/settings-plan.md
 /xfsWinPad*.txt
 .workbuddy/
 --- end private ---
+
+--- docs removed from public repo 2026-09-17 (local only) ---
+ARCHITECTURE.md
+docs/plugin-system.md
+docs/signing.md
+# NOTE: src/plugin/sdk/PLUGIN_DEV_GUIDE.md is deliberately NOT ignored --
+# resources/xfsWinPad.rc embeds it as RCDATA (ID 7001) and the workshop
+# unpacks it at runtime. Ignoring it would break fresh clones and CI.
+--- end removed docs ---
