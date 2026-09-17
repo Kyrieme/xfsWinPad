@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.6.3 · 2026-09-16 · Windows 10/11 x64</span>
+  <span class="ver">v0.7.0 · 2026-09-17 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（4.9 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.2 MB）</a>
@@ -69,11 +69,12 @@
     <h2>特性</h2>
     <div class="grid">
       <div class="feature"><b>⚡</b>大文件秒开：2GB+ 原生虚拟滚动，亿级行不卡顿</div>
-      <div class="feature"><b>🎨</b>27+ 语言语法高亮 + 自动补全（跨标签词汇、注释过滤）</div>
+      <div class="feature"><b>🎨</b>36 种语言语法高亮 + 自动补全（跨标签词汇、注释过滤）</div>
       <div class="feature"><b>🤖</b>AI 助手面板：opencode / OpenAI 兼容接口，diff 上屏、改盘自动重载</div>
       <div class="feature"><b>🧩</b>插件系统 + AI 插件工场：一句话让 AI 写好并装好插件</div>
       <div class="feature"><b>🪟</b>多标签 + 双视图分屏 + 多窗口，会话恢复、崩溃安全自动保存</div>
       <div class="feature"><b>🔬</b>STDF 半导体测试数据查看器 + 十六进制查看器</div>
+      <div class="feature"><b>🧪</b>ATE 半导体文件高亮：.pat 向量驱动/比较/掩码三态分色、.stil (IEEE 1450)、ATE 日志</div>
       <div class="feature"><b>📊</b>CSV 表格模式：排序/筛选/编辑/保存/打印，64MB+ 大文件虚拟视图</div>
       <div class="feature"><b>⌨️</b>内置终端面板（ConPTY）、宏录制、行变换工具包</div>
       <div class="feature"><b>🌍</b>简中/繁中/English/日本語/한국어 五语言界面，配置一键导出换机</div>
@@ -93,14 +94,22 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">C618F42D545D5FF2997D2012EC9A6A2E08AAEA8798B500BB5C7FD6B598BB3D85</p>
+    <p class="hash">FA8357A378FB975AEC0127BDDC27AFFA236FCD20D53E7273CECF555AB5FCE67E</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">A61B4141806A0EB55FB7253A9B14AE278B570F3556A5CA5ADB83928DC1F194E4</p>
+    <p class="hash">EC8FCBBB1DCD3C96BA04576DB9A1799BB1352BC66325DEAB6CB709EF03680B9D</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.6.3</b>（2026-09-16）</p>
+    <p><b>v0.7.0</b>（2026-09-17）</p>
+    <ul>
+      <li>新增 ATE 半导体文件语法高亮：<code>.pat</code>（向量行的驱动 / 比较 / 掩码三态分色，pin 组、timing 引用、标签与跳转目标）、<code>.stil</code>（IEEE 1450 波形与时序关键字、单引号名、带单位量）、<code>.log</code>（只给真正的 ATE 记录着色，普通应用日志保持原样）</li>
+      <li>三种语言的词法分析为自研实现，不依赖第三方高亮库；<code>.stil</code> 由原先的 XML 高亮改为语义高亮</li>
+      <li>主题新增语义色：PASS / FAIL / 弱化色（掩码位比正文更淡，与普通标识符一眼区分），可在样式配置器中自定义</li>
+      <li>修复：浅色主题下标签栏配色整体错位一格（页签背景 / 文字 / 分隔线颜色偏移）</li>
+      <li>插件增强：插件窗口消息双向同步桥（插件可直接处理编辑器的窗口消息并回传结果）</li>
+    </ul>
+    <p style="margin-top:14px"><b>v0.6.3</b>（2026-09-16）</p>
     <ul>
       <li>修复：重开后光标只回到行首丢失列位置（会话恢复现精确还原到原行列，含分屏两视图与未命名快照）</li>
     </ul>
