@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.8.0 · 2026-09-18 · Windows 10/11 x64</span>
+  <span class="ver">v0.9.0 · 2026-09-18 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.0 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.3 MB）</a>
@@ -94,14 +94,23 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">7E7DDACD0B22F9C704B3BFDFA17294C549BAFA68DF13F8A9B669A469F629885A</p>
+    <p class="hash">02BD4455D83BB5AC3A5C51DDB712456320F61A7C18736D77A5C8F406554FE7A6</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">A51F2003EEB3120C85B091B783B1D1A2E440E60DFB18C4A8257198A9D48321B1</p>
+    <p class="hash">40835BFD9056733D3A131232F89F62631AAF72F7DB48DBB02ECB664A4041A7B9</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.8.0</b>（2026-09-18）</p>
+    <p><b>v0.9.0</b>（2026-09-18）</p>
+    <ul>
+      <li>新增 <b>Chroma 3380 静态校验内核</b>：按手册明文规则检查引脚重复定义、
+        <code>SET_DEC_FILE</code> 多余分号这类确定性问题；本版交付底层能力与单元测试，
+        编辑器内的即时提示将在后续版本接入</li>
+      <li>修复语句签名提示的数据完整性：<code>.dec</code> 档位取页窗口与章节标题前瞻的两处偏差，
+        参数与可选值显示更准确</li>
+      <li>仓库加固：公开侧新增结构与敏感信息两道自动检查，随每次提交运行</li>
+    </ul>
+    <p style="margin-top:14px"><b>v0.8.0</b>（2026-09-18）</p>
     <ul>
       <li>新增 <b>Chroma 3380 平台语言包</b>：<code>.dec</code>（引脚定义）、<code>.pln</code>（测试流程）、<code>.pat</code>（向量图案）三种文件的原生语法高亮与语义着色，词法分析为自研实现</li>
       <li>内置语句库（300+ 条手册语句、参数与取值档位）：输入语句名自动补全，候选按手册章节顺序排列并显示章节号</li>
