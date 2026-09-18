@@ -55,10 +55,10 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.7.1 · 2026-09-17 · Windows 10/11 x64</span>
+  <span class="ver">v0.8.0 · 2026-09-18 · Windows 10/11 x64</span>
   <div class="downloads">
-    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（4.9 MB）</a>
-    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.2 MB）</a>
+    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.0 MB）</a>
+    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.3 MB）</a>
   </div>
   <p class="dl-note">便携版解压即用，不写注册表；两个版本功能完全一致。</p>
 </header>
@@ -94,14 +94,25 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">79BFB7BC00511C4359C7611B74E3C07D9F8E2A819AC5201B8E91B2EC7B30E95B</p>
+    <p class="hash">75FC58838F701C72875A4BE5116C59930C434545C2373F3DDC49E8A3AE541BAE</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">D648A41225FCC9B43F645C9EEEB466CF3C9FD484FB0F72051652D2BE94292490</p>
+    <p class="hash">493B0790D44F4418A0995E4172E5181B4A2DC32E52BDC1581525297250C13551</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.7.1</b>（2026-09-17）</p>
+    <p><b>v0.8.0</b>（2026-09-18）</p>
+    <ul>
+      <li>新增 <b>Chroma 3380 平台语言包</b>：<code>.dec</code>（引脚定义）、<code>.pln</code>（测试流程）、<code>.pat</code>（向量图案）三种文件的原生语法高亮与语义着色，词法分析为自研实现</li>
+      <li>内置语句库（300+ 条手册语句、参数与取值档位）：输入语句名自动补全，候选按手册章节顺序排列并显示章节号</li>
+      <li>选中语句名后自动补出括号并<b>直接弹出该语句的签名提示</b>（参数名、必填/选填标注、可选值下拉）</li>
+      <li>修复：打开带 <code>#include</code> / <code>#define</code> 的 Chroma 流程文件会卡死进程</li>
+      <li>修复：块注释 <code>/*</code> 导致其后整篇文档颜色错位两个字符</li>
+      <li>修复：Chroma 文件在通用词汇补全里一个关键词都不提示</li>
+      <li>参数档位数据全库审计：修正九处参数的可选值缺失（如 <code>FORCE_V_PMU</code>）</li>
+      <li>安装包不再关联 <code>.csv</code> 文件：表格文件交回 Excel / WPS，并自动撤销旧版本写入的关联</li>
+    </ul>
+    <p style="margin-top:14px"><b>v0.7.1</b>（2026-09-17）</p>
     <ul>
       <li>维护版本：无功能变更。仅收紧开发仓库的内部文档范围，下载与使用与 v0.7.0 完全一致</li>
     </ul>
