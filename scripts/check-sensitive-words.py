@@ -28,6 +28,22 @@ import re
 import subprocess
 import sys
 
+
+def _force_utf8_stdio() -> None:
+    """把标准输出/错误切到 UTF-8（理由同 check-public-surface.py）。
+
+    windows runner 上的 Python 默认用本地代码页输出，打印中文时
+    UnicodeEncodeError 会让"扫描干净"以非零码退出，误导 CI 判红。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_force_utf8_stdio()
+
 DEFAULT_WORDS = os.path.join(".workbuddy", "sensitive-words.txt")
 
 # --all 模式下跳过的目录（构建产物 / 缓存 / 版本库自身）

@@ -27,8 +27,13 @@ jobs:
       # Fast, dependency-free guards that run before the slow MSVC build.
       # The public repo may only contain code plus three .md files; private
       # notes/samples stay local and are excluded via .gitignore.
+      # PYTHONIOENCODING: the guards print Chinese; without it a Windows runner
+      # encodes via the local code page and dies with UnicodeEncodeError, which
+      # would report a *passing* rule check as a CI failure.
       - name: Public surface guard
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           $ErrorActionPreference = 'Stop'
           python scripts/check-public-surface.py
@@ -40,6 +45,7 @@ jobs:
       - name: Sensitive word scan
         shell: pwsh
         env:
+          PYTHONIOENCODING: utf-8
           SENSITIVE_WORDS_B64: ${{ secrets.SENSITIVE_WORDS_B64 }}
         run: |
           $ErrorActionPreference = 'Stop'

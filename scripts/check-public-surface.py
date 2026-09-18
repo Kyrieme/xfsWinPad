@@ -26,6 +26,25 @@ import re
 import subprocess
 import sys
 
+
+def _force_utf8_stdio() -> None:
+    """把标准输出/错误切到 UTF-8。
+
+    CI（windows-latest）上 Python 的 stdout 默认跟随本地代码页（cp1252 /
+    cp936 …），而本脚本会打印中文。编码失败会抛 UnicodeEncodeError 并以
+    非零码退出 —— 那会把"规则通过"误报成"守卫失败"（2026-09-18 在公开
+    仓库的 ci 上实际踩到）。老解释器或已被重定向的管道不支持 reconfigure
+    时静默跳过，不因为"修日志"反而让脚本挂掉。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_force_utf8_stdio()
+
 # ---------------------------------------------------------------- 规则数据
 
 # R1：这些前缀下的文件永远不该被跟踪
