@@ -1,8 +1,10 @@
 #pragma once
 // xfsWinPad - Chroma 3380 静态校验内核（批次 80 起，方向 C）
 //
-// 【当前进度】批次 80 = 规则 2/5/6（.dec 侧）；批次 86 = 规则 8（.pln 侧参数个数）。
-//   UI 尚未接入 —— 内核是纯函数，产出的诊断列表由调用方决定怎么展示。
+// 【当前进度】批次 80 = 规则 2/5/6（.dec 侧）；批次 86 = 规则 8（.pln 侧参数个数）；
+//   批次 87 = 诊断 UI 接线；批次 88 = 规则 3（跨文件 DEC_MODE APAS → IMATCH 失效）。
+//   内核是纯函数，产出的诊断列表由调用方决定怎么展示；跨文件规则需要宿主先把
+//   被引用的 .dec 读出来传进来（内核零 IO）。
 //
 // 【为什么要有这一层】
 //   Chroma 官方工作流是「TextPad 编辑 → Makefile 调 plncmp/patcmp → 看编译结果页
@@ -79,6 +81,7 @@ struct Diagnostic {
 //   C3380-DEC-004  PIN_GROUP：同一个 pin_group 名定义了多次          p27 §2.4.2
 //   C3380-PLN-010  实参个数多于手册签名的上限                       各语句 Format 块（Error）
 //   C3380-PLN-011  实参个数少于手册签名的必填项                     各语句 Format 块 + `No entry: illegal`（Warning）
+//   C3380-XFILE-001 引用的 .dec 声明 DEC_MODE APAS 时使用 IMATCH    LM p44 §3.4.1.3 + p62 注意 4 + 培训教材 p43（Warning）
 //
 // 取证原文（§2.3.2）：
 //   "An error will occur if the same DUT or ATE pin numbers are defined more than
@@ -114,6 +117,73 @@ struct Diagnostic {
 //  通道映射本来就不同。按文件判重会把这种合法写法判错，所以范围收到块内。
 std::vector<Diagnostic> ValidateChromaSource(const std::string& text,
                                             ChromaFileKind kind);
+
+// ---------------------------------------------------------------------------
+// 批次 88：跨文件规则（规则 3 —— DEC_MODE APAS 下 IMATCH 失效）
+//
+// 【取证】三处出处互相印证：
+//     · LM p44 §3.4.1.3 微指令表：IMATCH 标注 "(only for normal mode pattern)"；
+//     · LM p62 IMATCH 用法注意事项第 4 条："Only support normal mode pattern."；
+//     · 培训教材 p43：DEC_MODE APAS 时 IMATCH 功能失效。APAS 由 .dec 的
+//       `DEC_MODE APAS;` 声明开启（操作手册 §4.4.3.2.2 佐证它是运行时开关，
+//       "if there is \"DEC_MODE APAS\" declaration in dec file"）。
+//   「normal mode」即 DEC_MODE NORM（默认值，LM §2.2：不声明就是 NORM）。
+//
+// 【severity 为什么是 Warning】
+//   手册没有"写了就报错"的明文（`An error will occur` 全文只 2 处，都属 .dec 的
+//   pin 规则）；失效是**运行时行为**（IMATCH 永不命中，测试静默出错）而不是语法
+//   错误；且需要跨文件才能确认。
+//
+// 【.pat 没有真实样本，为什么这条开口（与规则 1 暂缓的差别）】
+//   规则 1 要解析向量语法、误报面大；本规则只做三件事的**合取**，每一步都可
+//   独立证伪：
+//     1) 引用的 .dec **真的在磁盘上找到并读出**（宿主负责；找不到 = 静默跳过）；
+//     2) 该 .dec 里解析出**无歧义的** `DEC_MODE APAS`（抹平注释/字符串后行首
+//        标识符 DEC_MODE + 整词 APAS；同时出现 NORM 声明视为歧义，不报）；
+//     3) 本文件的 IMATCH 是**整词独立 token**（注释/字符串已抹平）。
+//   三条同时成立才报。真实 .pln 回归 0 命中（其引用的 .dec 不在扫描机上，
+//   走第 1 条的静默跳过）。真实工程里 IMATCH 只出现在向量文件，.pln 侧命中
+//   属于"写了不该写的东西"，报 Warning 同样成立。
+//
+// 【职责边界不变】内核仍然零 IO —— 宿主解析 SET_DEC_FILE 的相对路径、读盘，
+//   把**读到的 .dec 文本**（可能多个、可能一个都没有）传进来。
+struct DecFileRef {
+    int line = 0;        // SET_DEC_FILE 所在行（0-based）
+    int start = 0;       // 路径首字符的行内列（字节，不含引号）
+    int length = 0;      // 路径字节数
+    std::string path;    // 引号内的原始字节（不做编码转换，编码归宿主管）
+};
+
+// 提取 SET_DEC_FILE 引用的路径。宽容：行首标识符不是 SET_DEC_FILE、没有成对
+// 双引号、路径为空 —— 一律跳过。`#` 行首注释与块/行注释内的 SET_DEC_FILE
+// 不会命中（抹平层负责）。
+std::vector<DecFileRef> FindDecFileRefs(const std::string& text);
+
+// .dec 文本里是否声明了**无歧义的** DEC_MODE APAS。同时出现 APAS 与 NORM
+// 声明视为歧义 → false（宁漏不误）。
+bool DecDeclaresApas(const std::string& decText);
+
+// 规则 3 主体：任一被引用 .dec 声明了 APAS 时，找本文件的 IMATCH 整词使用，
+// 每处给一条 Warning（C3380-XFILE-001，highlight 覆盖 IMATCH 六个字节）。
+// decTexts 为空（一个 .dec 都没读到）直接返回空 —— 宁漏不误的第一道闸。
+std::vector<Diagnostic> CheckApasImatch(const std::string& text,
+                                        const std::vector<std::string>& decTexts);
+
+// ---------------------------------------------------------------------------
+// 批次 89：跨文件补全的词源 —— 从 .dec 文本抽取符号（标识符）清单
+//
+// 【抽取范围】手册 §2.1.1 列出的 5 个符号承载块：
+//     PIN_LIST          → pin 名（条目首段）
+//     PIN_GROUP / UR_PIN_GROUP / POWER_PIN_GROUP → 组名（`=` 左侧）
+//     TIME_NAME_DEF     → 时序名（`time_name = no;`，§2.7）
+//   手册 §2.7.2 的官方示例正是这条链路的样子：.dec 定义 Vdps / TM1，
+//   .pln 里 FORCE_V_DPS(Vdps, …) 消费 —— 补全把"要翻回 .dec 查名"省掉。
+//
+// 【容差与用途】这是**补全**词源，不是诊断：多进一个无害候选只是列表噪声，
+//   漏进一个才是体验损失，所以口径比诊断宽（不要求条目四段齐全，只认
+//   「块内、`;` 结尾、`=` 左侧是标识符」）。跨行条目漏抽（宽容方向不变）。
+//   名字去重、按文件顺序返回；长度上限 64 字符（手册 §2.7 对 time_name 的上限）。
+std::vector<std::string> ExtractDecSymbols(const std::string& decText);
 
 } // namespace chroma3380
 } // namespace xfs

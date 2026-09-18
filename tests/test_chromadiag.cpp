@@ -13,6 +13,7 @@
 #include "../src/language/Chroma3380Diagnostics.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -353,6 +354,196 @@ static void RunArgumentCount() {
     CHECK(CountCode(ValidateChromaSource("MEAS_I_MLDPS(PREF);\r\n", P), "C3380-PLN-011") == 1);
 }
 
+// ---------------------------------------------------------------------------
+// 批次 88：规则 3 —— DEC_MODE APAS → IMATCH 失效（跨文件）
+//
+// 【正例的全部内容都来自公开手册】
+//   .dec 侧 = LM §2.2.2 的官方 DEC_MODE APAS 示例（原文照抄，含原文的空格）；
+//   .pat 侧 = LM p62 IMATCH 工作示例里的向量行（原文照抄）。
+//   与批次 80/86 同一纪律：手册原文必须 0 误报 —— 但这条规则的正例恰恰**是**
+//   手册的 IMATCH 用法本身，所以断言的是"恰好每处 IMATCH 一条 Warning"，
+//   而**不含** IMATCH 的手册 .dec 示例必须 0 诊断。
+// ---------------------------------------------------------------------------
+
+// LM §2.2.2（p23）官方示例，原文照抄。
+static const char* kManualApasDec = R"DEC(DEC_MODE  APAS;
+
+PIN_LIST   (LPC_BOARD_00 _2sites) {
+ /*name = ATE channel = DUT channel = Type */
+p0     =0  : 4    =1     =IO;
+p1     =1  : 5     =2     =IO;
+p2     =2  : 6     =3     =IO;
+p3     =3  : 7    =4     =IO;
+p4     = 8  : 12   =5     =IO;
+p5     = 9  :  13   =6     =IO;
+p6     = 10 : 14   =7     =IO;
+p7     = 11 : 15    =8     =IO;
+}
+)DEC";
+
+// LM p62 IMATCH 工作示例的向量行（原文照抄两行，微指令 IMATCH）。
+static const char* kManualImatchPat = R"PAT(*1 01 00 1 X1 XXXXXXXX XH*TS2,IMATCH;
+*1 01 00 1 X0 XXXXXXXX XL*TS2,IMATCH;//Shift L signal
+)PAT";
+
+static void RunCrossFileApas() {
+    // ---- FindDecFileRefs：提取与宽容 ----
+    {
+        const std::vector<DecFileRef> r =
+            FindDecFileRefs("SET_DEC_FILE \".\\ls299_pin.dec\"\n");
+        CHECK(r.size() == 1);
+        if (r.size() == 1) {
+            CHECK(r[0].line == 0);
+            CHECK(r[0].path == ".\\ls299_pin.dec");
+            CHECK(r[0].length == (int)r[0].path.size());
+        }
+    }
+    CHECK(FindDecFileRefs("SET_DEC_FILE \"./PAT/FW_ls299_4sites_pin.dec\"\n").size() == 1);
+    CHECK(FindDecFileRefs("SET_DEC_FILE \"a.dec\" ;\n").size() == 1);   // COM-001 照报，引用照提
+    CHECK(FindDecFileRefs("SET_DEC_FILE \"a.dec\"\nSET_DEC_FILE \"b.dec\"\n").size() == 2);
+    CHECK(FindDecFileRefs("SET_DEC_FILE a.dec\n").empty());             // 没引号
+    CHECK(FindDecFileRefs("SET_DEC_FILE \"\"\n").empty());              // 空路径
+    CHECK(FindDecFileRefs("set_dec_file \"a.dec\"\n").size() == 1);     // 大小写不敏感
+    CHECK(FindDecFileRefs("// SET_DEC_FILE \"a.dec\"\n").empty());      // 行注释
+    CHECK(FindDecFileRefs("/* SET_DEC_FILE \"a.dec\" */\n").empty());   // 块注释
+    CHECK(FindDecFileRefs("#define SET_DEC_FILE \"a.dec\"\n").empty()); // 预处理
+    CHECK(FindDecFileRefs("X_SET_DEC_FILE \"a.dec\"\n").empty());       // 不是它
+
+    // ---- DecDeclaresApas：声明与歧义 ----
+    CHECK(DecDeclaresApas("DEC_MODE  APAS;\n"));
+    CHECK(DecDeclaresApas("dec_mode apas ;\n"));
+    CHECK(DecDeclaresApas(kManualApasDec));
+    CHECK(!DecDeclaresApas("DEC_MODE NORM;\n"));
+    CHECK(!DecDeclaresApas("/* DEC_MODE APAS; */\n"));                  // 注释里的声明
+    CHECK(!DecDeclaresApas("// DEC_MODE APAS;\n"));
+    CHECK(!DecDeclaresApas("DEC_MODE;\n"));                             // 认不出 → 不算
+    CHECK(!DecDeclaresApas("X_DEC_MODE APAS;\n"));                      // 不是它
+    CHECK(!DecDeclaresApas(""));                                        // 读不到内容
+    // 歧义：APAS 与 NORM 同时声明 → 宁漏不误
+    CHECK(!DecDeclaresApas("DEC_MODE APAS;\nDEC_MODE NORM;\n"));
+
+    // ---- CheckApasImatch：正例（手册 IMATCH 用法，每处一条 Warning）----
+    {
+        const std::vector<std::string> decs{kManualApasDec};
+        const std::vector<Diagnostic> d = CheckApasImatch(kManualImatchPat, decs);
+        CHECK(CountCode(d, "C3380-XFILE-001") == 2);
+        if (CountCode(d, "C3380-XFILE-001") == 2) {
+            CHECK(d[0].severity == DiagSeverity::Warning);
+            CHECK(d[0].manualPage == 44);
+            CHECK(d[0].line == 0);
+            CHECK(d[0].start == 30);          // `*1 01 00 1 X1 XXXXXXXX XH*TS2,` 之长
+            CHECK(d[0].length == 6);
+            CHECK(d[1].line == 1);
+        }
+    }
+    // 大小写不敏感也能命中（钉住行为，防止将来悄悄变成大小写敏感）
+    CHECK(CountCode(CheckApasImatch("x*ts2,imatch;\n",
+                                    {std::string("DEC_MODE APAS;\n")}),
+                    "C3380-XFILE-001") == 1);
+
+    // ---- CheckApasImatch：反例（宁漏不误的每一道闸）----
+    CHECK(CheckApasImatch(kManualImatchPat, {}).empty());                       // 一个 .dec 都没读到
+    CHECK(CheckApasImatch(kManualImatchPat, {kManualDecExample}).empty());      // 官方 .dec 无 DEC_MODE
+    CHECK(CheckApasImatch(kManualImatchPat, {"DEC_MODE NORM;\n"}).empty());
+    CHECK(CheckApasImatch(kManualImatchPat, {"DEC_MODE APAS;\nDEC_MODE NORM;\n"}).empty());
+    CHECK(CheckApasImatch("// IMATCH in comment\n", {"DEC_MODE APAS;\n"}).empty());
+    CHECK(CheckApasImatch("/* IMATCH */\n", {"DEC_MODE APAS;\n"}).empty());
+    CHECK(CheckApasImatch("# IMATCH tail\n", {"DEC_MODE APAS;\n"}).empty());
+    CHECK(CheckApasImatch("SET_TITLE(\"IMATCH\");\n", {"DEC_MODE APAS;\n"}).empty()); // 字符串里
+    CHECK(CheckApasImatch("*1 01 00 1 X1 X*TS2,IMATCHX;\n", {"DEC_MODE APAS;\n"}).empty());
+    CHECK(CheckApasImatch("*1 01 00 1 X1 X*TS2,X_IMATCH;\n", {"DEC_MODE APAS;\n"}).empty());
+    CHECK(CheckApasImatch("", {"DEC_MODE APAS;\n"}).empty());
+
+    // ---- 与规则 8 的合流：.pln 里 IMATCH 一样报（真实工程 IMATCH 只在向量里，
+    //      .pln 命中 = 写了不该写的东西，Warning 同样成立）----
+    {
+        const std::vector<std::string> decs{std::string("DEC_MODE APAS;\n")};
+        const std::vector<Diagnostic> d =
+            CheckApasImatch("SET_DEC_FILE \"./x.dec\"\nIMATCH (R1);\n", decs);
+        CHECK(CountCode(d, "C3380-XFILE-001") == 1);
+        if (CountCode(d, "C3380-XFILE-001") == 1) CHECK(d[0].line == 1);
+    }
+    // .dec 里 IMATCH 一词不应触发（IMATCH 是向量微指令，规则只对引用方开 ——
+    // 宿主只对 Plan/Pattern 调 CheckApasImatch，内核层面靠调用方约定）
+}
+
+// ---------------------------------------------------------------------------
+// 批次 89：ExtractDecSymbols —— 跨文件补全的词源（正例全部取自公开手册）
+// ---------------------------------------------------------------------------
+
+// 手册 §2.7.2.1 的 TIME_NAME_DEF 示例（原文照抄，含行尾注释）。
+static const char* kManualTimeNameDef = R"DEC(TIME_NAME_DEF
+{
+TM1= 1; // Define timing set 1 name is "TM1" for Test plan ( *.pln file )use;
+}
+)DEC";
+
+static void RunExtractDecSymbols() {
+    // 官方 .dec 示例：17 个 pin + 3 个 I/O 组 + 1 个电源组 = 21 个符号，文件序。
+    {
+        const std::vector<std::string> s = ExtractDecSymbols(kManualDecExample);
+        CHECK(s.size() == 21);
+        if (s.size() == 21) {
+            CHECK(s[0] == "SEL0");            // 文件序（第一条 pin）
+            CHECK(s[16] == "Vdps");           // 最后一个 pin
+            CHECK(s[17] == "CTRL");           // PIN_GROUP 三条
+            CHECK(s[18] == "SEL01");
+            CHECK(s[19] == "QQ");
+            CHECK(s[20] == "DPS_OS_PINS");    // POWER_PIN_GROUP
+        }
+        // 去重：同一符号出现两次只进一次
+        std::string twice = std::string(kManualDecExample) + "PIN_GROUP \n{ \n X2 = QA; \n} \n";
+        const std::vector<std::string> s2 = ExtractDecSymbols(twice);
+        int nQA = 0, nX2 = 0;
+        for (const std::string& w : s2) {
+            if (w == "QA") ++nQA;
+            if (w == "X2") ++nX2;
+        }
+        CHECK(nQA == 1 && nX2 == 1);
+    }
+    // LM §2.2.2 的 APAS 示例：p0..p7 共 8 个 pin；DEC_MODE 行不是块，不进
+    {
+        const std::vector<std::string> s = ExtractDecSymbols(kManualApasDec);
+        CHECK(s.size() == 8);
+        if (s.size() == 8) {
+            CHECK(s[0] == "p0" && s[7] == "p7");
+        }
+    }
+    // TIME_NAME_DEF（§2.7 格式 `time_name = no;`）—— 行尾注释里的 "TM1" 不重复计
+    {
+        const std::vector<std::string> s = ExtractDecSymbols(kManualTimeNameDef);
+        CHECK(s.size() == 1);
+        if (s.size() == 1) CHECK(s[0] == "TM1");
+    }
+    // UR_PIN_GROUP 与 PIN_GROUP 同等对待
+    CHECK(ExtractDecSymbols("UR_PIN_GROUP\n{\n UREL1 = A+B;\n}\n").size() == 1);
+    // 宽容：没分号 / 认不出的块 —— 跳过；畸形行（`B 0 = 1 = IO;`）的行首
+    // 标识符 "B" **会**进候选 —— 补全是低风险场景，多一个无害候选只是噪声
+    //（口径见头文件：比诊断宽）。
+    {
+        const std::vector<std::string> s =
+            ExtractDecSymbols("PIN_LIST (B) {\n A = 0 = 1 = IO\n B 0 = 1 = IO;\n}\n");
+        CHECK(s.size() == 1);
+        if (s.size() == 1) CHECK(s[0] == "B");
+    }
+    CHECK(ExtractDecSymbols("PIN_GROUP {\n = A;\n 123 = A;\n}\n").empty());
+    CHECK(ExtractDecSymbols("DEC_MODE APAS;\nDEVICE { X = 1; }\n").empty());  // 非符号块
+    // 块注释里的条目不算（kManualDecExample 的注释行无 `;` 结尾，这里显式验证）
+    CHECK(ExtractDecSymbols("PIN_GROUP {\n/* GHOST = A; */\nREAL = A;\n}\n").size() == 1);
+    // 未闭合块：不崩、不报
+    CHECK(ExtractDecSymbols("PIN_GROUP {\n G1 = A;\n").empty());
+    CHECK(ExtractDecSymbols("").empty());
+    // 长度上限：手册 §2.7 time_name max 64 chars → 65 个字符的标识符不进
+    {
+        std::string longName(65, 'A');
+        const std::string dec = "PIN_GROUP {\n " + longName + " = A;\n}\n";
+        CHECK(ExtractDecSymbols(dec).empty());
+        longName.resize(64);
+        const std::string dec64 = "PIN_GROUP {\n " + longName + " = A;\n}\n";
+        CHECK(ExtractDecSymbols(dec64).size() == 1);
+    }
+}
+
 static void RunCrossKind() {
     // SET_DEC_FILE 的规则不适用 .dec（.dec 的 DEC_MODE 反而必须有分号）
     CHECK(ValidateChromaSource("SET_DEC_FILE \"a.dec\" ;\n", ChromaFileKind::Dec).empty());
@@ -389,11 +580,25 @@ static void RunCrossKind() {
     CHECK(ValidateChromaSource("/*\nSET_DEC_FILE \"a.dec\" ;\n", ChromaFileKind::Plan).empty());
 }
 
-// 可选入口：`test_chromadiag <文件>` —— 把任意工程文件当 .pln/.dec/.pat 扫一遍。
+// 可选入口：`test_chromadiag <文件> [--dec <dec文件>]…` —— 把任意工程文件当
+// .pln/.dec/.pat 扫一遍；`--dec` 可多次给出"已被宿主读出的被引用 .dec"，让规则 3
+// 也能对真实文件对回归。
 // 存在的理由：**真实文件才是零误报的最终证据**，而 temp/ 下的真实样例是私密文件
 // （被 .gitignore 排除，CI 上不存在），不能写进上面的断言里。所以把它做成一个可
 // 手动调用的入口：命中诊断返回 1，干净返回 0，方便脚本化回归。
-static int ScanFile(const char* path) {
+static int ScanFile(int argc, char** argv) {
+    const char* path = argv[1];
+    std::vector<std::string> decTexts;
+    for (int i = 2; i + 1 < argc; i += 2) {
+        if (std::string(argv[i]) != "--dec") continue;
+        std::ifstream in(argv[i + 1], std::ios::binary);
+        if (!in) {
+            std::printf("cannot open --dec: %s\n", argv[i + 1]);
+            return 2;
+        }
+        decTexts.emplace_back((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         std::printf("cannot open: %s\n", path);
@@ -402,9 +607,17 @@ static int ScanFile(const char* path) {
     const std::string text((std::istreambuf_iterator<char>(in)),
                             std::istreambuf_iterator<char>());
     const ChromaFileKind kind = FileKindFromPath(path);
-    const std::vector<Diagnostic> d = ValidateChromaSource(text, kind);
-    std::printf("%s  kind=%d  bytes=%zu  diagnostics=%zu\n", path, (int)kind,
-                text.size(), d.size());
+    std::vector<Diagnostic> d = ValidateChromaSource(text, kind);
+    if (!decTexts.empty()) {
+        const std::vector<Diagnostic> cross = CheckApasImatch(text, decTexts);
+        d.insert(d.end(), cross.begin(), cross.end());
+        std::stable_sort(d.begin(), d.end(), [](const Diagnostic& a, const Diagnostic& b) {
+            if (a.line != b.line) return a.line < b.line;
+            return a.start < b.start;
+        });
+    }
+    std::printf("%s  kind=%d  bytes=%zu  decs=%zu  diagnostics=%zu\n", path, (int)kind,
+                text.size(), decTexts.size(), d.size());
     for (const Diagnostic& x : d) {
         std::printf("  line %d col %d  %s [p%d]  %s\n", x.line + 1, x.start + 1,
                     x.code ? x.code : "?", x.manualPage, x.message.c_str());
@@ -413,7 +626,7 @@ static int ScanFile(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    if (argc > 1) return ScanFile(argv[1]);
+    if (argc > 1) return ScanFile(argc, argv);
     std::printf("== test_chromadiag ==\n");
     RunFileKind();
     RunSetDecFile(ChromaFileKind::Plan);
@@ -421,6 +634,8 @@ int main(int argc, char** argv) {
     RunPinList();
     RunPinGroup();
     RunArgumentCount();
+    RunCrossFileApas();
+    RunExtractDecSymbols();
     RunCrossKind();
     if (g_fail) {
         std::printf("FAILED: %d check(s)\n", g_fail);

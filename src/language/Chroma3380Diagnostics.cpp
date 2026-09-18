@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -624,6 +625,168 @@ void CheckArgumentCount(const std::vector<std::string>& code, std::vector<Diagno
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// 规则 3：DEC_MODE APAS → IMATCH 失效（批次 88，跨文件）
+// ---------------------------------------------------------------------------
+// 取证、severity 分档、为什么 .pat 无真实样本也开口 —— 全部见头文件同节注释。
+// 实现只补头文件没写的细节。
+
+namespace {
+
+bool EqualCI(const std::string& s, std::size_t at, const char* word) {
+    for (std::size_t i = 0; word[i]; ++i) {
+        if (at + i >= s.size()) return false;
+        if (std::toupper((unsigned char)s[at + i]) !=
+            std::toupper((unsigned char)word[i])) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+std::vector<DecFileRef> FindDecFileRefs(const std::string& text) {
+    std::vector<DecFileRef> out;
+    const std::vector<LineSpan> lines = SplitLines(text);
+    bool inBlock = false;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string m = BlankComments(text, lines[i].begin, lines[i].end, inBlock);
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(m, 0, m.size(), col, len)) continue;
+        if (Upper(m.substr(col, len)) != "SET_DEC_FILE") continue;
+        // 抹平行里引号保留原位 —— 用它定位**原文**里的路径字节区间（路径内容
+        // 在抹平行里已变成空格，必须回原文取）。
+        const std::size_t q1 = m.find('"', col + len);
+        if (q1 == kNone) continue;                       // 没引号 → 跳过
+        const std::size_t q2 = m.find('"', q1 + 1);
+        if (q2 == kNone || q2 <= q1 + 1) continue;       // 没闭合 / 空路径 → 跳过
+        DecFileRef r;
+        r.line = (int)i;
+        r.start = (int)(q1 + 1);
+        r.length = (int)(q2 - q1 - 1);
+        r.path = text.substr(lines[i].begin + q1 + 1, (std::size_t)r.length);
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+bool DecDeclaresApas(const std::string& decText) {
+    const std::vector<LineSpan> lines = SplitLines(decText);
+    bool inBlock = false;
+    bool sawApas = false, sawNorm = false;
+    for (const LineSpan& L : lines) {
+        const std::string m = BlankComments(decText, L.begin, L.end, inBlock);
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(m, 0, m.size(), col, len)) continue;
+        if (Upper(m.substr(col, len)) != "DEC_MODE") continue;
+        // 整词扫这一行剩下的标识符：见到 APAS 记 APAS，见到 NORM 记 NORM。
+        // 两种同时出现 = 声明歧义（语义手册没写）→ 最后按"无歧义"口径裁决。
+        for (std::size_t p = col + len; p < m.size();) {
+            std::size_t c2 = 0, l2 = 0;
+            if (!IdentAt(m, p, m.size(), c2, l2)) { ++p; continue; }
+            const std::string w = Upper(m.substr(c2, l2));
+            if (w == "APAS") sawApas = true;
+            else if (w == "NORM") sawNorm = true;
+            p = c2 + l2;
+        }
+    }
+    return sawApas && !sawNorm;
+}
+
+std::vector<Diagnostic> CheckApasImatch(const std::string& text,
+                                        const std::vector<std::string>& decTexts) {
+    std::vector<Diagnostic> out;
+    bool apas = false;
+    for (const std::string& dec : decTexts) {
+        if (DecDeclaresApas(dec)) { apas = true; break; }
+    }
+    if (!apas) return out;                               // 没读到 / 非 APAS → 静默
+
+    const std::vector<LineSpan> lines = SplitLines(text);
+    bool inBlock = false;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string m = BlankComments(text, lines[i].begin, lines[i].end, inBlock);
+        for (std::size_t p = 0; p + 6 <= m.size();) {
+            if (!EqualCI(m, p, "IMATCH")) { ++p; continue; }
+            const bool leftOk = (p == 0) || !IsIdChar((unsigned char)m[p - 1]);
+            const bool rightOk = (p + 6 >= m.size()) || !IsIdChar((unsigned char)m[p + 6]);
+            if (leftOk && rightOk) {
+                PushDiag(out, (int)i, p, 6, "C3380-XFILE-001", 44,
+                         "IMATCH 仅支持 NORM 模式的向量（手册 §3.4.1.3），而本文件"
+                         "引用的 .dec 声明了 DEC_MODE APAS —— APAS 下 IMATCH 失效"
+                         "（培训教材 p43）",
+                         DiagSeverity::Warning);
+                p += 6;
+                continue;
+            }
+            ++p;   // 词边界不成立（IMATCHX / X_IMATCH）→ 继续找下一个
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 89：ExtractDecSymbols —— 跨文件补全的词源（见头文件同节注释）
+// ---------------------------------------------------------------------------
+
+std::vector<std::string> ExtractDecSymbols(const std::string& decText) {
+    std::vector<std::string> out;
+    std::set<std::string> uniq;
+    const std::vector<LineSpan> lines = SplitLines(decText);
+    std::vector<std::string> code;
+    code.reserve(lines.size());
+    bool inBlock = false;
+    for (const LineSpan& L : lines)
+        code.push_back(BlankComments(decText, L.begin, L.end, inBlock));
+
+    // 块扫描与 CheckDeviceDefinition 同一套口径：行首标识符认块、`{` 可隔几行、
+    // FindBlockEnd 配平；认不出就跳过（块头撞别的标识符 → 停止前瞻）。
+    std::size_t i = 0;
+    while (i < code.size()) {
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(code[i], 0, code[i].size(), col, len)) { ++i; continue; }
+        const std::string kw = Upper(code[i].substr(col, len));
+        const bool isPinList = (kw == "PIN_LIST");
+        const bool isNamedBlock = (kw == "PIN_GROUP" || kw == "UR_PIN_GROUP" ||
+                                   kw == "POWER_PIN_GROUP" || kw == "TIME_NAME_DEF");
+        if (!isPinList && !isNamedBlock) { ++i; continue; }
+
+        std::size_t braceLine = kNone, braceCol = 0;
+        for (std::size_t k = i; k < code.size() && k <= i + 4; ++k) {
+            std::size_t p = code[k].find('{', k == i ? col + len : 0);
+            if (p != kNone) { braceLine = k; braceCol = p; break; }
+            if (k > i) {
+                std::size_t c2 = 0, l2 = 0;
+                if (LeadingIdentIn(code[k], 0, code[k].size(), c2, l2)) break;
+            }
+        }
+        if (braceLine == kNone) { ++i; continue; }
+        std::size_t endLine = 0, endCol = 0;
+        if (!FindBlockEnd(code, braceLine, braceCol, endLine, endCol)) { ++i; continue; }
+
+        auto addName = [&](std::string name) {
+            if (name.empty() || name.size() > 64) return;   // 手册 §2.7：max 64 chars
+            if (!IsIdStart((unsigned char)name[0])) return;
+            for (char c : name) if (!IsIdChar((unsigned char)c)) return;
+            if (uniq.insert(name).second) out.push_back(std::move(name));
+        };
+
+        for (std::size_t k = braceLine; k <= endLine; ++k) {
+            const std::size_t b = (k == braceLine) ? braceCol + 1 : 0;
+            const std::size_t e = (k == endLine) ? endCol : code[k].size();
+            if (b >= e) continue;
+            const std::size_t last = LastCodeIn(code[k], b, e);
+            if (last == kNone || code[k][last] != ';') continue;   // 宽容：没分号不猜
+            const std::size_t eq = code[k].find('=', b);
+            if (eq == kNone || eq > last) continue;                // 无 `=` 的行不猜
+            std::size_t c3 = 0, l3 = 0;
+            if (!LeadingIdentIn(code[k], b, eq, c3, l3)) continue;
+            addName(code[k].substr(c3, l3));
+        }
+        i = endLine + 1;
+    }
+    return out;
+}
 
 ChromaFileKind FileKindFromPath(const std::string& path) {
     std::size_t dot = path.rfind('.');

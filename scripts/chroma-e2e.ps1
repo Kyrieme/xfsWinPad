@@ -55,6 +55,19 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 #                  used to carry was lifted from the manual's Example section
 #                  (`_IP,"192.168.1.2"`, `"CableLoss.ini"`) and batch 79 removed it.
 #                  Showing no hint beats showing example literals as a parameter list.
+#   P10 .pln    -> STATIC DIAGNOSTICS (batch 87): a rule-8 violation draws the
+#                  error squiggle (indicator 10) on the statement name and fills
+#                  status-bar part 7; P10B is the clean-file negative control.
+#   P11 .pat    -> CROSS-FILE RULE 3 (batch 88): the referenced .dec declares
+#                  DEC_MODE APAS, the .pat uses IMATCH -> warning squiggle
+#                  (indicator 11) on the IMATCH token. The dec is resolved on
+#                  disk relative to the pattern's directory. P11B: same .pat,
+#                  .dec without DEC_MODE -> everything stays silent.
+#   P12 .pln    -> CROSS-FILE DEC-SYMBOL COMPLETION (batch 89): the dec defines
+#                  Vdps (manual 2.7.2's own example symbol); typing "Vdp" in the
+#                  plan raises the word-completion dropdown from the dec symbol
+#                  and Tab inserts "Vdps". P12B: a dec without a VDP* symbol
+#                  keeps the dropdown silent (the hit really came from the dec).
 #
 # HARD RULE - the verdict is CHROMA-E2E-PASS / CHROMA-E2E-FAIL, and the exit code now agrees:
 #   A passing run prints CHROMA-E2E-PASS and exits 0. Historically it exited 1 as
@@ -911,6 +924,155 @@ try {
   if ($len7b -le 0) { Fail "status part 7 empty for a clean Chroma file (clean text missing)" }
   Write-Output ("  OK 0 squiggle hits on the clean call + status part 7 len={0}" -f $len7b)
   Write-Output "P10B-OK"
+
+  # ------------ P11: CROSS-FILE RULE 3 (batch 88) -------------------------------
+  # DEC_MODE APAS (in the referenced .dec) + IMATCH usage (in this .pat) draws
+  # the WARNING squiggle (indicator 11). The dec is resolved on disk relative to
+  # the pattern file's directory - this exercises the host's file resolution,
+  # which unit tests cannot cover. Vector lines are lifted from the manual's
+  # IMATCH worked example (LM p62), same as the unit fixtures.
+  Write-Output "[P11] referenced .dec says DEC_MODE APAS -> IMATCH draws warning squiggle"
+  $p11dec = Join-Path $work "p11.dec"
+  Write-Fixture $p11dec @(
+    'DEC_MODE  APAS;'
+    ''
+    'PIN_LIST (B) {'
+    'A = 0 = 1 = IO;'
+    'B = 1 = 2 = IO;'
+    '}'
+  )
+  $p11 = Join-Path $work "p11.pat"
+  Write-Fixture $p11 @(
+    'SET_DEC_FILE "./p11.dec"'
+    'HEADER CLR,%SEL0,G1;'
+    '*1 01 00 1 X1 XXXXXXXX XH*TS2,IMATCH;'
+    '*1 01 00 1 X0 XXXXXXXX XL*TS2,STOP;'
+  )
+  Start-App $p11
+  Expect-Lexer "ate_pattern"
+  $ls11 = [CH]::LineEndPos($g_ed, 1) + 2          # start of vector line (0-based line 2)
+  $im11 = $ls11 + 30                              # IMATCH at col 30 of the manual vector
+  Start-Sleep -Milliseconds 600                   # allow the open-time refresh to settle
+  if ([CH]::IndicatorAt($g_ed, $im11, 11) -ne 1) {
+    Fail "indicator 11 NOT set at IMATCH (pos $im11) - cross-file rule 3 not wired" }
+  if ([CH]::IndicatorAt($g_ed, $im11 + 3, 11) -ne 1) {
+    Fail "indicator 11 must cover the whole IMATCH token (probe at +3)" }
+  if ([CH]::IndicatorAt($g_ed, $im11, 10) -ne 0) {
+    Fail "indicator 10 (Error) set for a Warning-severity finding" }
+  if ([CH]::IndicatorAt($g_ed, $ls11, 11) -ne 0) {
+    Fail "indicator 11 before the IMATCH token - over-marking" }
+  $ls11b = [CH]::LineEndPos($g_ed, 2) + 2         # control vector line (STOP, no IMATCH)
+  if ([CH]::IndicatorAt($g_ed, $ls11b + 30, 11) -ne 0) {
+    Fail "indicator 11 on the clean STOP vector line - false positive" }
+  if ([CH]::IndicatorAt($g_ed, 0, 11) -ne 0) {
+    Fail "indicator 11 on the SET_DEC_FILE line - over-marking" }
+  $len7c = [CH]::StatusPartLen($g_sb, 7)
+  if ($len7c -le 0) { Fail "status part 7 empty with 1 cross-file finding" }
+  Write-Output ("  OK warning squiggle on IMATCH + status part 7 len={0}" -f $len7c)
+  Write-Output "P11-OK"
+
+  # P11B negative control: same .pat but the referenced .dec declares nothing ->
+  # the cross-file gate stays silent everywhere (dec found on disk is mandatory).
+  Write-Output "[P11B] referenced .dec without DEC_MODE: IMATCH stays clean"
+  $p11bdec = Join-Path $work "p11b.dec"
+  Write-Fixture $p11bdec @(
+    'PIN_LIST (B) {'
+    'A = 0 = 1 = IO;'
+    'B = 1 = 2 = IO;'
+    '}'
+  )
+  $p11b = Join-Path $work "p11b.pat"
+  Write-Fixture $p11b @(
+    'SET_DEC_FILE "./p11b.dec"'
+    'HEADER CLR,%SEL0,G1;'
+    '*1 01 00 1 X1 XXXXXXXX XH*TS2,IMATCH;'
+  )
+  Start-App $p11b
+  Expect-Lexer "ate_pattern"
+  $ls11c = [CH]::LineEndPos($g_ed, 1) + 2
+  Start-Sleep -Milliseconds 600
+  $hits11 = 0
+  for ($i = 0; $i -lt 40; $i++) {
+    if ([CH]::IndicatorAt($g_ed, $ls11c + $i, 10) -ne 0) { $hits11++ }
+    if ([CH]::IndicatorAt($g_ed, $ls11c + $i, 11) -ne 0) { $hits11++ }
+  }
+  if ($hits11 -ne 0) {
+    Fail ("dec without DEC_MODE: {0} indicator hits on the IMATCH line - false positives" -f $hits11) }
+  Write-Output "P11B-OK"
+
+  # ------------ P12: CROSS-FILE DEC-SYMBOL COMPLETION (batch 89) -----------------
+  # The referenced .dec's symbols (pins / groups / time names) join the word-
+  # completion word list. The dec is resolved on disk relative to the plan's
+  # directory (same host resolution as rule 3). The symbol Vdps comes from the
+  # manual's own worked example (LM 2.7.2: dec defines Vdps, the plan calls
+  # FORCE_V_DPS(Vdps,...)) - the manual documents exactly this workflow.
+  # Uniqueness: no statement name starts with "VDP", and the plan text contains
+  # no VDP* word of its own, so any dropdown for prefix "Vdp" can only come from
+  # the dec - and Tab-accepting it must leave "Vdps" in the document text.
+  Write-Output "[P12] referenced .dec supplies the Vdps symbol for word completion"
+  $p12dec = Join-Path $work "p12.dec"
+  Write-Fixture $p12dec @(
+    'PIN_LIST (B) {'
+    'Vdps = 0 : 4 = 1 = DPS;'
+    '}'
+  )
+  $p12 = Join-Path $work "p12.pln"
+  Write-Fixture $p12 @(
+    'TEST_PRO {'
+    'SET_DEC_FILE "./p12.dec"'
+    'FORCE_V_DPS('
+    '}'
+  )
+  Start-App $p12
+  Expect-Lexer "chroma_plan"
+  $c12 = [CH]::LineEndPos($g_ed, 2)              # end of the FORCE_V_DPS( line
+  [CH]::GotoPos($g_ed, $c12) | Out-Null
+  [CH]::TypeChar($g_ed, [int][char]'V')
+  [CH]::TypeChar($g_ed, [int][char]'d')
+  [CH]::TypeChar($g_ed, [int][char]'p')
+  Start-Sleep -Milliseconds 500
+  $act12 = [CH]::AutoCActive($g_ed)
+  Write-Output ("  [diag] prefix 'Vdp' -> autoC={0}" -f $act12)
+  if ($act12 -ne 1) {
+    Fail "no dropdown for prefix Vdp - the dec's symbols are not reaching word completion" }
+  [CH]::PressKey($g_ed, $VK_TAB)
+  Start-Sleep -Milliseconds 500
+  if ([CH]::AutoCActive($g_ed) -ne 0) { Fail "Tab did not close the dropdown" }
+  $text12 = [CH]::GetText($g_ed)
+  if (-not $text12.Contains("FORCE_V_DPS(Vdps")) {
+    Fail "Tab acceptance did not insert the dec symbol Vdps (word list source wrong)" }
+  Write-Output "  OK dropdown for Vdp came from the dec; Tab inserted Vdps"
+  Write-Output "P12-OK"
+
+  # P12B negative control: a .dec whose symbols cannot match the prefix keeps
+  # the dropdown silent - proves the P12 hit came from the dec, not from noise.
+  Write-Output "[P12B] .dec without a matching symbol: prefix Vdp stays silent"
+  $p12bdec = Join-Path $work "p12b.dec"
+  Write-Fixture $p12bdec @(
+    'PIN_LIST (B) {'
+    'QSYM = 0 : 4 = 1 = IO;'
+    '}'
+  )
+  $p12b = Join-Path $work "p12b.pln"
+  Write-Fixture $p12b @(
+    'TEST_PRO {'
+    'SET_DEC_FILE "./p12b.dec"'
+    'FORCE_V_DPS('
+    '}'
+  )
+  Start-App $p12b
+  Expect-Lexer "chroma_plan"
+  $c12b = [CH]::LineEndPos($g_ed, 2)
+  [CH]::GotoPos($g_ed, $c12b) | Out-Null
+  [CH]::TypeChar($g_ed, [int][char]'V')
+  [CH]::TypeChar($g_ed, [int][char]'d')
+  [CH]::TypeChar($g_ed, [int][char]'p')
+  Start-Sleep -Milliseconds 500
+  $act12b = [CH]::AutoCActive($g_ed)
+  Write-Output ("  [diag] prefix 'Vdp' (no match in dec) -> autoC={0}" -f $act12b)
+  if ($act12b -ne 0) {
+    Fail "dropdown raised for Vdp although the dec has no VDP* symbol - false source" }
+  Write-Output "P12B-OK"
 
   Write-Output "CHROMA-E2E-PASS"
   Cleanup

@@ -353,6 +353,10 @@ void Workspace::InsertDoc1(std::unique_ptr<Document> doc, bool activate) {
 void Workspace::WireExtWords(Document* d) {
     d->editor.SetExtWordsProvider([this, d](std::set<std::string>& out) {
         CollectOpenTabWords(out, d);
+        // 批次 89：被引用 .dec 的符号（pin / 组 / 时序名）。.dec 通常**不在**
+        // 打开的标签里，上面的跨标签词汇源覆盖不到 —— 这正是这层缓存的增量。
+        // 缓存由宿主随打开/切换/编辑防抖刷新，这里只读，不碰盘。
+        for (const std::string& s : d->decSymbols) out.insert(s);
     });
 }
 

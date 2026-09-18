@@ -24,6 +24,8 @@
 #include "../shortcut/ShortcutTable.h"
 #include "../theme/Styler.h"
 #include <shlobj.h>
+#include <fstream>
+#include <set>
 #include "../theme/Theme.h"
 #include "../workspace/Workspace.h"
 #include "../plugin/Workshop.h"
@@ -65,6 +67,55 @@ constexpr int kDiagDebounceMs = 450;
 chroma3380::ChromaFileKind KindOfDocument(const Document& d) {
     if (!d.HasPath()) return chroma3380::ChromaFileKind::Unknown;
     return chroma3380::FileKindFromPath(WideToUtf8(d.path.wstring()));
+}
+
+// 批次 88：规则 3（DEC_MODE APAS → IMATCH 失效）需要看被引用的 .dec。
+// 内核保持零 IO —— 找文件、读盘、编码都归宿主。这里只做"宁漏不误"的最小集合：
+//   · 路径字节来自 Chroma 文件内容（真实文件是 ANSI/GBK），按 ACP 还原成宽路径；
+//   · 相对路径相对**本文档所在目录**解析（手册写法 `.\ls299_pin.dec`）；
+//   · 找不到 / 不是常规文件 / 超过 8MB / 读失败 —— 一律静默跳过；
+//   · 最多读 8 个引用（防御性上限；正常工程只有 1 个 SET_DEC_FILE）。
+std::vector<std::string> LoadReferencedDecTexts(const Document& d,
+                                                const std::string& text) {
+    std::vector<std::string> out;
+    const std::vector<chroma3380::DecFileRef> refs = chroma3380::FindDecFileRefs(text);
+    out.reserve(refs.size());
+    for (const chroma3380::DecFileRef& ref : refs) {
+        if (out.size() >= 8) break;
+        const int wl = ::MultiByteToWideChar(CP_ACP, 0, ref.path.c_str(),
+                                             (int)ref.path.size(), nullptr, 0);
+        if (wl <= 0) continue;
+        std::wstring wref((std::size_t)wl, L'\0');
+        ::MultiByteToWideChar(CP_ACP, 0, ref.path.c_str(), (int)ref.path.size(),
+                              wref.data(), wl);
+        std::filesystem::path p(std::move(wref));
+        if (p.is_relative()) p = d.path.parent_path() / p;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(p, ec)) continue;
+        const uintmax_t size = std::filesystem::file_size(p, ec);
+        if (ec || size == 0 || size > 8u * 1024u * 1024u) continue;
+        std::ifstream in(p, std::ios::binary);
+        if (!in) continue;
+        std::string body((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+        out.push_back(std::move(body));
+    }
+    return out;
+}
+
+// 批次 89：把读到的 .dec 文本抽成符号清单（pin / 组 / 时序名），跨文件补全的
+// 词源。多个 .dec 去重合并；上限 4096（真实 .dec 是几十个 pin 的量级，这是
+// 防御性天花板）。补全是低风险场景：多一个候选只是噪声，所以抽取口径宽。
+std::vector<std::string> MergeDecSymbols(const std::vector<std::string>& decTexts) {
+    std::vector<std::string> out;
+    std::set<std::string> uniq;
+    for (const std::string& t : decTexts) {
+        for (std::string& s : chroma3380::ExtractDecSymbols(t)) {
+            if (out.size() >= 4096) return out;
+            if (uniq.insert(s).second) out.push_back(std::move(s));
+        }
+    }
+    return out;
 }
 
 // Plain container for the tab strip + editor controls.
@@ -3632,6 +3683,21 @@ void MainWindow::RefreshDiagnostics() {
     }
 
     const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
+    const std::string chromaText = d->editor.GetTextUtf8();
+
+    // 批次 89：被引用 .dec 的符号缓存（跨文件补全词源）。**与静态检查开关无关**
+    // —— 关掉检查不代表不要补全。.dec 读不到时缓存清空（弹窗就少一路词源），
+    // 非 Chroma / 大文件同理。decTexts 下面规则 3 复用，盘只读一次。
+    std::vector<std::string> decTexts;
+    if ((kind == chroma3380::ChromaFileKind::Plan ||
+         kind == chroma3380::ChromaFileKind::Pattern) &&
+        !d->editor.IsLargeFile()) {
+        decTexts = LoadReferencedDecTexts(*d, chromaText);
+        d->decSymbols = MergeDecSymbols(decTexts);
+    } else {
+        d->decSymbols.clear();
+    }
+
     const bool active = settings_.chromaDiagnostics &&
                         kind != chroma3380::ChromaFileKind::Unknown &&
                         !d->editor.IsLargeFile();
@@ -3646,8 +3712,24 @@ void MainWindow::RefreshDiagnostics() {
         return;
     }
 
-    const std::vector<chroma3380::Diagnostic> found =
-        chroma3380::ValidateChromaSource(d->editor.GetTextUtf8(), kind);
+    std::vector<chroma3380::Diagnostic> found =
+        chroma3380::ValidateChromaSource(chromaText, kind);
+
+    // 批次 88：规则 3 是跨文件的 —— 被引用的 .dec 由宿主读出后传给内核。
+    // 引用一个都没读到（最常见的情形：.dec 不在扫描机上）时开销为零。
+    if (!decTexts.empty()) {
+        std::vector<chroma3380::Diagnostic> cross =
+            chroma3380::CheckApasImatch(chromaText, decTexts);
+        found.insert(found.end(),
+                     std::make_move_iterator(cross.begin()),
+                     std::make_move_iterator(cross.end()));
+        std::stable_sort(found.begin(), found.end(),
+                         [](const chroma3380::Diagnostic& a,
+                            const chroma3380::Diagnostic& b) {
+                             if (a.line != b.line) return a.line < b.line;
+                             return a.start < b.start;
+                         });
+    }
 
     const bool panelWanted = (diag_ && diag_->Visible());
     std::vector<Editor::DiagMark> marks;
