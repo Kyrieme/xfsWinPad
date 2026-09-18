@@ -529,7 +529,7 @@ bool PluginManager::LoadNppStyle(const std::wstring& path, HMODULE dll) {
     Logger::Info("LoadNppStyle resolve ok: " + WideToUtf8(path));
 
     // setInfo：npp 侧句柄给主窗口；Scintilla 主句柄给注册时刻的活动文档
-    // （语义差与后续正解见 docs/plugin-system.md §5.1）。
+    // （语义差与后续正解见 插件系统设计笔记 §5.1）。
     Document* act = workspace_ ? workspace_->Active() : nullptr;
     npp::NppData data{hostWnd_, act ? act->editor.Hwnd() : nullptr, nullptr};
     Logger::Info("LoadNppStyle pre-setInfo");
@@ -700,7 +700,7 @@ void PluginManager::UnloadAll(bool freeDlls) {
 }
 
 // ===================== NPP 消息垫片（4b）=====================================
-// 契约数值来源：npp/NppMessages.h；行为决策记录：docs/plugin-system.md §5.6。
+// 契约数值来源：npp/NppMessages.h；行为决策记录：插件系统设计笔记 §5.6。
 namespace {
 
 // 生产环境的文档集视图：映射到真实 Workspace。

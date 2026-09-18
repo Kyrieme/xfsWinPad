@@ -28,6 +28,24 @@ xfsWinPad.exe [options] [files...]
 - `third_party/`  vendored Scintilla 5 + Lexilla 5 (unmodified upstream trees)
 - `scripts/`      build / packaging / end-to-end test helpers
 
+## Repository policy
+This repository contains code only — build/scratch data, design notes and sample
+files stay out of the tree (see `.gitignore`). Two checks enforce that, and both
+run in CI:
+
+```powershell
+python scripts/check-public-surface.py    # tracked paths, doc allow-list, dangling private refs
+python scripts/check-sensitive-words.py   # content scan (word list is supplied out-of-tree)
+```
+
+The second one reads its word list from outside the repository; when no list is
+available it skips itself instead of failing.
+
+Both also guard against *dead pointers*: comments and string literals must not
+name files from the local scratch workspace, and must not point at design notes
+that are not published. Such references are unreadable for anyone who clones the
+repository, and they leak the internal layout for no benefit.
+
 ## Plugin SDK
 Native plugins: see `src/plugin/sdk/PLUGIN_DEV_GUIDE.md` and `src/plugin/sdk/xfs_plugin_api.h`.
 

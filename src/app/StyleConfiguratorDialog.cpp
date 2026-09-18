@@ -678,7 +678,7 @@ LRESULT CALLBACK StyleProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 case IDC_RESET: {
                     // 恢复默认：清除当前 (lexer, role) 的覆盖与拾取标记，
-                    // 回到主题角色色（docs/settings-plan.md 阶段 2b 补项）。
+                    // 回到主题角色色（设置系统设计笔记 阶段 2b 补项）。
                     if (st->lexer.empty()) return 0;
                     GlobalStyler().ClearOverrideW(st->lexer.c_str(), st->role);
                     st->fgPicked = false;

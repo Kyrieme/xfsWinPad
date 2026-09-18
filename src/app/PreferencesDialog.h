@@ -1,5 +1,5 @@
 #pragma once
-// xfsWinPad - 首选项对话框（docs/settings-plan.md 阶段 1）。
+// xfsWinPad - 首选项对话框（设置系统设计笔记 阶段 1）。
 //
 // Notepad++ 风格：TabControl 分页（常规/编辑/新建文档/备份/终端），
 // 改动**实时应用**（经 IPrefsApplier 作用于全部已开编辑器 + UI），

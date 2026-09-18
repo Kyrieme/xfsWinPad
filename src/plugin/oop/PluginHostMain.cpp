@@ -22,7 +22,7 @@
 //   [140]      initCheck bool（+3 填充）
 //   [144..151] shortcut  ShortcutKey*（{bool ctrl,alt,shift,uchar key}）
 //
-// 法律边界：布局 = 公开契约（docs/plugin-system.md §5.1），实现为 xfsWinPad
+// 法律边界：布局 = 公开契约（插件系统设计笔记 §5.1），实现为 xfsWinPad
 // 原创，不含 NPP 源码/头文件。
 
 #define WIN32_LEAN_AND_MEAN

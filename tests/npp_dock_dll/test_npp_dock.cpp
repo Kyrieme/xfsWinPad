@@ -3,7 +3,7 @@
 // 用途：验证"真实第三方插件"路径 —— 插件用 CreateDialog 建 modeless 对话框
 // 得到 hClient，再向宿主 SendMessage(NPPM_DMMREGASDCKDLG) 注册为可停靠面板。
 // 本文件【故意】不 include 宿主的任何头文件：契约结构手写（成员顺序=二进制
-// 事实，来源 docs/plugin-system.md §5.1/§5.8），像真实插件作者那样。
+// 事实，来源 插件系统设计笔记 §5.1/§5.8），像真实插件作者那样。
 //
 // 测试进程通过 test_npp_dock_* 导出观察口断言：
 //   * 注册是否成功（regResult）

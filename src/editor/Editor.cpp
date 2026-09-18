@@ -1071,7 +1071,7 @@ void Editor::CompleteAfterStatementAccepted() {
     HandleSignatureHint();
 }
 
-// ---- 自动补全 v1（docs/settings-plan.md 之外的编辑器缺口批次） ----------------
+// ---- 自动补全 v1（设置系统设计笔记 之外的编辑器缺口批次） ----------------
 
 namespace {
 

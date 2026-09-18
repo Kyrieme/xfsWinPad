@@ -24,7 +24,7 @@
 // 插件 → 编辑器的 NPPM_* 消息不经本协议：setInfo 拿到的 nppHandle 就是编辑器
 // 主窗口 HWND，SendMessage 跨进程直达（复用 §5.6 消息垫片）。
 //
-// 载荷布局 = 公开契约（与 docs/plugin-system.md §5.1 同规则：字段顺序即契约，
+// 载荷布局 = 公开契约（与 插件系统设计笔记 §5.1 同规则：字段顺序即契约，
 // 只能尾部追加）。
 
 #define WIN32_LEAN_AND_MEAN

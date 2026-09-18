@@ -27,7 +27,7 @@
 
 namespace xfs {
 
-// 插件形态：原生 ABI 或 Notepad++ 兼容形态（docs/plugin-system.md §5）。
+// 插件形态：原生 ABI 或 Notepad++ 兼容形态（插件系统设计笔记 §5）。
 enum LoadedKind { kLoadedNative = 0, kLoadedNppCompat = 1 };
 
 // 一次 LoadAll 中加载失败的 DLL 记录（插件管理「不兼容」页数据源）。
@@ -43,7 +43,7 @@ class Document;
 // 进程外插件桥（oop/OopHost.{h,cpp}）：xfsWinPadPluginHost.exe 代理编排器。
 class OopHost;
 
-// NPP 消息垫片所需的文档集抽象（docs/plugin-system.md §5.6 测试方案）。
+// NPP 消息垫片所需的文档集抽象（插件系统设计笔记 §5.6 测试方案）。
 // 生产实现绑定 Workspace；单测注入假实现以脱离真实控件断言契约。
 // 非拥有指针，虚拟析构。
 struct NppDocSource {
@@ -58,7 +58,7 @@ struct NppDocSource {
     virtual bool SaveAllDocs(bool& anySaved) = 0;
 };
 
-// 可停靠对话框宿主抽象（docs/plugin-system.md §5.8 4d）。
+// 可停靠对话框宿主抽象（插件系统设计笔记 §5.8 4d）。
 // 生产实现绑定 MainWindow 的 DockManager；单测注入假实现断言转发契约。
 // 非拥有指针，虚拟析构。所有方法只在 UI 线程调用。
 struct DockHost {
@@ -175,7 +175,7 @@ public:
     // ---- NPP 消息垫片（4b）--------------------------------------------------
     // 处理发往 npp 句柄（主框架 HWND）的 NPPM_*/RUNCOMMAND 消息。
     // handled=false 表示编号不在支持子集内，调用方必须继续默认处理，
-    // 绝不吞未知消息。契约细则：docs/plugin-system.md §5.6 + NppMessages.h。
+    // 绝不吞未知消息。契约细则：插件系统设计笔记 §5.6 + NppMessages.h。
     LRESULT ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp, bool& handled);
     // 测试注入口（非拥有，虚拟析构；attach 后优先于 Workspace 生效）
     void AttachNppDocSource(NppDocSource* src) { nppSrc_ = src; }
@@ -236,7 +236,7 @@ private:
         std::vector<xfs_plugin_command*> cmds;      // handles owned by this plugin
     };
 
-    // 两条装载分支（docs/plugin-system.md §5.2）：按导出探测分流。
+    // 两条装载分支（插件系统设计笔记 §5.2）：按导出探测分流。
     bool LoadOne(const std::wstring& path);
     bool LoadNative(const std::wstring& path, HMODULE dll,
                     const xfs_plugin_abi* (*getInfo)(void));

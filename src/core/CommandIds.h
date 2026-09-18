@@ -129,7 +129,7 @@ enum Cmd : unsigned int {
     MacroSave,
     MacroLoad,
 
-    // Settings 菜单（docs/settings-plan.md 阶段 1..3）
+    // Settings 菜单（设置系统设计笔记 阶段 1..3）
     Preferences = 880,       // 首选项…（阶段 1）
     StyleConfigurator,       // 语言样式配置器…（阶段 2，先占位灰显）
     ShortcutMapper,          // 管理快捷键…（阶段 3，先占位灰显）

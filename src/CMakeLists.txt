@@ -55,6 +55,7 @@ set(XFS_APP_SOURCES
     language/ChromaPlanLexer.cpp
     language/ChromaSignature.cpp
     language/Chroma3380Complete.cpp
+    language/Chroma3380Diagnostics.cpp
     theme/Styler.cpp
     plugin/PluginManager.cpp
     plugin/PluginCatalog.cpp

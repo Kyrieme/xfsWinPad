@@ -1,12 +1,17 @@
 # datalog-lag-test.ps1 - measure REAL Datalog interaction cost with a huge STDF.
 # Synchronous SendMessage blocks until the app's UI thread finishes processing
 # (incl. paint) -> the returned duration is the true per-operation latency.
-#  1. open SAMPLE-C (233MB; 5526 parts x 992 tests = ~1000 columns)
+#  1. open the sample you pass in (233MB; 5526 parts x 992 tests = ~1000 columns)
 #  2. vertical: WM_VSCROLL SB_PAGEDOWN x15  (sync)
 #  3. horizontal: WM_HSCROLL SB_PAGERIGHT x15 (sync)
 #  4. wheel-up batches + hover moves
 # PASS if worst op < 250 ms.
-param([Parameter(Mandatory=$true)][string]$ExePath)
+#
+# The sample path is NOT hard-coded (real product names must not enter the repo):
+#   .\datalog-lag-test.ps1 -ExePath <exe> -SamplePath <path-to-.std>
+#   or set $env:XFS_DATALOG_SAMPLE
+param([Parameter(Mandatory=$true)][string]$ExePath,
+      [string]$SamplePath = $env:XFS_DATALOG_SAMPLE)
 $ErrorActionPreference = 'Stop'
 Add-Type @"
 using System;using System.Text;using System.Runtime.InteropServices;
@@ -39,7 +44,8 @@ public static class DL1 {
 }
 public struct RECT { public int L; public int T; public int R; public int B; }
 "@
-$p = Start-Process -FilePath $ExePath -ArgumentList '--new "D:\AI_Work\codex\xfsPad\temp\SAMPLE-C-SAMPLE-PKG-V2-25-Test-V5.6_SAMPLE-PN-U-4_PP21-FT-01_07Dec2024_1339.std"' -PassThru
+if (-not $SamplePath) { "FAIL: no sample given (use -SamplePath or `$env:XFS_DATALOG_SAMPLE)"; exit 1 }
+$p = Start-Process -FilePath $ExePath -ArgumentList ("--new `"{0}`"" -f $SamplePath) -PassThru
 Start-Sleep -Seconds 6
 $f = [DL1]::FrameOf($p.Id)
 if ($f -eq [IntPtr]::Zero) { "FAIL launch"; Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force; exit 1 }

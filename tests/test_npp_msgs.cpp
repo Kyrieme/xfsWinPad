@@ -22,7 +22,7 @@ static int g_fail = 0;
     printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } } while (0)
 
 // 可配置假文档集：生产路径由 PluginManager 内部 WorkspaceSink 提供，
-// 这里注入假实现以脱离真实控件断言契约（docs/plugin-system.md §5.6）。
+// 这里注入假实现以脱离真实控件断言契约（插件系统设计笔记 §5.6）。
 struct FakeDocs final : public NppDocSource {
     std::vector<std::unique_ptr<Document>> docs;
     int active = 0;

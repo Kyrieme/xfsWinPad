@@ -64,7 +64,7 @@ public static class ATE {
   public static void LocateFrame(){ frame = IntPtr.Zero; EnumWindows(new EnumProc(FS), IntPtr.Zero); }
   // Enumerate ALL Scintilla children, including hidden ones: the app keeps more
   // than one editor control around, and a hidden one is easy to grab by mistake
-  // (see the visible-filter lesson in TODO.md). The caller picks by text length.
+  // (see the visible-filter note). The caller picks by text length.
   public static IntPtr[] Editors(){
     var list = new System.Collections.Generic.List<IntPtr>();
     if (frame == IntPtr.Zero) return list.ToArray();

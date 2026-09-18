@@ -599,7 +599,7 @@ static void RunRealSample() {
     // ---- datalog 矩阵（PIR..PRR 结果表）----
     const auto& parts = sf.Parts();
     const auto& order = sf.TestColumnOrder();
-    CHECK(parts.size() == 1);          // SAMPLE-A 样本只有 1 颗（PIR/PRR 各 1）
+    CHECK(parts.size() == 1);          // 样本A 只有 1 颗（PIR/PRR 各 1）
     CHECK(order.size() == sf.Tests().size());
     // 列序 = 执行序（首见序）——与测试机 ATE CSV 一致
     for (size_t i = 0; i < order.size(); ++i)

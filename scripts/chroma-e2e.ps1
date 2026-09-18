@@ -48,6 +48,13 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 #                  inside the argument list. P8B is the negative control: a
 #                  block-header statement (`TEST_PRO {` in the manual) must be
 #                  inserted bare - appending '(' there would be wrong code.
+#   P9 .pln     -> SIGNATURE DATA COMPLETENESS (batch 79): RELAY_ON - the 2nd most
+#                  frequent statement in a real .pln - completes, gets a '(' and
+#                  raises the manual's signature. P9B is its negative control:
+#                  RF_Initialize must be inserted BARE, because the signature it
+#                  used to carry was lifted from the manual's Example section
+#                  (`_IP,"192.168.1.2"`, `"CableLoss.ini"`) and batch 79 removed it.
+#                  Showing no hint beats showing example literals as a parameter list.
 #
 # HARD RULE - the verdict is CHROMA-E2E-PASS / CHROMA-E2E-FAIL, and the exit code now agrees:
 #   A passing run prints CHROMA-E2E-PASS and exits 0. Historically it exited 1 as
@@ -722,6 +729,94 @@ try {
            "have been inserted") -f $delta8b, ($want8b.Length - 7)) }
   Write-Output ("  OK '{0}' + Tab inserted the name alone (no paren)" -f $want8b)
   Write-Output "P8B-OK"
+
+  # ------------- P9: batch 79's data fix, end to end (RELAY_ON / RELAY_OFF)
+  # Batch 78 measured coverage and found RELAY_ON/RELAY_OFF had no signature at
+  # all: RELAY_ON is the 2nd most frequent statement in a real .pln (31 uses).
+  # Batch 79 fixed the extractor (page window + heading lookahead); the whole
+  # point of that work is this probe - the statement completes, gets its '(' and
+  # raises the manual's signature. Asserting the NAME by text is what proves the
+  # manual ORDER too: an alphabetically sorted list has RELAY_OFF before RELAY_ON
+  # and both are 9 chars, so the delta alone cannot tell them apart.
+  Write-Output "[P9] RELAY_ON (batch 79 data fix) completes, takes a paren, raises the hint"
+  $p9 = Join-Path $work "p9.pln"
+  Write-Fixture $p9 @(
+    'TEST_PRO {'
+    ''
+  )
+  Start-App $p9
+  Expect-Lexer "chroma_plan"
+  $want9 = Get-FirstStatementFor "chroma_plan" "RELAY"
+  if ($want9 -ne "RELAY_ON") {
+    Fail (("P9 wants RELAY_ON from prefix RELAY, got {0}") -f $want9) }
+  $c9 = [CH]::LineEndPos($g_ed, 1)
+  [CH]::GotoPos($g_ed, $c9) | Out-Null
+  foreach ($ch9 in @('R','E','L','A','Y')) { [CH]::TypeChar($g_ed, [int][char]$ch9) }
+  Start-Sleep -Milliseconds 400
+  if ([CH]::AutoCActive($g_ed) -ne 1) { Fail "no statement dropdown for prefix RELAY" }
+  $len9 = [CH]::TextLength($g_ed)
+  [CH]::PressKey($g_ed, $VK_TAB)
+  Start-Sleep -Milliseconds 500
+  $delta9 = [CH]::TextLength($g_ed) - $len9
+  $text9  = [CH]::GetText($g_ed)
+  $tip9   = [CH]::CallTipActive($g_ed)
+  Write-Output ("  [diag] after Tab: delta={0} callTip={1}" -f $delta9, $tip9)
+  if ($text9.IndexOf($want9) -lt 0) {
+    Fail ("the accepted statement is not in the document. text=[" +
+          ($text9 -replace "`r", '\r' -replace "`n", '\n') + "]") }
+  if ($text9.IndexOf($want9 + "(") -lt 0) {
+    Fail ("RELAY_ON got no '(' - the batch-79 signature is missing from the DB again") }
+  $extra9 = 1
+  if ($text9.IndexOf($want9 + "()") -ge 0) { $extra9 = 2 }
+  if ($delta9 -ne ($want9.Length - 5 + $extra9)) {
+    Fail (("Tab changed the document by {0} chars, want {1} ({2}-char name + {3} bracket " +
+           "char(s))") -f $delta9, ($want9.Length - 5 + $extra9), $want9.Length, $extra9) }
+  if ($tip9 -ne 1) { Fail "no signature calltip after RELAY_ON(" }
+  Write-Output ("  OK 'RELAY' + Tab -> {0}( + signature hint" -f $want9)
+  Write-Output "P9-OK"
+
+  # ------------ P9B: the other half - a name whose old signature came from the
+  # manual's EXAMPLE section must NOT get a paren. RF_Initialize used to carry
+  # `RF_Initialize(KEYSIGHT,_IP,"192.168.1.2",_IniFilePath,"CableLoss.ini") ;`,
+  # lifted from the example block; the real Format prints a differently named
+  # function (CRAFT_RF_Initialize), so the honest answer is "no signature".
+  # Zero false positives means showing nothing beats showing the example's
+  # literal values as if they were the parameter list.
+  Write-Output "[P9B] RF_Initialize must get no paren (its old signature was example text)"
+  $p9b = Join-Path $work "p9b.pln"
+  Write-Fixture $p9b @(
+    'TEST_PRO {'
+    ''
+  )
+  Start-App $p9b
+  Expect-Lexer "chroma_plan"
+  $want9b = Get-FirstStatementFor "chroma_plan" "RF_I"
+  if ($want9b -ne "RF_Initialize") {
+    Fail (("P9B wants RF_Initialize from prefix RF_I, got {0}") -f $want9b) }
+  $c9b = [CH]::LineEndPos($g_ed, 1)
+  [CH]::GotoPos($g_ed, $c9b) | Out-Null
+  foreach ($ch9b in @('R','F','_','I')) { [CH]::TypeChar($g_ed, [int][char]$ch9b) }
+  Start-Sleep -Milliseconds 400
+  if ([CH]::AutoCActive($g_ed) -ne 1) { Fail "no statement dropdown for prefix RF_I" }
+  $len9b = [CH]::TextLength($g_ed)
+  [CH]::PressKey($g_ed, $VK_TAB)
+  Start-Sleep -Milliseconds 500
+  $delta9b = [CH]::TextLength($g_ed) - $len9b
+  $text9b  = [CH]::GetText($g_ed)
+  $tip9b   = [CH]::CallTipActive($g_ed)
+  Write-Output ("  [diag] after Tab: delta={0} callTip={1}" -f $delta9b, $tip9b)
+  if ($text9b.IndexOf($want9b) -lt 0) {
+    Fail ("the accepted statement is not in the document. text=[" +
+          ($text9b -replace "`r", '\r' -replace "`n", '\n') + "]") }
+  if ($text9b.IndexOf($want9b + "(") -ge 0) {
+    Fail ("a '(' was appended after {0} - its signature is example text and must be gone" -f $want9b) }
+  if ($delta9b -ne ($want9b.Length - 4)) {
+    Fail (("Tab changed the document by {0} chars, want {1} - only the name itself should " +
+           "have been inserted") -f $delta9b, ($want9b.Length - 4)) }
+  if ($tip9b -ne 0) {
+    Fail "a signature calltip was raised for a statement whose signature must be empty" }
+  Write-Output ("  OK '{0}' + Tab inserted the name alone (no paren)" -f $want9b)
+  Write-Output "P9B-OK"
 
   Write-Output "CHROMA-E2E-PASS"
   Cleanup

@@ -3,7 +3,12 @@
 # 2. clicking the button (WM_COMMAND to the tab, its real parent) opens the
 #    GetSaveFileName dialog; then we cancel it. The dialog is proven present
 #    by a #32770 window owned by our process that was NOT there before.
-param([Parameter(Mandatory=$true)][string]$ExePath)
+#
+# The sample path is NOT hard-coded (real product names must not enter the repo):
+#   .\csv-btn-test.ps1 -ExePath <exe> -SamplePath <path-to-.std>
+#   or set $env:XFS_CSV_SAMPLE
+param([Parameter(Mandatory=$true)][string]$ExePath,
+      [string]$SamplePath = $env:XFS_CSV_SAMPLE)
 $ErrorActionPreference = 'Stop'
 Add-Type @"
 using System;using System.Text;using System.Runtime.InteropServices;
@@ -40,7 +45,8 @@ public static class CB1 {
     }
 }
 "@
-$p = Start-Process -FilePath $ExePath -ArgumentList '--new "D:\AI_Work\codex\xfsPad\temp\SAMPLE-B-01_20230411171340_Dlog.std"' -PassThru
+if (-not $SamplePath) { "FAIL: no sample given (use -SamplePath or `$env:XFS_CSV_SAMPLE)"; exit 1 }
+$p = Start-Process -FilePath $ExePath -ArgumentList ("--new `"{0}`"" -f $SamplePath) -PassThru
 Start-Sleep -Seconds 4
 $f = [CB1]::FrameOf($p.Id)
 if ($f -eq [IntPtr]::Zero) { "FAIL launch"; exit 1 }

@@ -1,4 +1,4 @@
-// Styler.cpp — 语法配色数据层实现（docs/settings-plan.md 阶段 2a）。
+// Styler.cpp — 语法配色数据层实现（设置系统设计笔记 阶段 2a）。
 // stylers.json 的读写基于共享的 core/JsonLite；颜色统一 "#RRGGBB" 字符串。
 #include "Styler.h"
 #include "Theme.h"

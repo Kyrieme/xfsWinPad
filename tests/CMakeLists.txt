@@ -191,6 +191,19 @@ endif()
 
 add_test(NAME chromasig COMMAND test_chromasig)
 
+# 批次 80：Chroma 3380 静态校验内核（方向 C）。纯函数，不用 Scintilla，
+# 因此这里只编它自己 —— 但**必须**用**手册原文**当正例（§2.3.3 / §2.4.3 的官方
+# .dec 示例），再用真实 AAA .pln 全文当"零诊断"回归。
+add_executable(test_chromadiag test_chromadiag.cpp
+    ../src/language/Chroma3380Diagnostics.cpp)
+
+target_compile_definitions(test_chromadiag PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_chromadiag PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME chromadiag COMMAND test_chromadiag)
+
 add_executable(test_shortcut test_shortcut.cpp
     ../src/shortcut/ShortcutTable.cpp
     ../src/core/Util.cpp)

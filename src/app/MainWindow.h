@@ -175,7 +175,7 @@ private:
     bool OpenSpecialFile(const std::wstring& f);   // .xfm/theme-json 分派
     void OpenUserFile(const std::wstring& path);   // 面板双击/最近文件/拖放统一入口
     void RunPluginAdmin();
-    void RunPreferences();     // 设置 > 首选项…（docs/settings-plan.md 阶段 1）
+    void RunPreferences();     // 设置 > 首选项…（设置系统设计笔记 阶段 1）
     void RunStyleConfigurator();  // 设置 > 语言样式配置器…（阶段 2b）
     void RunShortcutMapper();     // 设置 > 管理快捷键…（阶段 3）
     void RunThemeExport();        // 设置 > 导出主题 JSON…（阶段 4）

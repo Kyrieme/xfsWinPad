@@ -1171,7 +1171,7 @@ bool OcClient::DetectPoisonedZenAuth() {
         body.find("sk-or-", 0) == std::string::npos)
         return false;
     Logger::Warn("OcClient: auth.json has 'opencode' entry with OpenRouter-"
-                 "style key - zen free models will 401 (see HANDOFF.md §0a)");
+                 "style key - zen free models will 401");
     return true;
 }
 

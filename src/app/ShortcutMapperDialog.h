@@ -1,5 +1,5 @@
 #pragma once
-// xfsWinPad - 管理快捷键（Shortcut Mapper，docs/settings-plan.md 阶段 3）。
+// xfsWinPad - 管理快捷键（Shortcut Mapper，设置系统设计笔记 阶段 3）。
 //
 // 三页列表：主菜单命令 / 内部命令（标签切换等）/ 插件命令，Name+Shortcut
 // 双列 + 实时过滤；选中行可 修改…（捕获式录入：勾选修饰键 + 按键即捕获）、

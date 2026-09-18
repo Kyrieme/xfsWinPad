@@ -24,6 +24,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Fast, dependency-free guards that run before the slow MSVC build.
+      # The public repo may only contain code plus three .md files; private
+      # notes/samples stay local and are excluded via .gitignore.
+      - name: Public surface guard
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/check-public-surface.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The sensitive word list is deliberately NOT stored in this repo, so the
+      # scan materialises it from a repository secret for this step only.
+      # Without the secret it skips itself (never fails the build).
+      - name: Sensitive word scan
+        shell: pwsh
+        env:
+          SENSITIVE_WORDS_B64: ${{ secrets.SENSITIVE_WORDS_B64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:SENSITIVE_WORDS_B64)) {
+            Write-Host 'SENSITIVE_WORDS_B64 not configured - skipping content scan'
+            exit 0
+          }
+          $wl = Join-Path $env:RUNNER_TEMP 'sensitive-words.txt'
+          [IO.File]::WriteAllBytes($wl, [Convert]::FromBase64String($env:SENSITIVE_WORDS_B64))
+          python scripts/check-sensitive-words.py --words $wl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build (cmake)
         shell: pwsh
         run: |

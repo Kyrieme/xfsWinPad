@@ -1,5 +1,5 @@
 #pragma once
-// xfsWinPad - ShortcutTable: 快捷键单一数据源（docs/settings-plan.md 阶段 0）。
+// xfsWinPad - ShortcutTable: 快捷键单一数据源（设置系统设计笔记 阶段 0）。
 //
 // 设计要点：
 //   * 默认表 = C++ 编译期常量（对齐历史 BuildAccelerators 硬编码数组）。

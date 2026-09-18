@@ -1,6 +1,7 @@
 // test_chromasig.cpp — 批次 73：Chroma 3380 签名提示的位置解析单测。
 //                     批次 77：追加语句名补全的候选生成（顺序/范围/位置判定）。
 //                     批次 78：追加"接受语句名后要不要补 `(`"的书写形态判定。
+//                     批次 79：签名抽取取页窗口/标题前瞻修好后，翻面 RELAY_ON 等绊线。
 //
 // 【为什么这段逻辑值得单独钉测试】
 //   它最容易出的是**静默错**：少算一个逗号，下拉框就会把 A 参数的档位表挂到 B
@@ -451,14 +452,32 @@ static void RunWantsParen() {
     CHECK(!WantsParenAfterName("SET_DEC_FILE", 12));
     CHECK(!WantsParenAfterName("RELEASE", 7));
 
-    // ---- 绊线（批次 79 修数据后这几行必须翻面）-------------------------------
-    // RELAY_ON / RELAY_OFF 是调用形态（`RELAY_ON(pin_name, relay_resource,
-    // wait_time) ;`），但手册把它们 4.12 节的 Format 块分页推到了下一页，
-    // 抽取时签名整块丢了，于是这里只能返回 false。实测这一条影响的不是小事：
-    // 真实 .pln 里 RELAY_ON 出现 31 次、RELAY_OFF 22 次，是第 2/4 高频语句。
-    // 批次 79 修 span_end 取页窗口后，下面两行改成 CHECK(...) 并把 249 改成 251。
-    CHECK(!WantsParenAfterName("RELAY_ON", 8));
-    CHECK(!WantsParenAfterName("RELAY_OFF", 9));
+    // ---- 批次 79 取回的三条：手册把它们 4.12/4.8 的 Format 块分页推到了下一页，
+    //      老取页窗口 min(下一页-1, pg+14) 收成单页，签名整块丢。修好后必须补 `(`。
+    //      实测分量不轻：真实 .pln 里 RELAY_ON 出现 31 次、RELAY_OFF 22 次，
+    //      是第 2/4 高频语句。MEAS_CURRENT 的签名最长（5 组可选）。
+    CHECK(WantsParenAfterName("RELAY_ON", 8));
+    CHECK(WantsParenAfterName("RELAY_OFF", 9));
+    CHECK(WantsParenAfterName("MEAS_CURRENT", 12));
+
+    // ---- 同一批修好的**反向**绊线：这四条现在必须**没有**签名 -----------------
+    //      它们的"签名"原先是从手册的 Example 段抓来的，带着示例里的具体值
+    //      （`"192.168.1.2"`、`RF1`、`100mS`），拿去当签名提示就是教用户写错。
+    //      同一批还修了 `format_block` 的结束前瞻：它原来只认 3 级编号
+    //      （`\d+\.\d+\.\d+`），而手册的标题常是 4 级（`5.6.8.2 Example`），
+    //      拦不住就一路吞进示例段。这个缺陷原先被"单页窗口"掩盖着——
+    //      一放窗口就现形，所以这两处必须一起修。
+    CHECK(!WantsParenAfterName("RF_Initialize", 13));
+    CHECK(!WantsParenAfterName("RF_System_Temperature", 20));
+    CHECK(!WantsParenAfterName("RF_Load_Modulation_File", 23));
+    CHECK(!WantsParenAfterName("CRAFT_c_meter_GPIB_Meas_volt", 29));
+
+    // ---- SOCKET_INC：真 Format 是块形态 `SOCKET_INC [( FRZ_ON | FRZ_OFF
+    //      [ , FRZ_SOCKET_DISABLE ] )] {`（批次 79 给块形态补上「可选方括号组」后
+    //      才抓得到）。真实写法 `SOCKET_INC(FRZ_ON) {`，所以要补 `(`；
+    //      原先落库的是示例里的 `SOCKET_INC(FRZ_ON) ;`，虽然也补 `(`，
+    //      但把 FRZ_ON 说成了唯一写法，还把分号当成了语句结尾。
+    CHECK(WantsParenAfterName("SOCKET_INC", 10));
 
     // ---- 全表属性扫描：判据 == 「签名里有 `(`」，一条不多一条不少 -----------
     int yes = 0, brace = 0, empty = 0;
@@ -474,9 +493,12 @@ static void RunWantsParen() {
     // 三个数字一起钉：309 条恰好被三类分完（调用形态 / 块头 / 空签名），
     // 没有任何一条落在三类之外——这正是"只看签名"能把话说死的前提。
     CHECK(kStatementCount == 309);
+    // ⚠️ 批次 79 之后 yes / empty **恰好没变**（进 3 条含 `(` 的、出 3 条含 `(` 的，
+    //    SOCKET_INC 新旧签名都含 `(`）——计数抓不到这次改动，真正把关的是上面
+    //    那串**点名**断言。别因为"数字没动"就以为这张表没被改过。
     CHECK(yes == 249);
     CHECK(empty == 51);
-    CHECK(brace == 11);
+    CHECK(brace == 12);                 // 批次 79：+SOCKET_INC（块形态 `... {`）
     CHECK(yes + empty == 300);          // 余下 9 条的签名非空且无 `(`（都是块头写法）
 }
 

@@ -1,5 +1,5 @@
 #pragma once
-// xfsWinPad - 语言样式配置器（Style Configurator，docs/settings-plan.md 阶段 2b）。
+// xfsWinPad - 语言样式配置器（Style Configurator，设置系统设计笔记 阶段 2b）。
 //
 // N++ 三区布局：顶部主题下拉（实时切换）+ 左侧语言列表 + 右侧样式（角色）列表，
 // 下方该样式的 前景/背景 颜色（启用开关+取色按钮）与 Bold/Italic/Underline。

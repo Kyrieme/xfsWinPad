@@ -57,7 +57,7 @@ uint64_t TextKey(const StrSlice& s, const char* base) {
 }
 
 // STDF v4 时间：Unix epoch 秒（1970-01-01 起）→ 本地时间字符串
-//（真样本验证：SAMPLE-A 0x6A6A2D9D=2026-07-30、SAMPLE-B 0x64359548=2023-04-10 均吻合）
+//（真样本验证：样本A 0x6A6A2D9D=2026-07-30、样本B 0x64359548=2023-04-10 均吻合）
 std::string FmtStdfTime(uint32_t secs) {
     if (secs == 0) return {};
     time_t t = static_cast<time_t>(secs);
@@ -297,8 +297,8 @@ void StdfFile::FinishTestColumns() {
             row.results.resize(tests_.size(),
                               std::numeric_limits<float>::quiet_NaN());
     }
-    // lo > hi：limit 写反（真机见过：SAMPLE-B RVCC 全部记录一致写 lo=1e7/hi=0）→ 交换显示。
-    // 不做"pass 结果须落在限内"的裁剪：判定可能走 bin 而非 limit（SAMPLE-C 实证 pass die
+    // lo > hi：limit 写反（真机见过：样本B 的 RVCC 全部记录一致写 lo=1e7/hi=0）→ 交换显示。
+    // 不做"pass 结果须落在限内"的裁剪：判定可能走 bin 而非 limit（样本C 实证 pass die
     // 值 -1.50 仍 pass），测试机自己的 CSV 也是按程序里写的原值显示。
     for (auto& t : tests_) {
         if (t.hasLo && t.hasHi && t.lo > t.hi) {
@@ -317,9 +317,9 @@ void StdfFile::ParseMir(Reader& r, size_t body) {
     p += 1;              // STAT_NUM
     p += 6;              // 6×C1：MODE_COD RTST_COD PROT_COD BURN_STAT CMOD_COD + 1
                          //（第 6 个字节规范名存疑，但两台真实测试机（NI STS/其他）
-                         // 一致写 6 字节：SAMPLE-A 样本 6-C1 下 job 字段 len=34 恰为
-                         // "SAMPLE-A_..._loop10" 全长、SAMPLE-B 样本 LOT_ID="SAMPLE-B-"
-                         // 恰 8 字节与文件名吻合；5-C1 解释会产生嵌 \0 的脏切片）
+                         // 一致写 6 字节：样本A 在 6-C1 下 job 字段 len=34 恰等于其真实
+                         // job 名全长、样本B 的 LOT_ID 恰 8 字节与文件名吻合；
+                         // 5-C1 解释会产生嵌 \0 的脏切片）
 
     auto takeCn = [&](StrSlice* s) {
         uint8_t n = 0;
@@ -489,7 +489,7 @@ void StdfFile::ParsePtr(Reader& r, size_t body, size_t bodyEnd) {
         r.R4(p, &lo);
         r.R4(p + 4, &hi);
         p += 8;
-        // 真实测试机（SAMPLE-A/SAMPLE-B 样本）把 OPT_FLAG bit3/4 乱置成"无 low/high"却仍写入
+        // 真实测试机（样本A/样本B）把 OPT_FLAG bit3/4 乱置成"无 low/high"却仍写入
         // 有效数值——按用户要求以数据为准：只要 8 字节物理存在且是"可-looking"浮点
         // 就采用（NaN/Inf/|v|>1e30 或 ==0 的哨兵除外）。ResultValid 才有意义：结果
         // 无效时 limit 字节可能是未初始化垃圾。
@@ -511,7 +511,7 @@ void StdfFile::ParsePtr(Reader& r, size_t body, size_t bodyEnd) {
     }
 
     // ---- 聚合：key = (id<<1)，id = TEST_NUM；TEST_NUM=0 时用 TEST_TXT 哈希
-    //（SAMPLE-B 真样本：测试机全程写 TEST_NUM=0，文本是唯一区分）
+    //（样本B 真样本：测试机全程写 TEST_NUM=0，文本是唯一区分）
     const uint64_t idNum = testNum ? (static_cast<uint64_t>(testNum) << 1)
                                    : (TextKey(testTxt, r.Base()) << 1);
     const uint64_t key = idNum;

@@ -383,7 +383,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
     git_.SetMainWnd(hwnd_);
 
     // plugin host event sources (v3 hooks) + NPP 通知合成（4c）
-    // BufferID 沿用 4b 的 Document* 空间（见 docs/plugin-system.md §5.6）。
+    // BufferID 沿用 4b 的 Document* 空间（见 插件系统设计笔记 §5.6）。
     workspace_->onDocumentOpened = [this](const Document* d) {
         if (d && d->HasPath()) git_.RequestForPath(d->path.wstring());
         if (plugins_ && d) {
@@ -4783,7 +4783,7 @@ LRESULT CALLBACK MainWindow::WndProcThunk(HWND h, UINT msg, WPARAM wp, LPARAM lp
 LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     // NPP 插件消息垫片（4b）：NPPM_*/RUNCOMMAND 子集先于默认处理拦截转发。
     // ForwardNppMessage 内部做区间检查，区间外置 handled=false 继续默认流程，
-    // 绝不吞未知消息（docs/plugin-system.md §5.6）。
+    // 绝不吞未知消息（插件系统设计笔记 §5.6）。
     if (plugins_) {
         bool handled = false;
         LRESULT res = plugins_->ForwardNppMessage(msg, wp, lp, handled);

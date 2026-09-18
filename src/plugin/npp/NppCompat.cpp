@@ -1,5 +1,5 @@
 // NppCompat.cpp — NPP 形态插件的装载与调用包装。设计依据见
-// docs/plugin-system.md §4/§5（路线图、ABI 事实卡、决策记录）。
+// 插件系统设计笔记 §4/§5（路线图、ABI 事实卡、决策记录）。
 //
 // 职责划分（故意收窄）：本文件只负责「解析六导出、校验 Unicode、保存名字、
 // 薄包装调用」；who-when 调用 setInfo/getFuncsArray、cmdID 回填、命令表生成

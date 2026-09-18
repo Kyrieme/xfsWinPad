@@ -1,5 +1,5 @@
 #pragma once
-// xfsWinPad - Styler: 语法配色数据层（docs/settings-plan.md 阶段 2a）。
+// xfsWinPad - Styler: 语法配色数据层（设置系统设计笔记 阶段 2a）。
 //
 // 分层解析（高→低优先级）：
 //   1. Global override（用户显式开启的 fg/bg/字体全局覆盖）

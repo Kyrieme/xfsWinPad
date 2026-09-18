@@ -17,7 +17,7 @@ namespace {
 //   护栏：tests/test_styler.cpp 钉死了首/中/尾各几个字段的确切值 +
 //   ThemeFieldCount()，任何错位都会当场失败。
 //   更强的修法是改成 C++20 指定初始化（.editorBg = ...），插入字段不再引起
-//   位移——见 TODO.md「Next」里的候选。
+//   位移——已列入后续改进候选。
 
 // Light theme (VS-light inspired, original values)
 constexpr ThemeDef g_light = {
