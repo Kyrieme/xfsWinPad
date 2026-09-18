@@ -32,7 +32,17 @@ enum StyleRoleEnum {
     SR_Comment = 0, SR_String, SR_Number, SR_Keyword, SR_Keyword2,
     SR_Operator, SR_Class, SR_Preproc, SR_Special,
     SR_Pass, SR_Fail,   // 批次 72：ATE 语义色（PASS/FAIL 判定）
-    SR_Dim,             // 批次 72：弱化色（.pat 的 mask 向量 X/N/Z/U）
+    SR_Dim,             // 批次 72：弱化色（.pat 的 mask 向量 X）
+    // 批次 73：向量语义四色。为什么必须单独立角色而不是复用 number/special：
+    // Chroma .pat 的向量字符按**驱动与比较的组合**分成五类，其中「驱动+比较」
+    // (R/S/T/U) 是最容易误读的一类 —— 它既不是纯驱动也不是纯比较。复用通用
+    // 角色的结果是五类只能映射到三四个色，恰好把最该区分的两类画成同色，
+    // 而"这一拍到底驱动没有"正是 pattern 调试要回答的问题。
+    // 这四个色在 .pat 里是主角（文件 90% 的内容是向量数据），配得上独立角色。
+    SR_Vector,          // 驱动 0/1
+    SR_Expect,          // 只比较 H/L/Z
+    SR_Both,            // 驱动 + 比较 R/S/T/U
+    SR_Ctrl,            // 特殊控制 V/K/2
     SR_COUNT
 };
 // 角色名 ↔ 枚举（stylers.json 的键）

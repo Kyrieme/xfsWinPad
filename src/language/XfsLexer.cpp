@@ -6,6 +6,8 @@
 #include "AtePatternLexer.h"
 #include "StilLexer.h"
 #include "AteLogLexer.h"
+#include "ChromaDecLexer.h"    // 批次 73
+#include "ChromaPlanLexer.h"   // 批次 73
 
 #include <Scintilla.h>   // SC_FOLDLEVEL* 常量
 
@@ -238,7 +240,9 @@ bool XfsIsOwnLexer(const char* name) {
     if (!name) return false;
     return std::strcmp(name, kLexAtePattern) == 0 ||
            std::strcmp(name, kLexStil) == 0 ||
-           std::strcmp(name, kLexAteLog) == 0;
+           std::strcmp(name, kLexAteLog) == 0 ||
+           std::strcmp(name, kLexChromaDec) == 0 ||
+           std::strcmp(name, kLexChromaPlan) == 0;
 }
 
 Scintilla::ILexer5* XfsCreateLexer(const char* name) {
@@ -246,6 +250,8 @@ Scintilla::ILexer5* XfsCreateLexer(const char* name) {
     if (std::strcmp(name, kLexAtePattern) == 0) return new AtePatternLexer();
     if (std::strcmp(name, kLexStil) == 0)       return new StilLexer();
     if (std::strcmp(name, kLexAteLog) == 0)     return new AteLogLexer();
+    if (std::strcmp(name, kLexChromaDec) == 0)  return new ChromaDecLexer();
+    if (std::strcmp(name, kLexChromaPlan) == 0) return new ChromaPlanLexer();
     return nullptr;
 }
 

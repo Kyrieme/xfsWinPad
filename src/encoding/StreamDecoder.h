@@ -92,7 +92,9 @@ public:
 private:
     static std::string Utf16LeToUtf8(const char* bytes, size_t units) {
         if (!units) return {};
-        int wlen = units;
+        // WideCharToMultiByte 的 cchWideChar 是 int，所以这里必然要收窄；显式转型
+        // 把"有意收窄"写出来，否则 MSVC 会报 C4267（size_t -> int）。
+        const int wlen = (int)units;
         int need = ::WideCharToMultiByte(CP_UTF8, 0,
             reinterpret_cast<const wchar_t*>(bytes), wlen, nullptr, 0, nullptr, nullptr);
         std::string out((size_t)(std::max)(need, 0), '\0');

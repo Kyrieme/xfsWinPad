@@ -133,6 +133,7 @@
   "sb.docinfo": "Length: {0}   Lines: {1}",
   "sb.binary": "Binary",
   "sb.readonly": "Read Only",
+  "sb.model.note": "Not a CRAFT compilation result",
 
   "input.ok": "OK",
   "input.cancel": "Cancel",

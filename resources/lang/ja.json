@@ -133,6 +133,7 @@
   "sb.docinfo": "長さ: {0}   行数: {1}",
   "sb.binary": "バイナリ",
   "sb.readonly": "読み取り専用",
+  "sb.model.note": "CRAFT コンパイル結果ではありません",
 
   "input.ok": "OK",
   "input.cancel": "キャンセル",

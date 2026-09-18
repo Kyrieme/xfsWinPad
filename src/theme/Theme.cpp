@@ -43,6 +43,10 @@ constexpr ThemeDef g_light = {
     /*pass            */ RGB(0x0B, 0x6E, 0x3B),
     /*fail            */ RGB(0xC3, 0x1B, 0x1B),
     /*dim             */ RGB(0x8C, 0x8C, 0x8C),
+    /*vector          */ RGB(0x6A, 0x1B, 0x9A),   // 紫：驱动 0/1
+    /*expect          */ RGB(0xE6, 0x51, 0x00),   // 橙：只比较 H/L/Z
+    /*both            */ RGB(0xC2, 0x18, 0x5B),   // 洋红：驱动+比较 R/S/T/U
+    /*ctrl            */ RGB(0x00, 0x6C, 0x7A),   // 深青：V/K/2
     /*tabActiveBg     */ RGB(0xFF, 0xFF, 0xFF),
     /*tabInactiveBg   */ RGB(0xDE, 0xE1, 0xE6),
     /*tabActiveText   */ RGB(0x1B, 0x1B, 0x1B),
@@ -76,6 +80,10 @@ constexpr ThemeDef g_dark = {
     /*pass            */ RGB(0x6A, 0xC9, 0x7A),
     /*fail            */ RGB(0xF2, 0x7A, 0x7A),
     /*dim             */ RGB(0x80, 0x80, 0x80),
+    /*vector          */ RGB(0xC7, 0x92, 0xEA),   // 浅紫：驱动 0/1
+    /*expect          */ RGB(0xFF, 0xB7, 0x4D),   // 浅橙：只比较 H/L/Z
+    /*both            */ RGB(0xF0, 0x62, 0x92),   // 粉：驱动+比较 R/S/T/U
+    /*ctrl            */ RGB(0x4D, 0xD0, 0xE1),   // 亮青：V/K/2
     /*tabActiveBg     */ RGB(0x1E, 0x1E, 0x1E),
     /*tabInactiveBg   */ RGB(0x2D, 0x2D, 0x30),
     /*tabActiveText   */ RGB(0xD4, 0xD4, 0xD4),
@@ -135,6 +143,10 @@ const ThemeField kThemeFields[] = {
     {L"pass",            &ThemeDef::pass},
     {L"fail",            &ThemeDef::fail},
     {L"dim",             &ThemeDef::dim},
+    {L"vector",          &ThemeDef::vector},
+    {L"expect",          &ThemeDef::expect},
+    {L"both",            &ThemeDef::both},
+    {L"ctrl",            &ThemeDef::ctrl},
     {L"tabActiveBg",     &ThemeDef::tabActiveBg},
     {L"tabInactiveBg",   &ThemeDef::tabInactiveBg},
     {L"tabActiveText",   &ThemeDef::tabActiveText},

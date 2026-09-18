@@ -164,6 +164,34 @@ public:
     void HandleAutocompleteChar(unsigned int ch);
     void ShowAutocomplete(const std::string& prefix);
     void CollectDocWords(std::set<std::string>& out);
+
+    // --- 批次 73：Chroma 3380 签名提示 ---------------------------------------
+    // 光标落在已收录语句的实参里时，给两种提示，但**二选一**：
+    //   下拉框   = 该参数的手册候选值（有候选值就走这条，Tab 接受）
+    //   签名气泡 = 手册原文签名 + 高亮当前参数（没候选值才走这条）
+    // 二选一不是取舍，是 Scintilla 的硬约束：AutoCompleteStart() 第一行
+    // ct.CallTipCancel()、CallTipShow() 第一行 ac.Cancel()，两个方向互相取消，
+    // 所以"气泡 + 下拉同框"根本立不住（批次 73 端到端实测抓到的）。
+    // Tab 接受下拉项同样由 Scintilla 原生处理（ScintillaBase::KeyCommand 的
+    // Message::Tab 分支），这里不拦 VK_TAB；自己拦会和前缀过滤/autohide 打架。
+    // 返回 true 表示本次按键已由签名提示接管（下拉框已出）。
+    bool HandleSignatureHint();
+    // 批次 77：Chroma 族的**语句名补全**（位置敏感，只在语句起始位置触发）。
+    // 候选集来自词法器自己的词表（= 会被高亮的那一批），顺序按手册章节升序，
+    // 列表项右侧带章节号（`FORCE_V_MLDPS?4.9.4`，只显示不插入）。返回 true 表示
+    // 下拉框已出、本次按键不再走普通词汇补全。
+    bool HandleStatementCompletion(sptr_t wordStart, const std::string& prefix);
+    // 批次 78：Scintilla 在**补全项已写进文档之后**发的 SCN_AUTOCCOMPLETED。
+    // 语句名补全的"续动作"（补 `(` + 出签名提示）只能挂在这里 ——
+    // SCN_AUTOCSELECTION(2022) 是在 NotifyParent 里、AutoCompleteInsert 之前发的，
+    // 在那个回调里插字符会被随后的替换吃掉（批次 77 就卡在这一步）。
+    // 这里只做便宜的判断并把续动作**投递**出去（见下），不直接改文档。
+    void HandleAutocCompleted(const SCNotification* sn);
+    // 续动作本身。由 EditorKeyProc 在消息循环里调用（不嵌在 Scintilla 的
+    // 通知派发里跑），见 Editor.h 顶部的说明。
+    void CompleteAfterStatementAccepted();
+    // 投递消息号：只发给自己的 hwnd_，与 WM_APP+9/+12/+71..78 不冲突。
+    static constexpr UINT kMsgStatementAccepted = WM_APP + 42;
     // 批次 31：本档词汇抽取（纯文本口径；Workspace 收集其它标签词汇用）
     void ExtractWords(std::set<std::string>& out) const;
     // 批次 31：跨标签词汇源（Workspace 注入；每次弹出候选时回调重建）
@@ -184,6 +212,7 @@ private:
     void DefineMarkMarker();
     bool CollectLineRange(std::string* out, sptr_t* outStart, sptr_t* outEnd);
     void ReplaceLineRange(sptr_t start, sptr_t end, const std::string& repl);
+    void CancelSignatureHint();     // 批次 73：收起签名气泡（下拉框归 Scintilla 管）
 
     HWND hwnd_ = nullptr;
     bool wordWrap_ = false;
@@ -205,6 +234,15 @@ private:
     void* keyHookCtx_ = nullptr;
     KeyHookFn keyHookFn_ = nullptr;
     std::function<void(int, int)> onContextMenu_;   // 屏幕坐标右键回调
+    // 批次 73 签名气泡的当前指向：只有指向变了才重设气泡，否则逐字符重设会闪。
+    bool sigTipShown_ = false;
+    const void* sigTipStmt_ = nullptr;   // 指向 kStatements 里的一条
+    int sigTipParam_ = -1;
+    sptr_t sigTipPos_ = -1;
+    // 批次 78：语句名下拉的"锚"——我们在哪个位置弹的（= 被替换区间的起点）。
+    // 只有它 >= 0 时 SCN_AUTOCCOMPLETED 才认作"这是我们自己弹的语句下拉"，
+    // 并校验完成通知里的 position 与它相同才续动作。用完即清（一次性）。
+    sptr_t stmtCompleteStart_ = -1;
 };
 
 } // namespace xfs

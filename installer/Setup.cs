@@ -30,16 +30,21 @@ class Setup {
     static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
     // ---- 文件类型关联候选集（批次 30）--------------------------------------
-    // 顺序即对话框展示顺序；preChecked 默认集保持克制（纯文本四类）。
+    // 顺序即对话框展示顺序；preChecked 默认集保持克制（纯文本三类）。
+    //
+    // 【csv 为何不在候选里】(2026-09-18 用户要求)
+    //   CSV 交给表格软件（Excel / WPS）打开才是用户的实际习惯；被编辑器接管
+    //   会破坏双击打开表格的默认体验。所以连候选都不给，免得手滑勾上。
+    //   升级时的旧关联由 UndoLegacyCsvAssociation() 撤销。
     static readonly string[] AssocCandidates = {
-        "txt", "log", "md", "csv", "tsv", "ini", "cfg", "conf",
+        "txt", "log", "md", "tsv", "ini", "cfg", "conf",
         "json", "xml", "yaml", "yml", "toml",
         "cpp", "c", "cc", "h", "hpp", "hxx",
         "py", "js", "ts", "java", "cs", "go", "rs", "rb", "lua",
         "sql", "sh", "bat", "cmd", "ps1", "cmake", "mk",
         "diff", "patch", "asm", "php", "html", "htm", "css",
     };
-    static readonly string[] AssocDefault = { "txt", "log", "md", "csv" };
+    static readonly string[] AssocDefault = { "txt", "log", "md" };
     const string DocProgId = "xfsWinPad.Document";
 
     static int Main(string[] args) {
@@ -81,7 +86,6 @@ class Setup {
             string langDir = Path.Combine(dest, "lang");
             Directory.CreateDirectory(langDir);
 
-            string[] langFiles = { "en.json", "zh-CN.json" };
             string[] binFiles = {
                 "xfsWinPad.exe", "xfsWinPadPluginHost.exe",
                 "Scintilla.dll", "Lexilla.dll",
@@ -91,8 +95,28 @@ class Setup {
             };
 
             Assembly asm = Assembly.GetExecutingAssembly();
-            foreach (string f in langFiles) Extract(asm, f, Path.Combine(langDir, f));
-            foreach (string f in binFiles)  Extract(asm, f, Path.Combine(dest, f));
+
+            // ---- UI language packs -------------------------------------------------
+            // I18n::Load resolves lang\<code>.json next to the exe, so every
+            // embedded *.json must land in lang\ (the exe itself does not embed
+            // the dictionaries -- verified: the new "sb.model.note" key appears
+            // 0 times in xfsWinPad.exe, 5 times in setup.exe).
+            //
+            // This list is DERIVED from the manifest on purpose. It used to be a
+            // hardcoded `{ "en.json", "zh-CN.json" }` written on 2026-09-02; batch
+            // 40 (7a157aa) then added zh-TW / ja / ko, and nothing updated the
+            // array -- so from batch 40 onward every setup.exe shipped 2 of the 5
+            // languages while dist\xfsWinPad-portable.zip shipped all 5. Symptom
+            // was silent: switching to 繁體中文/日本語/한국어 in an installed copy
+            // just failed (I18n::Load returns false) with no error dialog.
+            // Enumerating the resources keeps the installer in lockstep with
+            // make-payload.ps1, which already picks up lang\*.json by wildcard.
+            foreach (string res in asm.GetManifestResourceNames()) {
+                if (!res.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                Extract(asm, res, Path.Combine(langDir, res));
+            }
+            foreach (string f in binFiles) Extract(asm, f, Path.Combine(dest, f));
 
             string exe = Path.Combine(dest, "xfsWinPad.exe");
             string icon = "\"" + exe + "\",0";
@@ -147,6 +171,11 @@ class Setup {
             }
             if (assoc.Count > 0)
                 AssociateExtensions(exe, assoc);
+
+            // 撤销旧版本写入的 .csv 关联（本版本起 csv 不再关联，见候选集注释）。
+            // 必须放在关联写入之后：即便用户这次又勾了 csv（旧对话框里勾过），
+            // 也以「不关联 csv」为准。
+            UndoLegacyCsvAssociation();
 
             // ---- 卸载项 (HKCU) ----
             // 版本从 exe 的 FileVersion 读（CMake project(VERSION) 单一数据源）
@@ -283,6 +312,51 @@ class Setup {
         }
     }
 
+    // ---- 撤销旧版本的 .csv 关联（2026-09-18）-------------------------------
+    // 【为什么必须有这一步，光从候选集删掉不够】
+    //   关联是写进注册表的**持久状态**，不是安装包里的清单。老版本（批次 30 起）
+    //   把 .csv 放进默认集，凡是装过的人，`.csv` 的默认值 / OpenWithProgids /
+    //   UserChoice 三处都指向 xfsWinPad。新版即使不再关联，也**不会自动消失**——
+    //   用户升级后照样双击 CSV 打开编辑器，然后回来说"没修好"。
+    //
+    // 【只撤我们写的那一份，别动别人的】
+    //   用户可能早已把 CSV 交回 Excel / WPS。三处逐项验证归属：
+    //     Classes\.csv 默认值 == xfsWinPad.Document → 清空这个值（**不删整键**，
+    //                                                  别人写在键里的数据保留）
+    //     Classes\.csv\OpenWithProgids\DocProgId    → 删这个值
+    //     FileExts\.csv\UserChoice\ProgId == 我们    → 整树删（把选择权还给系统：
+    //                                                  落到 Excel/WPS 或弹一次
+    //                                                  「选择打开方式」）
+    //   指向别的程序时一个字都不动——删了会强行打掉用户的既有选择。
+    //   整树删除走 SFTA 的 RegDeleteKey 低权限路径（Explorer 给 UserChoice 加的
+    //   Deny-SetValue ACE 挡不住 DELETE 权限，见 SFTA 注释）。
+    static void UndoLegacyCsvAssociation() {
+        const string ext = ".csv";
+        try {
+            using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
+                       @"Software\Classes\" + ext, true)) {
+                if (k != null) {
+                    object dv = k.GetValue("");
+                    if (dv is string && (string)dv == DocProgId)
+                        k.DeleteValue("", false);
+                    using (RegistryKey ow = k.OpenSubKey("OpenWithProgids", true))
+                        if (ow != null && ow.GetValue(DocProgId) != null)
+                            ow.DeleteValue(DocProgId, false);
+                }
+            }
+        } catch { /* 权限/竞态：留着也不影响新装行为 */ }
+        try {
+            string basePath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\" + ext;
+            bool ours = false;
+            using (RegistryKey uc = Registry.CurrentUser.OpenSubKey(basePath + @"\UserChoice"))
+                if (uc != null) {
+                    object pid = uc.GetValue("ProgId");
+                    ours = pid is string && (string)pid == DocProgId;
+                }
+            if (ours) SFTA.DeleteFileExtsTree(ext);
+        } catch { }
+    }
+
     static void Extract(Assembly asm, string resName, string outPath) {
         using (Stream s = asm.GetManifestResourceStream(resName)) {
             if (s == null) throw new Exception("缺少嵌入资源: " + resName);
@@ -397,17 +471,7 @@ static class SFTA {
         string hash = ComputeHash(progId, ext);
         string keyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\" +
                          ext + @"\UserChoice";
-        try {
-            // 整树删除 FileExts\.ext（含 UserChoice 与 OpenWithList/Progids
-            // 历史）。只删 UserChoice 不够：旧选择是打包应用（AppX，如
-            // Win11 记事本默认接管 .log）时，残留历史会让 Explorer 持续弹
-            // 「选择打开方式」（本机 .log 实锤；整树删除后重建即正常）。
-            // 顺序关键：先单删 Deny-SetValue ACE 保护的 UserChoice 子键
-            // （DELETE 权限不受影响），再删整树——否则整树递归打开该子键
-            // 请求 SetValue 被拒 → ACCESS_DENIED。
-            RegDeleteKey(HKCU, keyPath);
-            RegDeleteKey(HKCU, @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\" + ext);
-        } catch { /* 无该键 = 本来就没有 */ }
+        DeleteFileExtsTree(ext);
         try {
             // 关键：写完值后必须补上「当前用户 SetValue Deny」显式 ACE——
             // Explorer 写 UserChoice 时会加这条保护（本机 .json 实锤），shell
@@ -428,6 +492,22 @@ static class SFTA {
                 uc.SetAccessControl(sec);
             }
         } catch { /* ACL 保护：放弃 UserChoice，不阻断安装 */ }
+    }
+
+    // 整树删除 FileExts\.ext（含 UserChoice 与 OpenWithList/Progids 历史）。
+    // 只删 UserChoice 不够：旧选择是打包应用（AppX，如 Win11 记事本默认接管
+    // .log）时，残留历史会让 Explorer 持续弹「选择打开方式」（本机 .log 实锤；
+    // 整树删除后重建即正常）。
+    // 顺序关键：先单删 Deny-SetValue ACE 保护的 UserChoice 子键（DELETE 权限
+    // 不受影响），再删整树——否则整树递归打开该子键请求 SetValue 被拒 →
+    // ACCESS_DENIED。
+    // 也用于「撤销旧关联」：删完不重建，选择权就落回系统默认/其他程序。
+    public static void DeleteFileExtsTree(string ext) {
+        try {
+            RegDeleteKey(HKCU, @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\" +
+                               ext + @"\UserChoice");
+            RegDeleteKey(HKCU, @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\" + ext);
+        } catch { /* 无该键 = 本来就没有 */ }
     }
 
     // 把本 ProgID 与系统侧全部既有候选都记为「已提示过」（DWORD 0）

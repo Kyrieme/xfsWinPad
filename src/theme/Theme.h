@@ -21,6 +21,10 @@ struct ThemeDef {
     // 没比较」，必须比正文**更淡**才能一眼退到背景里，不能复用 op（op 在
     // 明暗两套主题里都等于 editorFg，复用等于没上色）。
     COLORREF pass, fail, dim;
+    // 批次 73：向量语义四色（.pat 驱动/比较的组合语义，见 Styler.h SR_Vector 注释）。
+    // 选色约束是**同一行内互相可辨**：`*0 Z R*TS15` 这种一行的向量数据里会同时
+    // 出现驱动(0)、只比较(Z)、驱动+比较(R)，三者必须一眼分开。
+    COLORREF vector, expect, both, ctrl;
     // tab strip chrome (owner-drawn)
     COLORREF tabActiveBg, tabInactiveBg, tabActiveText, tabInactiveText,
              tabAccent, tabCloseGlyph, tabEdge;

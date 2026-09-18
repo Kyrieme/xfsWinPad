@@ -180,6 +180,13 @@ const wchar_t* eAtePat[] = {L"pat", L"patset", L"ptn", nullptr};
 const wchar_t* eStil[]   = {L"stil", nullptr};
 const wchar_t* eAteLog[] = {L"log", L"atelog", L"tstlog", L"datalog", nullptr};
 
+// 批次 73：Chroma 3380 三层文件体系里剩下的两类。
+//   .dec = Device Definition（第 2 章），.pln = Plan Program（第 4~5 章）。
+//   .pat 复用上面的 eAtePat（词法器已按 Chroma 手册重写）。
+// 编译产物 .ppo 是有意**不注册**的：它是二进制目标文件，不是源文件。
+const wchar_t* eChromaDec[]  = {L"dec", nullptr};
+const wchar_t* eChromaPlan[] = {L"pln", nullptr};
+
 const LanguageInfo g_table[] = {
     LANG(eC,    "cpp",       kCppKw,   kCppTypes),
     LANG(eCpp,  "cpp",       kCppKw,   kCppTypes),
@@ -215,6 +222,9 @@ const LanguageInfo g_table[] = {
     LANG(eAtePat, kLexAtePattern, nullptr, nullptr),
     LANG(eStil,   kLexStil,       nullptr, nullptr),
     LANG(eAteLog, kLexAteLog,     nullptr, nullptr),
+    // Chroma 3380 的另两类源文件（批次 73）
+    LANG(eChromaDec,  kLexChromaDec,  nullptr, nullptr),
+    LANG(eChromaPlan, kLexChromaPlan, nullptr, nullptr),
 };
 
 } // namespace
@@ -297,6 +307,11 @@ const LanguageMenuItem kMenuCatalog[] = {
     {L"AT&E Pattern",          kLexAtePattern, {nullptr,    nullptr}},
     {L"&STIL",                 kLexStil,       {nullptr,    nullptr}},
     {L"ATE &Log",              kLexAteLog,     {nullptr,    nullptr}},
+    // ---- 批次 73：Chroma 3380 的三层文件体系的另两类 ----
+    // 新条目一律**追加在表尾**：菜单项的命令 id = Cmd::LangFirst + 下标，
+    // 插在中间会挪动既有语言的 id（存档里的「每文档语言」会串味）。
+    {L"Chroma &Device (.dec)", kLexChromaDec,  {nullptr,    nullptr}},
+    {L"Chroma &Plan (.pln)",   kLexChromaPlan, {nullptr,    nullptr}},
     // null terminator (label == nullptr marks the end of the catalog)
     {nullptr,                  nullptr,      {nullptr,      nullptr}},
 };
@@ -343,6 +358,11 @@ const char* LineCommentToken(const char* lexerName) {
         { kLexAtePattern, "# " },
         { kLexStil,       "//" },
         { kLexAteLog,     "//" },
+        // 批次 73：Chroma 的 .dec / .pln。两者都是 C 风格，用 //。
+        // （.dec 的示例注释是 /* */ 块注释，但「切换行注释」命令只能写行注释，
+        //   而 Chroma 的 .dec/.pln 两种注释都接受，所以 // 是可用的选择。）
+        { kLexChromaDec,  "//" },
+        { kLexChromaPlan, "//" },
     };
     for (const auto& e : kTokens)
         if (strcmp(e.lexer, lexerName) == 0) return e.token;

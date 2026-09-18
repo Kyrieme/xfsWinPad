@@ -133,6 +133,7 @@
   "sb.docinfo": "길이: {0}   행 수: {1}",
   "sb.binary": "이진 파일",
   "sb.readonly": "읽기 전용",
+  "sb.model.note": "CRAFT 컴파일 결과가 아님",
 
   "input.ok": "확인",
   "input.cancel": "취소",

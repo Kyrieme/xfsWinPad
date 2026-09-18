@@ -1,31 +1,50 @@
-// xfsWinPad - ATE Pattern (.pat) 词法器实现（批次 72）
+// xfsWinPad - Chroma .pat 向量文件词法器（批次 73 按真实手册重写）
 //
-// 【本词法器存在的理由】
-//   .pat 是 ATE 向量/时序文件的通用后缀（Chroma、Teradyne、Advantest 各家方言
-//   不同但记号种类一致）。通用词法器对它无能为力：向量数据全是 0/1/X 单字符，
-//   会被当成普通文本；而 0/1 又是计数器的取值，纯数字高亮会把两者混为一谈。
-//   所以这里做的是**结构性**判据而不是词表堆砌：先判断整行是不是向量行，再在
-//   向量行内把单字符分成驱动 / 比较 / 掩码三类 —— pattern 调试最常问的就是
-//   「这一拍是驱动还是比较」，这是本词法器要直接回答的问题。
+// 【本批为什么重写】
+//   批次 72 的版本是按「ATE 各家方言的共同记号」**自拟**的一套语法：关键词表是
+//   LBL/END/CALL/SEQ/DCAP/MAIN 这些，与真实 Chroma .pat 几乎不重合；向量只分
+//   三类（drive/expect/mask），而手册 3.4.1 的语义是「驱动与比较的组合」。
+//   批次 73 对照 EN_3380_Language_Manual 第 3 章（p37-68）重写，数据源
+//   src/language/Chroma3380Db.cpp（由脚本从手册生成）。
 //
-// 【判据：什么算向量行】
-//   整行打分，≥2 分即视为向量行：单个向量记号（0 1 X H L T Z N U D，含小写）+1；
-//   ≥4 位的纯 01 位块（0101 这种挤在一起的写法）+2。行首记号若是已知 opcode 则
-//   一律否定。于是 `RPT 10`、`LBL_MAIN:`、`TSET ts1` 不会被误判，而
-//   `0 1 X`、`( P1 P2 ) 1 0 H`、`0101` 会被正确识别。
-//   位块给 2 分是因为它不可能来自计数：`10`/`20` 这类两位数在配置行里是普通
-//   数值，所以位块要求 ≥4 位，才算压倒性的向量证据。
+// 【真实 .pat 的文件形态（手册 3.1.2 / 3.2.3 原文示例）】
+//     SET_DEC_FILE "./ls299_16sites_pin.dec"        <- 末尾**没有**分号
+//     HEADER   CLR,%SEL0,SEL1,%G1,G2,%CLK,          <- 列表可跨行，以 ; 收尾
+//               QD,QE,QF,QG,QH;
+//     SPM_PATTERN  (os_pat) {
+//     os_st::    *0 00 00 0 00 00000000 *TS15;      <- :: 标签 + 向量 + 时序集
+//                    *0 00 00 0 00 00000000 * RPT 100;
+//                    *Z 00 00 0 00 00000000 *;
+//          os_sp::   *0 00 00 0 00 00000000 *;
+//     }
+//   要点：
+//     1) 向量数据在 `* ... *` 之间，**组内是逐字符的独立符号**：`Z0` 是两个
+//        符号（Z 然后 0），不是「Z0 这个记号」。所以必须逐字符分类，
+//        不能把 `Z0` 当一个 token 查表。
+//     2) `%pin` 的 `%` 表示「输出时插一个空格」，pin 名本身是标识符。
+//     3) 收尾的 `*` 之后可以是时序集引用（TS15）或微指令（RPT 100）。
 //
-// 【行局部性】
-//   本语言的注释（# //）与字符串都不跨行，因此整个词法器是**行局部**的：每个
-//   窗口都从行首开始（基类分块保证），每行独立完成样式，不携带跨行状态。这让
-//   分块拼接绝对安全，也不存在「状态丢失导致样式整体错位」的风险。
+// 【向量五分类的依据（手册 3.4.1）】
+//     0 1        驱动             -> VEC_DRIVE
+//     H L Z      只比较           -> VEC_CMP
+//     R S T U    驱动 + 比较      -> VEC_DRV_CMP
+//     X          不驱动不比较     -> VEC_MASK
+//     V K 2      特殊控制记号     -> VEC_CTRL
+//   批次 72 把 U 当掩码是错的（U = 驱动低 + 比较低）；N 与 D 在真实语言里
+//   **不存在**，本版已删除。
+//
+// 【行局部性 / 跨行状态】
+//   本语言的注释（# //）不跨行，`/* */` 跨行。跨行块注释的状态通过 LexSpan 的
+//   返回值在窗口间传递（基类契约），所以增量重排（Scintilla 从中间行开始 Lex）
+//   也能正确续上。
+//   HEADER 的 pin 列表可以跨行，但**不用跨行状态**去记它：续行的判据是
+//   「整行只由标识符 / % / 逗号 / 分号构成」——这是行内自证的，不依赖前文，
+//   因此在任意位置开始 Lex 都不会错。该判据由 IsHeaderListLine() 实现。
 //
 // 【折叠】按缩进（tab 展开为 4 列）：下一行缩进更深的行 = 块头。
-//   ATE 向量文件普遍以缩进表达 pattern 内的层级（label 下的向量块），该判据
-//   不需要理解各家方言的语法即可成立，比死记 ENDxxx 关键字更稳。
 
 #include "AtePatternLexer.h"
+#include "Chroma3380Db.h"
 #include "XfsLexerStyles.h"
 
 #include <vector>
@@ -34,7 +53,20 @@ namespace xfs {
 
 namespace {
 
-// ---- 记号字符判据 -------------------------------------------------------------
+// 跨窗口 / 增量重排的状态标记。基类把 LexSpan 的返回值传给下一个窗口，Scintilla
+// 增量 Lex 时也会把该位置原有的状态当 initStyle 传进来，所以用它承载「块注释
+// 未闭合」这一个跨行状态即可。取值刻意避开样式号区间（样式号 ≥64）。
+enum { kStateDefault = 0, kStateBlockComment = 1 };
+
+// 常见电源/时钟/JTAG 信号名。这是「初始线索」而非白名单——.pat 里 pin 名的
+// 权威来源是 .dec 的 PIN_LIST，词法器读不到跨文件信息，所以只认两类：
+//   · 上下文（HEADER 列表 / `%pin` 前缀）—— 主力判据
+//   · 这张常见信号名表 —— 兜底，让裸写 `VDD` 也有颜色
+const char* const kCommonPins =
+    "VDD VSS VCC VEE VCCIO VDDIO VDDQ AVDD AVSS DVDD DVSS CLK CLOCK XCLK TCLK "
+    "RESET RST RESETN EN ENABLE TRIG STROBE TEST TCK TMS TDI TDO TRST OSC";
+
+// ---- 字符判据 -----------------------------------------------------------------
 
 inline bool IsSpace(char c) { return c == ' ' || c == '\t'; }
 inline bool IsDigit(char c) { return c >= '0' && c <= '9'; }
@@ -42,156 +74,143 @@ inline bool IsHexDigit(char c) {
     return IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 inline bool IsIdentStart(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '.';
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
-inline bool IsIdentChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || IsDigit(c) ||
-           c == '_' || c == '.' || c == '$';
-}
+inline bool IsIdentChar(char c) { return IsIdentStart(c) || IsDigit(c); }
 
-// 是否 ≥4 位的纯 01 串（向量位块）。长度门槛很关键：`10`/`20` 这种两位数
-// 在配置行里是普通数值，只有 ≥4 位的 01 串才是压倒性的向量证据。
-bool IsBitBlock(const char* s, std::size_t n) {
-    if (n < 4) return false;
-    for (std::size_t i = 0; i < n; ++i)
-        if (s[i] != '0' && s[i] != '1') return false;
-    return true;
-}
-
-// 向量字符三分类。D 归掩码而不是驱动：在 pattern 文件里 D 更常表示
-// "don't care / disable" 而非 STIL 那种 drive 语义，放掩码色更不容易误导。
-enum VecClass { VecNone, VecDrive, VecExpect, VecMask };
-
-VecClass VectorClass(char c) {
-    switch (c) {
-        case '0': case '1': return VecDrive;
-        case 'H': case 'L': case 'T': case 'h': case 'l': case 't': return VecExpect;
-        case 'X': case 'N': case 'Z': case 'U': case 'D':
-        case 'x': case 'n': case 'z': case 'u': case 'd': return VecMask;
-        default: return VecNone;
-    }
-}
-
+// 向量符号五分类。返回 -1 表示不是向量符号。
 int VectorStyle(char c) {
-    switch (VectorClass(c)) {
-        case VecDrive:  return SCE_ATEP_VECTOR;
-        case VecExpect: return SCE_ATEP_EXPECT;
-        case VecMask:   return SCE_ATEP_MASK;
-        default:        return SCE_ATEP_DEFAULT;
+    switch (c) {
+        case '0': case '1': return SCE_ATEP_VEC_DRIVE;
+        case 'H': case 'L': case 'Z': return SCE_ATEP_VEC_CMP;
+        case 'R': case 'S': case 'T': case 'U': return SCE_ATEP_VEC_DRV_CMP;
+        case 'X': return SCE_ATEP_VEC_MASK;
+        case 'V': case 'K': case '2': return SCE_ATEP_VEC_CTRL;
+        default: return -1;
     }
 }
 
-// ---- 内置记号表 ---------------------------------------------------------------
-// 放词法器里而不是 LanguageMap 里：LanguageInfo 只有 keywords[2] 两个槽位，
-// 而本语言需要「opcode / pin / timing / 跳转」四张表。
-
-const char* const kOpcodes =
-    "RPT RPTE RPTD JMP JMPC JMPZ JMPNZ GOTO CALL CALLS RET RETC LBL LABEL SEQ "
-    "SUBR SUB SUBR END ENDE ENDS ENDC HALT STOP PAUSE WAIT TRIG TRIGGER SYNC DUP "
-    "LOOP WHILE IF THEN ELSE ENDIF SET CLR CLEAR INC DEC IDX IDXI REG REGS DCAP "
-    "DCAS DCSS CAPTURE MASK NOOP NOP RESET INIT PATTERN PATTERNSET MAIN BURST "
-    "BURSTS EXEC START STOPP BEG BEGIN FINISH DONE ENABLE DISABLE PINS PINLIST "
-    "GROUPS GROUP POR TAP SCAN SHIFT NIBBLE BYTE WORD DWORD DATA ADDR";
-
-const char* const kJumpOps =
-    "JMP JMPC JMPZ JMPNZ GOTO CALL CALLS LOOP WHILE";
-
-const char* const kTimingRefs =
-    "TSET TSETS TIM TIMSET EDGE EDGES PERIOD PERIODS RATE CLOCK CLOCKS RESOLUTION "
-    "LEVELS LEVEL VIL VIH VOL VOH VTERM VTH VTIL VTIH DRIVE COMPARE STROBE "
-    "STROBES WMODE TS";
-
-// 常见电源/时钟/JTAG 信号名。这是「初始线索」而非白名单——文件里其他 pin 名
-// 靠结构判据（pin 列表行 / 括号 pin 组）识别，不依赖这张表。
-const char* const kCommonPins =
-    "VDD VSS VCC VEE VCCIO VDDIO VDDQ AVDD AVSS DVDD DVSS CLK CLOCK XCLK TCLK "
-    "RESET RST RESETN EN ENABLE TRIG STROBE TEST TCK TMS TDI TDO TRST OSC";
-
-// ---- 整行预判 ----------------------------------------------------------------
-
-// 行首首个非空白记号是否是 opcode（用于否定向量行 / pin 列表行）。
-bool FirstTokenIsOpcode(const char* s, std::size_t n, const KeywordSet& ops) {
-    std::size_t i = 0;
-    while (i < n && IsSpace(s[i])) ++i;
-    const std::size_t t0 = i;
-    while (i < n && !IsSpace(s[i])) ++i;
-    return i > t0 && ops.Has(s + t0, i - t0);
+// 十六进制引导字符：`dA0`（驱动数据 A0）、`c8`（比较 8）。
+// 只在**小写**时成立 —— 符号格式用大写、十六进制引导用小写，手册两者不混，
+// 靠大小写就能无歧义地区分（否则 `Z0` 到底是两个符号还是一个十六进制组就说不清）。
+bool IsHexLead(char c) {
+    return c == 'c' || c == 'd' || c == 'z' || c == 'x' || c == 't' || c == 's';
 }
 
-bool IsVectorLine(const char* s, std::size_t n, const KeywordSet& ops) {
-    if (FirstTokenIsOpcode(s, n, ops)) return false;
-    int score = 0;
-    std::size_t i = 0;
-    while (i < n) {
-        if (IsSpace(s[i])) { ++i; continue; }
-        // 注释截断：注释里出现的 0/1/X 不算向量记号
-        if (s[i] == '#' || (s[i] == '/' && i + 1 < n && s[i + 1] == '/')) break;
-        std::size_t j = i;
-        while (j < n && !IsSpace(s[j])) ++j;
-        if (j - i == 1 && VectorClass(s[i]) != VecNone) score += 1;
-        else if (IsBitBlock(s + i, j - i)) score += 2;   // `0101` 是很强的向量证据
-        i = j;
-    }
-    return score >= 2;
-}
+// ---- 行级预判 -----------------------------------------------------------------
 
-// 「pin 列表行」：所有记号都是标识符（容许 ( ) , ; 分隔），≥2 个，且首记号不是
-// opcode。用于识别 Chroma 那种 ( P1 P2 P3 ) 的 pin 顺序头，跨行书写也能覆盖。
-// 首记号是 **timing 引用**时同样否定：`TSET ts_main` 的形状与 pin 目录行完全
-// 一样（两个标识符、首记号不是 opcode），但它的第二列是 timing set 名而不是
-// pin；不排除的话 ts_main 会被染成 pin 色。
-bool IsPinListLine(const char* s, std::size_t n, const KeywordSet& ops,
-                   const KeywordSet& timing) {
+// HEADER 的 pin 列表（含跨行续行）。判据是**行内自证**的：整行只由标识符、
+// `%`、逗号、分号、空白构成，且至少两个标识符。
+// 为什么不用「上一行以逗号结尾」这种跨行判据：Scintilla 会从被编辑的行开始
+// 增量 Lex，跨行状态会丢，续行就会掉色。行内自证的判据在任意位置开始都正确。
+bool IsHeaderListLine(const char* s, std::size_t n, const KeywordSet& module) {
+    (void)module;
     int idents = 0;
-    bool first = true;
     std::size_t i = 0;
     while (i < n) {
         const char c = s[i];
         if (IsSpace(c)) { ++i; continue; }
-        if (c == '#' || (c == '/' && i + 1 < n && s[i + 1] == '/')) break;
-        if (c == '(' || c == ')' || c == ',' || c == ';') { ++i; continue; }
+        if (c == '%' || c == ',' || c == ';') { ++i; continue; }
         if (!IsIdentStart(c)) return false;
         std::size_t j = i;
         while (j < n && IsIdentChar(s[j])) ++j;
-        if (first && (ops.Has(s + i, j - i) || timing.Has(s + i, j - i))) return false;
-        ++idents;
-        first = false;
+        idents++;
         i = j;
     }
-    return idents >= 2;
+    return idents >= 1;
+}
+
+// 首记号是否（大小写不敏感地）等于 HEADER。
+bool FirstTokenIsHeader(const char* s, std::size_t n) {
+    std::size_t i = 0;
+    while (i < n && IsSpace(s[i])) ++i;
+    std::size_t j = i;
+    while (j < n && IsIdentChar(s[j])) ++j;
+    if (j - i != 6) return false;
+    static const char kHdr[] = "HEADER";
+    for (int k = 0; k < 6; ++k) {
+        char c = s[i + k];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        if (c != kHdr[k]) return false;
+    }
+    return true;
 }
 
 // ---- 单行词法 -----------------------------------------------------------------
 
 struct LineCtx {
-    bool vectorLine = false;
-    bool pinListLine = false;
+    bool headerList = false;   // 本行是 HEADER 的 pin 列表（首行或续行）
+    bool headerStmt = false;   // 本行以 HEADER 开头
 };
 
 void LexLine(const char* s, std::size_t n, const LineCtx& ctx,
-             const KeywordSet& ops, const KeywordSet& pins,
-             const KeywordSet& timing, const KeywordSet& jumps,
-             XfsStyleSink& sink) {
+             const KeywordSet& module, const KeywordSet& micro,
+             const KeywordSet& pins, XfsStyleSink& sink, bool& inComment) {
     std::size_t i = 0;
+    bool afterPercent = false;   // 刚读过 `%`，下一个标识符是 pin
     bool firstToken = true;
-    bool inPinGroup = false;    // 本行 '(' 之后的记号
-    bool expectLabel = false;   // 刚读过跳转 opcode，下一个标识符是跳转目标
 
     while (i < n) {
         const char c = s[i];
 
-        // 行注释：# 或 //，直到底
+        if (inComment) {
+            const std::size_t start = i;
+            while (i < n) {
+                if (s[i] == '*' && i + 1 < n && s[i + 1] == '/') {
+                    i += 2;
+                    inComment = false;
+                    break;
+                }
+                ++i;
+            }
+            sink.Push(SCE_ATEP_COMMENT, i - start);
+            continue;
+        }
+
+        // 行注释：# 或 //
         if (c == '#' || (c == '/' && i + 1 < n && s[i + 1] == '/')) {
             sink.Push(SCE_ATEP_COMMENT, n - i);
             return;
         }
+        // 块注释开头
+        if (c == '/' && i + 1 < n && s[i + 1] == '*') {
+            // 开符必须 Push（批次 75）：消耗 2 字节不出样式 = 样式游标落后文本，
+            // 整个文档颜色左移 2 字节。与 ChromaPlanLexer 同病同修，StilLexer 是正确参照。
+            sink.Push(SCE_ATEP_COMMENT, 2);
+            i += 2;
+            inComment = true;
+            continue;
+        }
 
-        // 空白
         if (IsSpace(c)) {
             std::size_t j = i;
             while (j < n && IsSpace(s[j])) ++j;
             sink.Push(SCE_ATEP_DEFAULT, j - i);
             i = j;
+            continue;
+        }
+
+        // 向量界定符：* ... *
+        if (c == '*') {
+            sink.PushOne(SCE_ATEP_SEP);
+            ++i;
+            firstToken = false;
+            // 两个 * 之间全是向量数据，逐字符分类
+            while (i < n && s[i] != '*') {
+                if (IsSpace(s[i])) { sink.PushOne(SCE_ATEP_DEFAULT); ++i; continue; }
+                // 十六进制组：小写引导 + 十六进制数字
+                if (IsHexLead(s[i]) && i + 1 < n && IsHexDigit(s[i + 1])) {
+                    std::size_t j = i + 1;
+                    while (j < n && IsHexDigit(s[j])) ++j;
+                    sink.Push(SCE_ATEP_HEX, j - i);
+                    i = j;
+                    continue;
+                }
+                const int st = VectorStyle(s[i]);
+                sink.PushOne(st < 0 ? SCE_ATEP_DEFAULT : st);
+                ++i;
+            }
+            if (i < n) { sink.PushOne(SCE_ATEP_SEP); ++i; }   // 收尾 *
             continue;
         }
 
@@ -206,89 +225,73 @@ void LexLine(const char* s, std::size_t n, const LineCtx& ctx,
             continue;
         }
 
-        // 数字 / 0x 十六进制 / 小数
-        if (IsDigit(c) || (c == '.' && i + 1 < n && IsDigit(s[i + 1]))) {
+        // `%` 前缀：本身是运算符，紧跟的标识符是 pin
+        if (c == '%') {
+            sink.PushOne(SCE_ATEP_OPERATOR);
+            ++i;
+            afterPercent = true;
+            continue;
+        }
+
+        // 数字 / 0x 十六进制
+        if (IsDigit(c)) {
             std::size_t j = i;
             if (c == '0' && i + 1 < n && (s[i + 1] == 'x' || s[i + 1] == 'X')) {
                 j += 2;
                 while (j < n && IsHexDigit(s[j])) ++j;
                 sink.Push(SCE_ATEP_HEX, j - i);
             } else {
-                if (s[j] == '.') ++j;                     // .5 形式
                 while (j < n && IsDigit(s[j])) ++j;
-                if (j < n && s[j] == '.') {
-                    ++j;
-                    while (j < n && IsDigit(s[j])) ++j;
-                }
-                bool allBits = true;
-                for (std::size_t k = i; k < j; ++k)
-                    if (s[k] != '0' && s[k] != '1') { allBits = false; break; }
-                // 向量行里的 01 串是驱动位块，不是计数器。
-                // 这里**不能**加长度门槛：数字分支在标识符分支之前，向量行里的
-                // 单个 `0`/`1` 走的就是这里，而它与同一拍的字母 `H`/`X` 是同一
-                // 维度的数据；若只给字母上色，同一列向量会一半有色一半无色。
-                // 非向量行不满足 ctx.vectorLine，`RPT 10` 这类计数照样是号码色。
-                const int st = (ctx.vectorLine && allBits)
-                                   ? SCE_ATEP_VECTOR
-                                   : SCE_ATEP_NUMBER;
-                sink.Push(st, j - i);
+                sink.Push(SCE_ATEP_NUMBER, j - i);
             }
             i = j;
             firstToken = false;
             continue;
         }
 
-        // 标识符：pin / opcode / timing / 标签 / 普通名
+        // 标识符：模块语句 / 微指令 / 时序集 / 标签 / pin
         if (IsIdentStart(c)) {
             std::size_t j = i;
             while (j < n && IsIdentChar(s[j])) ++j;
             const std::size_t idLen = j - i;
             int style = SCE_ATEP_DEFAULT;
 
-            // 判定顺序即优先级。这里有两条「上下文压过词表」的规则，都是被真实
-            // 文件逼出来的（见 temp/ate_samples/sample.pat 的 dump）：
-            //   1) 标签定义 NAME: 先于任何词表 —— MAIN:/RESET: 是定义而非指令；
-            //   2) pin 上下文（括号 pin 组 / pin 目录行）先于 timing/opcode 表 ——
-            //      RESET/TRIG/STROBE 同时躺在 opcode、timing、pin 三张表里，只有
-            //      上下文能消歧：`( VDD RESET )` 是 pin 列表，裸 `RESET` 是复位
-            //      指令。原先纯按表顺序判定，pin 组里的 RESET 会变成 opcode 色，
-            //      同一个括号里的 VDD 却是 pin 色 —— 一眼就能看出不对。
-            if (idLen == 1 && ctx.vectorLine) {
-                style = VectorStyle(s[i]);
-            } else if (c == '.') {
-                style = SCE_ATEP_DIRECTIVE;               // .INCLUDE / .SETUP
-            } else if (expectLabel) {
-                style = SCE_ATEP_LABEL;                   // 跳转目标
+            if (afterPercent) {
+                style = SCE_ATEP_PIN;
+            } else if (ctx.headerList) {
+                // HEADER 的列全是 pin 名（含 `%` 前缀的）
+                style = (module.Has(s + i, idLen) && firstToken)
+                            ? SCE_ATEP_MODULE
+                            : SCE_ATEP_PIN;
             } else if (j < n && s[j] == ':') {
-                style = SCE_ATEP_LABEL;                   // NAME: 标签定义
-            } else if (inPinGroup || ctx.pinListLine) {
-                style = SCE_ATEP_PIN;                     // 上下文：pin 组 / pin 目录
-            } else if (timing.Has(s + i, idLen)) {
-                style = SCE_ATEP_TIMING;
-            } else if (ops.Has(s + i, idLen)) {
-                style = SCE_ATEP_OPCODE;
+                style = SCE_ATEP_LABEL;            // os_st:: / os_sp:
+            } else if (module.Has(s + i, idLen)) {
+                style = SCE_ATEP_MODULE;           // SET_DEC_FILE / HEADER / SPM_PATTERN
+            } else if (micro.Has(s + i, idLen)) {
+                style = SCE_ATEP_MICRO;            // RPT / JNZ0 / IMATCH
+            } else if (idLen == 3 && s[i] == 'T' && s[i + 1] == 'S' &&
+                       IsDigit(s[i + 2])) {
+                style = SCE_ATEP_TIMESET;          // TS1 ~ TS9
+            } else if (idLen == 4 && s[i] == 'T' && s[i + 1] == 'S' &&
+                       IsDigit(s[i + 2]) && IsDigit(s[i + 3])) {
+                style = SCE_ATEP_TIMESET;          // TS10 ~ TS15
             } else if (pins.Has(s + i, idLen)) {
                 style = SCE_ATEP_PIN;
             }
 
             sink.Push(style, idLen);
-
-            // 跳转 opcode 之后紧跟的标识符是目标标签
-            expectLabel = (style == SCE_ATEP_OPCODE) && jumps.Has(s + i, idLen);
-
-            i = j;
+            afterPercent = false;
             firstToken = false;
+            i = j;
             continue;
         }
 
-        // 其余一律运算符；顺带维护括号 pin 组
-        if (c == '(') inPinGroup = true;
-        else if (c == ')') inPinGroup = false;
+        // 其余一律运算符
         sink.PushOne(SCE_ATEP_OPERATOR);
         ++i;
         firstToken = false;
+        afterPercent = false;
     }
-    (void)firstToken;
 }
 
 // ---- 缩进折叠 ----------------------------------------------------------------
@@ -311,30 +314,41 @@ bool IsBlank(const char* s, std::size_t n) {
 
 } // namespace
 
-AtePatternLexer::AtePatternLexer() : XfsLexerBase(kLexAtePattern, 7201) {
-    MutableWords(0).Set(kOpcodes);
-    MutableWords(1).Set(kCommonPins);
-    MutableWords(2).Set(kTimingRefs);
-    MutableWords(3).Set(kJumpOps);
+AtePatternLexer::AtePatternLexer() : XfsLexerBase(kLexAtePattern, kLexIdAtePattern) {
+    // 词表来自 Chroma3380Db（由手册生成），不再内联在词法器里 ——
+    // 手写词表是批次 72 「自拟语言」问题的根因，改成同源生成才不会再次漂移。
+    MutableWords(0).Set(chroma3380::kPatModuleWords);
+    MutableWords(1).Set(chroma3380::kPatMicroWords);
+    MutableWords(2).Set(kCommonPins);
 }
 
 int AtePatternLexer::LexSpan(const char* text, std::size_t len, Sci_Position /*basePos*/,
-                             int /*initStyle*/, XfsStyleSink& sink) {
-    const KeywordSet& ops = Words(0);
-    const KeywordSet& pins = Words(1);
-    const KeywordSet& timing = Words(2);
-    const KeywordSet& jumps = Words(3);
+                             int initStyle, XfsStyleSink& sink) {
+    const KeywordSet& module = Words(0);
+    const KeywordSet& micro = Words(1);
+    const KeywordSet& pins = Words(2);
+
+    bool inComment = (initStyle == kStateBlockComment);
 
     ForEachLine(text, len, [&](const char* line, std::size_t lineLen, std::size_t eol) {
         LineCtx ctx;
-        ctx.vectorLine = IsVectorLine(line, lineLen, ops);
-        ctx.pinListLine = !ctx.vectorLine && IsPinListLine(line, lineLen, ops, timing);
-        LexLine(line, lineLen, ctx, ops, pins, timing, jumps, sink);
-        if (eol) sink.Push(SCE_ATEP_DEFAULT, eol);
+        if (lineLen) {
+            ctx.headerStmt = FirstTokenIsHeader(line, lineLen);
+            ctx.headerList = ctx.headerStmt ||
+                             IsHeaderListLine(line, lineLen, module);
+            // 纯空白行不算 header 列表（否则空行会被判成一列 pin）
+            if (ctx.headerList && !ctx.headerStmt) {
+                bool any = false;
+                for (std::size_t k = 0; k < lineLen; ++k)
+                    if (!IsSpace(line[k])) { any = true; break; }
+                if (!any) ctx.headerList = false;
+            }
+        }
+        LexLine(line, lineLen, ctx, module, micro, pins, sink, inComment);
+        if (eol) sink.Push(inComment ? SCE_ATEP_COMMENT : SCE_ATEP_DEFAULT, eol);
     });
 
-    // 行局部语言：窗口之间不携带状态
-    return SCE_ATEP_DEFAULT;
+    return inComment ? kStateBlockComment : kStateDefault;
 }
 
 void AtePatternLexer::FoldSpan(Scintilla::IDocument* doc, Sci_Position first,
@@ -367,9 +381,6 @@ void AtePatternLexer::FoldSpan(Scintilla::IDocument* doc, Sci_Position first,
         } else {
             const int ind = IndentWidth(text.data(), text.size());
             // 弹出**更**深的缩进（严格 >）：同缩进的行属于同一层，不能互相弹掉。
-            // 原来写成 >= 时，「连续两行同为块内容」的第二行会退化成父层，于是
-            // 「下一行更深 → 本行是块头」永远不成立，pattern 块根本折不起来。
-            // 另外只在缩进真正变深时才压栈，避免同值重复入栈把层级越撑越高。
             while (!indent.empty() && indent.back() > ind) indent.pop_back();
             if (indent.empty() || indent.back() < ind) indent.push_back(ind);
             lvl = (int)indent.size() - 1;
@@ -393,7 +404,7 @@ void AtePatternLexer::FoldSpan(Scintilla::IDocument* doc, Sci_Position first,
         }
     }
 
-    // 末行没有下一行可比较，不自成块头
+    // 末行没有下一行可比，不自成块头
     if (havePrev && prevLineNo >= first)
         SetFoldLine(doc, prevLineNo, prevLevel, prevLevel, prevBlank, false);
 }

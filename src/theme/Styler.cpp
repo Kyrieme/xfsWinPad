@@ -18,6 +18,8 @@ const char* const kRoleNames[SR_COUNT] = {
     "comment", "string", "number", "keyword", "keyword2",
     "operator", "class", "preproc", "special",
     "pass", "fail", "dim",
+    // 批次 73：向量语义四色
+    "vector", "expect", "both", "ctrl",
 };
 
 // 词法器名是 ASCII；wstring 没有 char* 构造，逐字符加宽即可
@@ -111,6 +113,10 @@ COLORREF StylerStore::ResolveFg(const char* lexer, int role, const ThemeDef& the
         case SR_Pass:     return theme.pass;
         case SR_Fail:     return theme.fail;
         case SR_Dim:      return theme.dim;
+        case SR_Vector:   return theme.vector;
+        case SR_Expect:   return theme.expect;
+        case SR_Both:     return theme.both;
+        case SR_Ctrl:     return theme.ctrl;
     }
     return theme.editorFg;
 }
@@ -388,6 +394,8 @@ const char* const kLexerFamilies[] = {
     "yaml", "sql", "bash", "powershell", "batch",
     // 批次 72：ATE 族（自研 ILexer5，样式号从 64 起编）
     "ate_pattern", "stil", "ate_log",
+    // 批次 73：Chroma 3380 的 .dec / .pln
+    "chroma_dec", "chroma_plan",
 };
 // 从表长推导计数：原来在两处各写了一次字面量 14，加一族就得记得改两处，
 // 漏一处就是「对话框少一项」或「越界返回空串」的静默 bug。

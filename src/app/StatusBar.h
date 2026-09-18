@@ -22,12 +22,17 @@ public:
     void SetEncoding(const std::wstring& enc);
     void SetLanguage(const std::wstring& lang);
     void SetReadOnly(bool ro);
+    // 批次 73：[6] 模型来源标注。Chroma 3380 族的语法高亮/签名提示/未来的诊断
+    // 都建在我们从语言手册抽取的数据模型上，**不是 CRAFT 编译器的输出**
+    // （Chroma 未公开错误码表）。非 Chroma 文件传空串即可。
+    void SetModelNote(const std::wstring& note);
     void SetPart(int index, const std::wstring& text);
 
 private:
 
     HWND hwnd_ = nullptr;
-    int parts_[6] = {0};
+    // 段序号：[0]位置 [1]文档 [2]二进制/只读 [3]EOL [4]编码 [5]语言 [6]模型来源
+    int parts_[7] = {0};
 };
 
 } // namespace xfs

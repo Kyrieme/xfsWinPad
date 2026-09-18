@@ -133,6 +133,7 @@
   "sb.docinfo": "長度：{0}   行數：{1}",
   "sb.binary": "二進位",
   "sb.readonly": "唯讀",
+  "sb.model.note": "非 CRAFT 編譯結果",
 
   "input.ok": "確定",
   "input.cancel": "取消",

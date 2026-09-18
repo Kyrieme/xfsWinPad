@@ -19,6 +19,7 @@ third_party/scintilla/cocoa/res/
 --- private workspace files (never publish) ---
 TODO.md
 HANDOFF.md
+HANDOFF-batch73.md
 LESSONS.md
 PROJECT.md
 .git-acl.txt
@@ -26,6 +27,7 @@ Codex-*.bat
 docs/autocomplete-wip.md
 docs/manual-test-checklist.md
 docs/settings-plan.md
+docs/chroma3380-language-pack.md
 /xfsWinPad*.txt
 .workbuddy/
 --- end private ---

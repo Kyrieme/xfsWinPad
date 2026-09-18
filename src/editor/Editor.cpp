@@ -2,6 +2,8 @@
 #include "../core/Log.h"
 #include "../core/Util.h"
 #include "../language/LanguageMap.h"
+#include "../language/ChromaSignature.h"  // 批次 73：Chroma 3380 签名提示（纯解析器）
+#include "../language/Chroma3380Complete.h" // 批次 77：语句名补全的候选生成（纯函数）
 #include "../language/XfsLexer.h"        // 批次 72：自研 ATE 词法器工厂
 #include "../language/XfsLexerStyles.h"  // 批次 72：ATE 族样式号（SCE_ATEP_* 等）
 #include "../settings/Settings.h"
@@ -82,6 +84,14 @@ LRESULT CALLBACK Editor::EditorKeyProc(HWND h, UINT msg, WPARAM wp, LPARAM lp,
                                        UINT_PTR idSub, DWORD_PTR ref) {
     auto* self = (Editor*)ref;
     if (!self) return DefSubclassProc(h, msg, wp, lp);
+
+    // 批次 78：语句名补全的续动作（补 `(` + 出签名提示）。它是从
+    // HandleAutocCompleted 投递过来的，跑到这里时 Scintilla 的通知派发栈已经
+    // 退干净了 —— 这里是普通的消息循环上下文，插文本、弹气泡、开下拉都安全。
+    if (msg == kMsgStatementAccepted) {
+        self->CompleteAfterStatementAccepted();
+        return 0;
+    }
 
     // macro recording hook (before any handling so all input is captured)
     if (self->keyHookFn_) {
@@ -384,7 +394,10 @@ namespace {
 enum Role { RComment = SR_Comment, RString = SR_String, RNumber = SR_Number,
             RKeyword = SR_Keyword, RKeyword2 = SR_Keyword2, ROperator = SR_Operator,
             RClass = SR_Class, RPreproc = SR_Preproc, RSpecial = SR_Special,
-            RPass = SR_Pass, RFail = SR_Fail, RDim = SR_Dim };
+            RPass = SR_Pass, RFail = SR_Fail, RDim = SR_Dim,
+            // 批次 73：向量语义四色
+            RVector = SR_Vector, RExpect = SR_Expect, RBoth = SR_Both,
+            RCtrl = SR_Ctrl };
 
 struct StyleRole { int style; Role role; };
 
@@ -490,31 +503,53 @@ const StyleRole kBatStyles[] = {
     {SCE_BAT_OPERATOR, ROperator},
 };
 
-// ---- 批次 72：ATE 族（自研 ILexer5，样式号在 XfsLexerStyles.h）----------------
+// ---- 批次 72/73：ATE 族（自研 ILexer5，样式号在 XfsLexerStyles.h）------------
 //
 // 配色原则：族的 *_DEFAULT 样式（普通标识符）刻意**不列入**下表，让它们沿用
 // STYLECLEARALL 之后的默认前景色。ATE 文件里 pin 名/普通标识符是绝对多数派，
 // 把多数派染上颜色等于没高亮 —— 颜色必须留给少数有信息量的记号。
 //
-// 向量三态的角色分配是本批的核心取舍：
-//   drive(0/1) → number   ：数值感
-//   expect(H/L/T) → special：比较侧必须和数值一眼分开（pattern 调试最常问
-//                            「这一拍是驱动还是比较」）
-//   mask(X/N/Z) → dim      ：不关心位＝既没驱动也没比较，要比正文更淡才退得
-//                            下去（见下表里的长注释：曾经映射到 operator，
-//                            而 op 在明暗两套主题里都等于 editorFg，等于没上色）
+// 批次 73 的向量五分类是本批核心：手册 3.4.1 的语义是「驱动与比较的组合」，
+// 而「驱动+比较」(R/S/T/U) 是最容易误读的一类 —— 它两种动作都做，既不能算
+// 驱动也不能算比较。批次 72 把它和掩码混在一起是错的。现在五类各占一个色：
+//   drive(0/1)   -> vector  紫   数值感，但比通用 number 更抢眼（是文件主体）
+//   cmp(H/L/Z)   -> expect  橙   比较侧，与驱动一眼分开
+//   both(R/S/T/U)-> both    洋红 两类动作同时发生
+//   mask(X)      -> dim     灰   「没驱动也没比较」，必须退到背景
+//   ctrl(V/K/2)  -> ctrl    青   capture 触发与 VHH，调试时要能一眼找到
 const StyleRole kAtePatternStyles[] = {
-    {SCE_ATEP_COMMENT, RComment},   {SCE_ATEP_OPCODE, RKeyword},
-    {SCE_ATEP_TIMING, RKeyword2},   {SCE_ATEP_LABEL, RPreproc},
-    {SCE_ATEP_DIRECTIVE, RPreproc}, {SCE_ATEP_PIN, RClass},
-    {SCE_ATEP_VECTOR, RNumber},     {SCE_ATEP_EXPECT, RSpecial},
-    // mask 必须有**自己的**颜色：X/N/Z/U 语义是「没驱动也没比较」，需要比正文
-    // 更淡才能退到背景。原先映射到 ROperator 看着「有颜色」，实际 op 在明暗两套
-    // 主题里都等于 editorFg，等于把 mask 和普通标识符画成一样，与
-    // SCE_ATEP_MASK 的注释所声明的设计意图直接冲突。
-    {SCE_ATEP_MASK, RDim},          {SCE_ATEP_HEX, RNumber},
-    {SCE_ATEP_NUMBER, RNumber},     {SCE_ATEP_STRING, RString},
-    {SCE_ATEP_OPERATOR, ROperator},
+    {SCE_ATEP_COMMENT, RComment},    {SCE_ATEP_MODULE, RKeyword},
+    {SCE_ATEP_MICRO, RKeyword2},     {SCE_ATEP_LABEL, RPreproc},
+    // SEP 用 class 色：`*` 是向量边界，形状上要能看见，但语义上不该抢眼。
+    // class 在明暗两套主题里都是低饱和的冷色，正好。
+    {SCE_ATEP_SEP, RClass},          {SCE_ATEP_TIMESET, RPreproc},
+    {SCE_ATEP_PIN, RClass},          {SCE_ATEP_VEC_DRIVE, RVector},
+    {SCE_ATEP_VEC_CMP, RExpect},     {SCE_ATEP_VEC_DRV_CMP, RBoth},
+    {SCE_ATEP_VEC_MASK, RDim},       {SCE_ATEP_VEC_CTRL, RCtrl},
+    {SCE_ATEP_HEX, RNumber},         {SCE_ATEP_NUMBER, RNumber},
+    {SCE_ATEP_STRING, RString},      {SCE_ATEP_OPERATOR, ROperator},
+};
+
+// .dec：只给结构列上色（块名 / pin_type / 模式值 / 通道号 / 定义位 pin 名）。
+// 详见 ChromaDecLexer.cpp 的「着色策略」段：.dec 里 pin 名是多数派，不染。
+const StyleRole kChromaDecStyles[] = {
+    {SCE_DEC_COMMENT, RComment},     {SCE_DEC_BLOCK, RKeyword},
+    {SCE_DEC_PINTYPE, RClass},       {SCE_DEC_MODEVAL, RKeyword2},
+    {SCE_DEC_CHANNEL, RNumber},      {SCE_DEC_PIN, RPreproc},
+    {SCE_DEC_OPERATOR, ROperator},   {SCE_DEC_STRING, RString},
+};
+
+// .pln：按「这一行在测试流程里扮演什么角色」分色。
+// 测试语句(RKeyword)与 CRAFT 宏(RKeyword2)必须分开：前者是硬件动作，后者是
+// 内建变量（写成 `TEST_LOT_ID()` 是错的），混色会让这类错误看不出来。
+const StyleRole kChromaPlanStyles[] = {
+    {SCE_PLN_COMMENT, RComment},     {SCE_PLN_BLOCK, RKeyword},
+    {SCE_PLN_STMT, RKeyword2},       {SCE_PLN_MACRO, RPreproc},
+    {SCE_PLN_CLIB, RSpecial},        {SCE_PLN_PINTYPE, RClass},
+    {SCE_PLN_FLOW, RFail},           {SCE_PLN_LABEL, RPreproc},
+    {SCE_PLN_CKEYWORD, RKeyword},    {SCE_PLN_CTYPE, RClass},
+    {SCE_PLN_STRING, RString},       {SCE_PLN_NUMBER, RNumber},
+    {SCE_PLN_OPERATOR, ROperator},
 };
 
 const StyleRole kStilStyles[] = {
@@ -552,6 +587,8 @@ const FamilyMap kFamilies[] = {
     {"ate_pattern", kAtePatternStyles, ARRAYSIZE(kAtePatternStyles)},
     {"stil",        kStilStyles,       ARRAYSIZE(kStilStyles)},
     {"ate_log",     kAteLogStyles,     ARRAYSIZE(kAteLogStyles)},
+    {"chroma_dec",  kChromaDecStyles,  ARRAYSIZE(kChromaDecStyles)},
+    {"chroma_plan", kChromaPlanStyles, ARRAYSIZE(kChromaPlanStyles)},
 };
 
 } // namespace
@@ -656,7 +693,7 @@ void Editor::SetLexerForFile(const std::wstring& fileName, const ThemeDef* t) {
             for (auto& c : ext) c = (wchar_t)towlower(c);
         }
         if (!ext.empty()) {
-            std::string extA(ext.begin(), ext.end());
+            std::string extA = WideToUtf8(ext);   // 别用迭代器构造：那是 wchar_t→char 收窄
             const char* userLex = GlobalStyler().UserLexerForExt(extA.c_str());
             if (userLex) {
                 const LanguageMenuItem* cat = LanguageMenuCatalog();
@@ -944,6 +981,16 @@ void Editor::ClearLineMarks() {
     Send(SCI_MARKERDELETEALL, MARK_MARKED);
 }
 
+namespace {
+
+// 前置声明：定义在下面的「Chroma 3380 签名提示」一节。两个匿名命名空间块是
+// 同一个命名空间，声明与定义对得上。放在**文件靠前**（而不是紧挨着定义）是因为
+// 用到它的地方有三处、且都在定义之前：HandleCharAdded（锚失效）、
+// HandleAutocompleteChar（语句补全分支）、HandleAutocCompleted（续动作）。
+bool IsChroma3380Lexer(const std::string& n);
+
+}  // namespace
+
 // --- auto-indent / auto-close -------------------------------------------------
 
 void Editor::SetAutoIndent(bool on) { autoIndent_ = on; }
@@ -952,7 +999,76 @@ void Editor::SetAutoCloseBrackets(bool on) { autoClose_ = on; }
 void Editor::HandleCharAdded(SCNotification* sn) {
     // Auto-close brackets/quotes is handled in EditorKeyProc (WM_CHAR path).
     // Auto-complete v1: 输入到第 3 个构词字符时弹出（关键词+文档词汇）。
+    // 批次 78：下拉已经被关掉时，语句名补全的锚就失效了（用户按了 Esc、
+    // 或者打了一个非构词字符把它挤掉）。下一次 SCN_AUTOCCOMPLETED 不该再被
+    // 当成"接受了一条语句名"——它可能来自普通词汇补全，位置也可能对不上。
+    if (!Send(SCI_AUTOCACTIVE)) stmtCompleteStart_ = -1;
     if (sn) HandleAutocompleteChar((unsigned int)sn->ch);
+}
+
+// ---- 批次 78：接受语句名之后的续动作 ----------------------------------------
+//
+// 【为什么必须绕一次消息循环，不能顺手做完】
+//   Scintilla 发通知的时序（ScintillaBase::AutoCompleteCompleted，本 fork 5.6.6）：
+//       ac.GetValue(item) → ac.Show(false) → **NotifyParent(AutoCSelection, 2022)**
+//       → ac.Cancel() → AutoCompleteInsert(...) → NotifyParent(AutoCCompleted, 2030)
+//   2022 在插入**之前**发，所以在它里面插字符会被随后的 AutoCompleteInsert 连
+//   区间一起替换掉。2030 在插入**之后**发，位置对了 —— 但此刻仍处在
+//   AutoCompleteCompleted 的栈帧里（后面还有 SetLastXChosen()），而且
+//   NotifyParent 是同步 SendMessage，从里面再 Send 回 Scintilla 会嵌进它自己的
+//   通知派发。为了不依赖"Scintilla 恰好可重入"，这里只把续动作 PostMessage 出去，
+//   等这条通知彻底返回、再回到消息循环时才动文档。
+//
+// 【这条 posted 消息不会被人抢先】
+//   Windows 的取消息顺序是「已发送消息 → 投递消息 → 输入消息」，所以这条在我们
+//   回来之前必然先被处理，用户的下一次击键不可能插到中间。
+void Editor::HandleAutocCompleted(const SCNotification* sn) {
+    // 一次性：无论后面走哪条分支，锚都用掉（避免陈旧锚在别处再触发）。
+    const sptr_t armed = stmtCompleteStart_;
+    stmtCompleteStart_ = -1;
+    if (!sn || armed < 0 || !autoComplete_ || !hwnd_) return;
+    // 只对 Chroma 三支有意义；SCN_AUTOCCOMPLETED 是**所有**补全共用的通知
+    // （普通词汇补全、批次 73 的实参候选值下拉都会发），所以先按词法器短路。
+    if (!IsChroma3380Lexer(lexerName_)) return;
+    // 完成通知里的 position = 被替换区间的起点（ac.posStart - ac.startLen）。
+    // 对语句名下拉它必然等于我们弹列表时的词首；不等就说明这次完成不是那一回。
+    if ((sptr_t)sn->position != armed) return;
+
+    const char* accepted = sn->text;
+    if (!accepted || !*accepted) return;
+    CancelSignatureHint();   // 下拉刚关掉，气泡记账一起清（两者在 Scintilla 里互斥）
+    if (!chroma3380::WantsParenAfterName(accepted, std::strlen(accepted))) return;
+    ::PostMessageW(hwnd_, kMsgStatementAccepted, 0, 0);
+}
+
+void Editor::CompleteAfterStatementAccepted() {
+    if (!hwnd_ || Send(SCI_GETREADONLY)) return;
+    const sptr_t caret = Send(SCI_GETCURRENTPOS);
+    // 后面已经跟着左括号（用户自己敲的，或从别处粘贴过来）→ 只补提示，不补字符。
+    if (caret < Send(SCI_GETLENGTH)) {
+        char next = '\0';
+        Sci_TextRangeFull tr{};
+        tr.chrg.cpMin = (Sci_Position)caret;
+        tr.chrg.cpMax = (Sci_Position)(caret + 1);
+        tr.lpstrText = &next;
+        Send(SCI_GETTEXTRANGEFULL, 0, (LPARAM)&tr);
+        if (next == '(') {
+            HandleSignatureHint();
+            return;
+        }
+    }
+    // 自动配对开着时补 `()` 并把光标放回中间 —— 与 EditorKeyProc 里手敲 `(` 的
+    // 行为保持一致（那里也是"插入配对 + 光标回退一格"）。不开配对就只补 `(`。
+    // 刻意不把 `)` 一次性补到实参末尾：我们不知道用户要写几个实参，也不知道
+    // 后面是不是还有嵌套调用，把闭括号提前写死等于替他做决定。
+    const char* ins = autoClose_ ? "()" : "(";
+    Send(SCI_ADDTEXT, (uptr_t)std::strlen(ins), (LPARAM)ins);
+    if (autoClose_) Send(SCI_GOTOPOS, caret + 1);
+    // 光标此刻落在左括号之后，正好是批次 73 签名提示的判定条件：实参位置。
+    // 所以这里不需要另写一套"刚接受完"的提示逻辑 —— 复用同一条路径，用户在
+    // 这一刻看到的东西与"自己手敲 `(`"完全一致（这才是对的行为：同一个状态，
+    // 同一种提示）。
+    HandleSignatureHint();
 }
 
 // ---- 自动补全 v1（docs/settings-plan.md 之外的编辑器缺口批次） ----------------
@@ -985,6 +1101,15 @@ const std::set<std::string>& KeywordSetFor(const std::string& lexerName) {
         }
         break;                                  // 目录里每个词法器只有一个条目
     }
+    // 批次 77：Chroma 三支的词表**不在 LanguageMap 里** —— 上面这段按目录取词对
+    // 它们只会得到空集（keywords[2] 都是 nullptr，词表在 Chroma3380Db 里、由
+    // 词法器构造函数直接注入，见 XfsLexer.h 的 kWordLists）。后果是这些文件里
+    // 「词汇补全只剩文档里出现过的词」，新开的 .pln 打 `FORC` 什么都不弹。
+    // 这里把词法器的词表并进来（语句名 / CRAFT 宏 / C 关键字 / 类型 / pin_type /
+    // C 库 / 微指令 / .dec 块名）。非 Chroma 词法器返回空 → 既有行为不变。
+    std::vector<const char*> extraWords;
+    chroma3380::CollectExtraWords(lexerName.c_str(), extraWords);
+    for (const char* w : extraWords) out.emplace(w);
     return cache.emplace(lexerName, std::move(out)).first->second;
 }
 
@@ -992,6 +1117,9 @@ const std::set<std::string>& KeywordSetFor(const std::string& lexerName) {
 
 void Editor::HandleAutocompleteChar(unsigned int ch) {
     if (!autoComplete_ || !hwnd_) return;
+    // 批次 73：Chroma 语句的实参位置优先走签名提示（候选值来自手册，比文档词汇
+    // 准得多）。没命中就往下走原来的词汇补全，功能不被吞掉。
+    if (HandleSignatureHint()) return;
     if (!IsWordCharW(ch)) {
         if (Send(SCI_AUTOCACTIVE)) Send(SCI_AUTOCCANCEL);
         return;
@@ -999,16 +1127,256 @@ void Editor::HandleAutocompleteChar(unsigned int ch) {
     const sptr_t pos = Send(SCI_GETCURRENTPOS);
     const sptr_t start = Send(SCI_WORDSTARTPOSITION, pos, 1);
     const int len = (int)(pos - start);
+    // 批次 77：语句名补全（只有 Chroma 三支、只有语句起始位置）。
+    // 放在下面 len<3 的既有门槛**之前**，是因为它自己的前缀门槛更低（2 字符）；
+    // 但它不改下面任何一行 —— 返回 false 时词汇补全那条路一字不变，所以对
+    // 另外 36 种语言是零改动（IsChroma3380Lexer 先短路）。
+    if (IsChroma3380Lexer(lexerName_) && len >= 2 && len <= 64 &&
+        len >= (int)chroma3380::kStmtCompleteMinPrefix &&
+        !Send(SCI_AUTOCACTIVE)) {
+        std::string stmtPrefix;
+        GetTextRangeUtf8((long long)start, (size_t)len, stmtPrefix);
+        if (HandleStatementCompletion(start, stmtPrefix)) return;
+    }
     if (len < 3 || len > 64) {
         if (Send(SCI_AUTOCACTIVE)) Send(SCI_AUTOCCANCEL);
         return;
     }
     if (Send(SCI_AUTOCACTIVE)) return;   // 已在补全中，Scintilla 自动继续过滤
     // 读前缀（caret 前 len 字节）
+    // 用 *FULL 版消息 + Sci_TextRangeFull：短版 Sci_TextRange 的 cpMin/cpMax 是
+    // `long`（32 位），把 sptr_t 塞进去要收窄，MSVC 会报 C4244/C4838，而且文档
+    // 超过 2GB 时位置会被截断。FULL 版用 Sci_Position（ptrdiff_t），与 sptr_t 同宽。
     std::string prefix((size_t)len, '\0');
-    Sci_TextRange tr{{(sptr_t)(pos - len), pos}, prefix.data()};
-    Send(SCI_GETTEXTRANGE, 0, (LPARAM)&tr);
+    Sci_TextRangeFull tr{};
+    tr.chrg.cpMin = (Sci_Position)(pos - len);
+    tr.chrg.cpMax = (Sci_Position)pos;
+    tr.lpstrText = prefix.data();
+    Send(SCI_GETTEXTRANGEFULL, 0, (LPARAM)&tr);
     ShowAutocomplete(prefix);
+}
+
+// ---- 批次 73：Chroma 3380 签名提示 -------------------------------------------
+//
+// 【数据从哪来】
+//   src/language/Chroma3380Db.{h,cpp} —— 从 Chroma 3380 语言手册逐节抽取并人工复核
+//   的语句/参数/候选值表。**不是 CRAFT 编译器的输出**（Chroma 没有公开错误码表），
+//   所以状态栏对 Chroma 族文件常驻「非 CRAFT 编译结果」标注，见 MainWindow。
+//
+// 【为什么下拉框只在有候选值时弹】
+//   手册里大量参数是自由的数值/字符串（f_volt、pin_name、地址…），没有可选项。
+//   对这类参数弹一个空下拉框或者硬塞词汇候选，只会挡住视线。所以 hasEnum 为假
+//   时直接返回 false，把这一次按键交回普通的词汇补全。
+
+namespace {
+
+// 只有 Chroma 族的词法器才去查语句库（kStatements 覆盖手册第 3~5 章，即
+// .pat/.pln）。其它语言连这段文本都不必读——省掉每次按键的文档读取。
+// 批次 77：判定收进 chroma3380::IsChroma3380LexerName（与补全模块同一处口径，
+// 避免"高亮算 Chroma、补全不算"这类两边各判一次的分叉）。
+bool IsChroma3380Lexer(const std::string& n) {
+    return chroma3380::IsChroma3380LexerName(n.c_str());
+}
+
+// 语句名补全的候选上限。手册里 .pln 的语句共 258 条，2 字符前缀最多能命中
+// 几十条；给到 400 是"不会截断"的量级，不是性能阈值。
+constexpr int kStmtCompleteMax = 400;
+
+// 往回读的窗口。必须够长以覆盖「语句名 + 前面的实参」；真超过这个距离的调用
+// 已经不是人手写的，判为「不在实参里」不出提示即可（ChromaSignature 同此口径）。
+constexpr sptr_t kSigScanWindow = 4096;
+
+}  // namespace
+
+bool Editor::HandleSignatureHint() {
+    if (!hwnd_ || !IsChroma3380Lexer(lexerName_)) return false;
+
+    const sptr_t caret = Send(SCI_GETCURRENTPOS);
+    const sptr_t docLen = Send(SCI_GETLENGTH);
+    if (caret <= 0 || caret > docLen) { CancelSignatureHint(); return false; }
+    const sptr_t lo = (caret > kSigScanWindow) ? caret - kSigScanWindow : 0;
+
+    // 取光标前的一小段（不是整个文档）：签名位置只由光标附近的括号与逗号决定。
+    std::string text((size_t)(caret - lo), '\0');
+    Sci_TextRangeFull tr{};
+    tr.chrg.cpMin = (Sci_Position)lo;
+    tr.chrg.cpMax = (Sci_Position)caret;
+    tr.lpstrText = text.data();
+    Send(SCI_GETTEXTRANGEFULL, 0, (LPARAM)&tr);
+
+    chroma3380::SignatureHint hint;
+    if (!chroma3380::ResolveSignatureHint(text, text.size(), hint)) {
+        CancelSignatureHint();      // 不在任何已收录语句的实参里
+        return false;
+    }
+
+    // 槽序不可信的语句（重复组语法 `[ ... ]*`、签名被参数注释污染、签名缺失）
+    // 一律不出手：param/paramIndex 只是按老口径排出来的「第 N 个」，挂候选值会
+    // 挂错参数，签名本身也常是脏的。这里的「不出手」是有代价的（74/309 条语句
+    // 落在此类），但这个代价换的是「绝不给出位置错位的候选值」。
+    if (!hint.positional) {
+        CancelSignatureHint();
+        return false;
+    }
+
+    // ---- 下拉框 / 签名气泡：**二选一，不能同框** ------------------------------
+    //
+    // 【为什么是二选一：这不是取舍，是 Scintilla 的硬约束】
+    //   查 5.6.6 源码，两个方向互相取消：
+    //     ScintillaBase::AutoCompleteStart() 第一行：ct.CallTipCancel();
+    //     ScintillaBase::CallTipShow()       第一行：ac.Cancel();
+    //   所以"气泡在上、下拉在下、两者不打架"这个想法**立不住**：无论谁先谁后，
+    //   后弹的那个都会把前一个撤掉。批次 73 端到端实测就抓到了——
+    //   走到 FORCE_V_MLDPS 的 v_range 时 callTip=0 / autoC=1，即用户永远看不到
+    //   气泡，而 v_range 恰恰是这个功能的主场景。
+    //
+    //   于是分工按"用户此刻在问什么"来切：
+    //     有候选值 → 出**下拉框**。用户问的是"这里能填什么"，而候选值本身
+    //                （@6V / @12V）就已经说明了这个参数，Tab 可直接接受。
+    //     没候选值 → 出**气泡**。用户问的是"我在第几个参数、这参数叫什么"，
+    //                这正是自由参数占多数（f_volt / pin_name / 地址…）时的需要。
+    //   注意"没候选值"包含两种情况：该参数本就没有枚举；或打了前缀之后一个
+    //   候选都对不上。两种都给气泡——都比什么都不给强。
+    if (hint.hasEnum) {
+        const char* const* vals = chroma3380::kValues + hint.param->valStart;
+        const std::string prefix = text.substr((size_t)hint.argStart);
+        std::string list;
+        for (int i = 0; i < hint.param->valCount; ++i) {
+            const char* v = vals[i];
+            const size_t vl = std::strlen(v);
+            if (vl < prefix.size() || _strnicmp(v, prefix.c_str(), prefix.size()) != 0)
+                continue;                  // 前缀不匹配，Scintilla 也会自己滤掉
+            if (vl == prefix.size()) continue;   // 已经打全了，没有可补的部分
+            if (!list.empty()) list += ' ';
+            list += v;
+        }
+
+        if (!list.empty()) {
+            // 下拉框要顶掉气泡，先把我们的记账清掉，免得 CancelSignatureHint()
+            // 之后以为气泡还在（那会让下一次重新弹出的去重判断失效）。
+            if (sigTipShown_) {
+                Send(SCI_CALLTIPCANCEL);
+                sigTipShown_ = false;
+                sigTipStmt_ = nullptr;
+                sigTipParam_ = -1;
+                sigTipPos_ = -1;
+            }
+            if (Send(SCI_AUTOCACTIVE)) return true;   // 已在收窄候选中，交给 Scintilla
+
+            Send(SCI_AUTOCSETSEPARATOR, ' ');
+            Send(SCI_AUTOCSETIGNORECASE, 1);
+            Send(SCI_AUTOCSETAUTOHIDE, 1);
+            Send(SCI_AUTOCSETDROPRESTOFWORD, 0);
+            // 用 Custom 而不是 ShowAutocomplete 那边的 PerformSort：档位表要按手册
+            // 顺序（@6V 在 @12V 之前、电流档从小到大），字母序会把它倒过来。
+            Send(SCI_AUTOCSETORDER, SC_ORDER_CUSTOM);
+            Send(SCI_AUTOCSETMAXHEIGHT, 8);
+            // lenEntered = 已输入的实参片段长度：Tab/回车选中后 Scintilla 用它算出
+            // 替换区间，正好把 `@6` 换成 `@6V`。scintilla 之后按
+            // RangeText(posStart - startLen, caret) 继续做前缀过滤，所以逐字符
+            // 输入会自动收窄候选——不必自己重弹。
+            Send(SCI_AUTOCSHOW, (uptr_t)prefix.size(), (LPARAM)list.c_str());
+            return true;   // 下拉框已出，本次按键不再走词汇补全
+        }
+        // 落到这里说明一个候选都对不上：要么用户在写别的东西，要么打错了。
+        // 不弹空列表（挡住视线），往下走气泡分支。
+    }
+
+    // ---- 签名气泡：手册原文签名 + 高亮当前参数 -------------------------------
+    const sptr_t argDocPos = lo + hint.argStart;
+    if (!sigTipShown_ || sigTipStmt_ != hint.stmt ||
+        sigTipParam_ != hint.paramIndex || sigTipPos_ != argDocPos) {
+        const char* sig = hint.stmt->signature ? hint.stmt->signature : "";
+        if (*sig) {
+            // 先设位置再显示：SCI_CALLTIPSETPOSITION 只改内部标志 + 触发重画，
+            // 窗口位置是 CALLTIPSHOW 那一刻算的，反过来设不生效。
+            // 气泡放光标上方：下拉框要占光标下方，虽然两者不会同框（见上），
+            // 但保持上方能让"气泡 → 下拉框"的切换在视觉上原地不动。
+            Send(SCI_CALLTIPSETPOSITION, 1);
+            Send(SCI_CALLTIPSHOW, argDocPos, (LPARAM)sig);
+            int hs = 0, he = 0;
+            if (chroma3380::SignatureArgRange(sig, hint.paramIndex, hs, he))
+                Send(SCI_CALLTIPSETHLT, (uptr_t)hs, (LPARAM)he);
+            sigTipShown_ = true;
+            sigTipStmt_ = hint.stmt;
+            sigTipParam_ = hint.paramIndex;
+            sigTipPos_ = argDocPos;
+        }
+    }
+    return false;   // 没下拉框 → 交回普通的词汇补全
+}
+
+void Editor::CancelSignatureHint() {
+    // 下拉框的活动状态由 Scintilla 管，这里只负责签名气泡。
+    if (sigTipShown_) {
+        Send(SCI_CALLTIPCANCEL);
+        sigTipShown_ = false;
+    }
+    sigTipStmt_ = nullptr;
+    sigTipParam_ = -1;
+    sigTipPos_ = -1;
+}
+
+// ---- 批次 77：Chroma 3380 语句名补全 ----------------------------------------
+//
+// 【它和普通词汇补全、和签名提示的分工】
+//                触发条件                       候选内容
+//   签名提示     光标在已收录语句的实参里（越过左括号）  该参数的手册候选值
+//   语句名补全   光标在**语句起始位置**（行首 / `;` `{` `}` 之后）  词表里的语句名
+//   词汇补全     其余任意位置的 3 字符以上词首        语言词表 + 文档词汇
+//   三者互斥且有序：实参位置优先于语句位置，语句位置优先于词汇兜底。
+//
+// 【为什么要按"位置"而不是"词形"判】
+//   `FORC` 在语句开头是 FORCE_* 的前缀，在实参里（`FORCE_V_MLDPS(Vcc, FORC|`）
+//   就不是——同一个词形在两种位置含义不同。位置判定收在
+//   chroma3380::IsStatementStart 里（纯函数、可单测）。
+//
+// 【列表右侧那一列是只显示、不插入的】
+//   Scintilla 的 typesep（默认 `?`）语义：`名字?附加列`，ListBox 在 `?` 处断词，
+//   插入的只是前半截。所以 `FORCE_V_MLDPS?4.9.4` 接受后上屏的是
+//   `FORCE_V_MLDPS`。用它是为了在不写自绘列表的前提下把"手册章节号"这一列
+//   摆出来——章节号是回溯手册原文的钥匙，也是这套数据最值钱的部分。
+bool Editor::HandleStatementCompletion(sptr_t wordStart, const std::string& prefix) {
+    // 取词前的一小段做位置判定（缩进 + 上一条语句的结尾就够）。取窗口而不是
+    // 全文：这一步在每次按键上跑，代价必须与文档大小无关。
+    constexpr sptr_t kCtxWindow = 512;
+    const sptr_t lo = (wordStart > kCtxWindow) ? wordStart - kCtxWindow : 0;
+    std::string ctx;
+    GetTextRangeUtf8((long long)lo, (size_t)(wordStart - lo), ctx);
+    if (!chroma3380::IsStatementStart(ctx, ctx.size())) return false;
+
+    std::vector<chroma3380::StatementCandidate> cands;
+    if (chroma3380::CollectStatementCandidates(lexerName_.c_str(), prefix, cands,
+                                               kStmtCompleteMax) <= 0)
+        return false;   // 这个前缀没有对应语句 → 交回词汇补全（它可能命中宏/类型名）
+
+    std::string list;
+    for (const chroma3380::StatementCandidate& c : cands) {
+        if (!list.empty()) list += ' ';
+        list += c.name;
+        if (!c.section.empty()) { list += '?'; list += c.section; }
+    }
+
+    // 下拉框会顶掉气泡（Scintilla 的硬约束，见 HandleSignatureHint 顶部的说明），
+    // 所以先把我们的气泡记账清掉，免得随后 CancelSignatureHint() 误判气泡还在。
+    CancelSignatureHint();
+
+    Send(SCI_AUTOCSETTYPESEPARATOR, '?');
+    Send(SCI_AUTOCSETSEPARATOR, ' ');
+    Send(SCI_AUTOCSETIGNORECASE, 1);
+    Send(SCI_AUTOCSETAUTOHIDE, 1);
+    Send(SCI_AUTOCSETDROPRESTOFWORD, 0);
+    // 手册顺序，不是字母序：章节升序天然按硬件族分组（FORCE_I_MLDPS → FORCE_V_MLDPS
+    // → DPS 族 → UVI 族 …），字母序会把这个结构打散。
+    Send(SCI_AUTOCSETORDER, SC_ORDER_CUSTOM);
+    Send(SCI_AUTOCSETMAXHEIGHT, 12);
+    Send(SCI_AUTOCSHOW, (uptr_t)prefix.size(), (LPARAM)list.c_str());
+    // 批次 78：记下"列表是在哪个位置弹的"。wordStart 就是 Scintilla 之后在
+    // SCN_AUTOCCOMPLETED 里报的 position（= ac.posStart - ac.startLen，而
+    // 这里 lenEntered == prefix.size() == caret - wordStart），所以两者相等
+    // 就是"这次完成确实来自我们这个下拉"的凭据。
+    stmtCompleteStart_ = wordStart;
+    return true;
 }
 
 void Editor::ShowAutocomplete(const std::string& prefix) {
@@ -1024,8 +1392,11 @@ void Editor::ShowAutocomplete(const std::string& prefix) {
         const WordStyleFilter* f = WordStyleFilterFor(lexerName_.c_str());
         if (f && f->Any()) {
             std::string buf((size_t)docLen * 2 + 2, '\0');
-            Sci_TextRange tr{{0, docLen}, buf.data()};
-            Send(SCI_GETSTYLEDTEXT, 0, (LPARAM)&tr);
+            Sci_TextRangeFull tr{};                 // *FULL 版：cpMin/cpMax 为 ptrdiff_t
+            tr.chrg.cpMin = 0;
+            tr.chrg.cpMax = (Sci_Position)docLen;
+            tr.lpstrText = buf.data();
+            Send(SCI_GETSTYLEDTEXTFULL, 0, (LPARAM)&tr);
             ScanWordsStyled((const unsigned char*)buf.data(), (size_t)docLen,
                             *f, wordCache_);
         } else {

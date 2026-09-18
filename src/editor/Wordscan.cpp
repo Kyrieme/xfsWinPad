@@ -1,6 +1,9 @@
 // xfsWinPad - 自动补全词汇扫描实现（批次 31）
 // 风格常量取自 vendored SciLexer.h（编译期核对，杜绝手抄数值）。
+// 例外：批次 72/73 的自研 ILexer5 族样式号在 XfsLexerStyles.h（64 起编），
+// 与 Lexilla 的 SciLexer.h 编号是两套体系。
 #include "Wordscan.h"
+#include "../language/XfsLexerStyles.h"
 
 #include <map>
 #include <initializer_list>
@@ -128,6 +131,15 @@ const std::map<std::string, WordStyleFilter>& StyleFilterMap() {
                       SCE_ASM_COMMENTDIRECTIVE},
                      {SCE_ASM_STRING, SCE_ASM_CHARACTER, SCE_ASM_STRINGEOL,
                       SCE_ASM_STRINGBACKQUOTE})},
+        // 批次 72/73：ATE 族。**不能在这里写样式号** —— 这几个词法是自研的
+        // ILexer5，样式号在 XfsLexerStyles.h（64 起编），而本表的常量出自
+        // third_party/lexilla/include/SciLexer.h，两套编号毫无关系，混用会
+        // 屏蔽掉错误的样式位。用 XfsLexerStyles.h 的枚举常量来填。
+        {"ate_pattern", Make({SCE_ATEP_COMMENT}, {SCE_ATEP_STRING})},
+        {"stil",        Make({SCE_STIL_COMMENT}, {SCE_STIL_STRING})},
+        {"ate_log",     Make({SCE_ATEL_COMMENT}, {})},
+        {"chroma_dec",  Make({SCE_DEC_COMMENT}, {SCE_DEC_STRING})},
+        {"chroma_plan", Make({SCE_PLN_COMMENT}, {SCE_PLN_STRING})},
     };
     return kMap;
 }

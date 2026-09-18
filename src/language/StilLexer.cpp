@@ -202,7 +202,7 @@ int BraceDelta(const char* s, std::size_t n, bool* inBlock, int* closers) {
 
 } // namespace
 
-StilLexer::StilLexer() : XfsLexerBase(kLexStil, 7202) {
+StilLexer::StilLexer() : XfsLexerBase(kLexStil, kLexIdStil) {
     MutableWords(0).Set(kBlocks);
     MutableWords(1).Set(kKeywords);
     MutableWords(2).Set(kEvents);

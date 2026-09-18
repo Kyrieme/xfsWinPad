@@ -14,6 +14,7 @@
 #include "../document/Document.h"
 #include "../editor/Editor.h"
 #include "../language/LanguageMap.h"
+#include "../language/XfsLexer.h"     // 批次 73：Chroma 族词法器名（模型来源标注）
 #include "../resources/resource.h"
 #include "../search/FindInFiles.h"
 #include "../search/SearchAll.h"
@@ -1416,11 +1417,29 @@ void MainWindow::UpdateStatusBar() {
             {"markdown", L"Markdown"}, {"props", L"INI"}, {"toml", L"TOML"},
             {"makefile", L"Makefile"}, {"cmake", L"CMake"}, {"diff", L"Diff"},
             {"asm", L"Assembler"},
+            // 批次 73：ATE 族（批次 72 起就有词法器，但一直没给显示名，
+            // 状态栏把 .pat/.stil/.log/.pln 全显示成 "Text"）
+            {kLexAtePattern, L"ATE Pattern (.pat)"},
+            {kLexStil,       L"STIL (.stil)"},
+            {kLexAteLog,     L"ATE Log (.log)"},
+            {kLexChromaDec,  L"Chroma Device (.dec)"},
+            {kLexChromaPlan, L"Chroma Plan (.pln)"},
         };
         for (auto& e : names)
             if (strcmp(li->lexerName, e.n) == 0) { lang = e.label; break; }
     }
     status_->SetLanguage(lang);
+    // 批次 73：Chroma 3380 族的语法高亮、签名提示（乃至以后的诊断）都建立在
+    // 「从语言手册抽取并人工复核」的数据模型上，**不是 CRAFT 编译器的输出**
+    // （Chroma 没有公开错误码表）。这件事必须让用户看得见，否则容易把我们的
+    // 提示当成编译器给的结论。其它语言清空该段。
+    {
+        const char* lx = (li && li->lexerName) ? li->lexerName : "";
+        const bool chroma = strcmp(lx, kLexChromaPlan) == 0 ||
+                            strcmp(lx, kLexChromaDec) == 0 ||
+                            strcmp(lx, kLexAtePattern) == 0;
+        status_->SetModelNote(chroma ? Tr(L"sb.model.note") : L"");
+    }
 }
 
 void MainWindow::OnWorkspaceChanged() {
@@ -4968,6 +4987,12 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 switch (sn->nmhdr.code) {
                     case SCN_CHARADDED:
                         ed.HandleCharAdded(sn);
+                        break;
+                    case SCN_AUTOCCOMPLETED:
+                        // 批次 78：补全项**已经**写进文档之后才发的通知
+                        // （ScintillaBase::AutoCompleteCompleted 末尾）。
+                        // 语句名补全靠它做续动作：补 `(` + 出签名提示。
+                        ed.HandleAutocCompleted(sn);
                         break;
                     case SCN_DOUBLECLICK:
                         ed.HighlightOccurrences();

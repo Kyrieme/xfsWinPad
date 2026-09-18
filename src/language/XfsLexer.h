@@ -30,6 +30,42 @@ namespace xfs {
 inline constexpr const char* kLexAtePattern = "ate_pattern";
 inline constexpr const char* kLexStil       = "stil";
 inline constexpr const char* kLexAteLog     = "ate_log";
+// 批次 73：Chroma 3380 专属词法器。与 ate_pattern 的区别在于 ate_pattern 面向
+// 「各家 ATE 方言的共同记号」，这两个直接实现 Chroma 手册第 2/4 章的语法。
+inline constexpr const char* kLexChromaDec  = "chroma_dec";
+inline constexpr const char* kLexChromaPlan = "chroma_plan";
+
+// ---- ILexer5 标识号（GetIdentifier，也就是 SCI_GETLEXER 的返回值）------------
+//
+// 【为什么"必须全局唯一"是硬约束而不是洁癖】
+//   这个号是「控件上挂的到底是哪个词法器」**唯一可读的证据**。单元测试能把
+//   GetName() 比字符串，但跨进程的端到端脚本只能 SendMessageW，凡是"往调用方
+//   缓冲区里写"的查询（SCI_GETLEXERLANGUAGE 之类）都跨不过进程边界——那会让
+//   目标进程按自己的地址空间去写，实测直接把被测进程写崩（详见
+//   scripts/ate-langs-e2e.ps1 顶部的教训）。于是 E2E 只能靠这个整数来判定
+//   「按名字挑的自研词法器真的挂上去了」，**它一旦撞号，断言就失去分辨力**。
+//   批次 73 就撞过一次：chroma_dec 与 stil 同为 7202、chroma_plan 与 ate_log
+//   同为 7203 —— 即「.stil 挂上了 stil」这条断言在 .dec 上也会通过。
+//   所以：名字与号并排放在一处，并用 kOwnLexers 表 + 单测钉死唯一性
+//   （tests/test_atelexer.cpp 的 TestFactory 遍历 kOwnLexers 检查两两不等）。
+inline constexpr int kLexIdAtePattern = 7201;
+inline constexpr int kLexIdStil       = 7202;
+inline constexpr int kLexIdAteLog     = 7203;
+inline constexpr int kLexIdChromaDec  = 7204;
+inline constexpr int kLexIdChromaPlan = 7205;
+
+// 自研词法器清单：新增一个词法器时**必须**在这里补一行，否则唯一性检查覆盖不到。
+struct OwnLexerInfo {
+    const char* name;
+    int         id;
+};
+inline constexpr OwnLexerInfo kOwnLexers[] = {
+    { kLexAtePattern, kLexIdAtePattern },
+    { kLexStil,       kLexIdStil       },
+    { kLexAteLog,     kLexIdAteLog     },
+    { kLexChromaDec,  kLexIdChromaDec  },
+    { kLexChromaPlan, kLexIdChromaPlan },
+};
 
 // 大小写不敏感关键词集合。ATE 惯例全大写，但现场文件大小写混用很常见，
 // 所以统一按不敏感匹配（与 Lexilla 多数词法器的大小写敏感策略是有意偏差）。
@@ -124,7 +160,10 @@ public:
     int SCI_METHOD GetIdentifier() override { return identifier_; }
     const char* SCI_METHOD PropertyGet(const char*) override { return nullptr; }
 
-    enum { kWordLists = 4 };   // 与 SCI_SETKEYWORDS 的下标 0..3 对应
+    // 与 SCI_SETKEYWORDS 的下标 0..kWordLists-1 对应。
+    // 批次 73 从 4 提到 8：.pln 需要「测试语句 / CRAFT 宏 / C 库函数 / C 关键字 +
+    // 流程记号 / pin_type」五张互不相同的表，4 个槽位装不下。
+    enum { kWordLists = 8 };
     const KeywordSet& Words(int i) const {
         return words_[(i < 0 || i >= kWordLists) ? 0 : i];
     }

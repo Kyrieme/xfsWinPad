@@ -1,6 +1,6 @@
 param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
-# ate-langs-e2e.ps1 - Batch 72 e2e: the self-built ATE ILexer5 lexers must really
-# attach to the live editor and produce the designed styles.
+# ate-langs-e2e.ps1 - the self-built ATE ILexer5 lexers must really attach to the
+# live editor and produce the designed styles.
 #
 # Why this exists: tests/test_atelexer.cpp drives Lex()/Fold() directly through a
 # fake IDocument, so it can never prove the Editor wiring works - SCI_SETILEXER
@@ -8,11 +8,13 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 # surviving Scintilla's lazy styling. That is exactly the gap where a broken
 # release could slip out, so it is checked here against the real process.
 #
-#   P1 .pat  -> SCI_GETLEXER == 7201, per-byte styles match SCE_ATEP_*
-#   P2 .stil -> SCI_GETLEXER == 7202, per-byte styles match SCE_STIL_*
-#   P3 .log  -> SCI_GETLEXER == 7203, per-byte styles match SCE_ATEL_* and the
+#   P1 .pat  -> the five manual vector classes must be five DISTINCT colours, and
+#               mask must not look like body text. (The full per-byte .pat style
+#               matrix now lives in chroma-e2e.ps1's P1 - batch 73 renamed most of
+#               that group, so a second full copy here would just rot again.)
+#   P2 .stil -> stil lexer attaches, per-byte styles match SCE_STIL_*
+#   P3 .log  -> ate_log lexer attaches, per-byte styles match SCE_ATEL_* and the
 #               conservative gate keeps a generic app log line uncolored
-#   plus a check that drive/expect/mask resolve to three DISTINCT colors.
 #
 # 【为什么用 SCI_GETLEXER(4002) 而不是 SCI_GETLEXERLANGUAGE(4012) 判定词法器】
 #   本脚本跨进程 SendMessageW 到 xfsWinPad.exe。Win32 只为 0..WM_USER(1024)
@@ -21,35 +23,26 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 #   空间里 memcpy。实测后果：那一次探针之后，连 SCI_GETTEXTLENGTH 都返回 0，
 #   因为目标进程已经被写崩了。所以 4012 这类「缓冲区出参」的消息在本脚本里
 #   **一律不许出现**；下面用到的消息全部通过返回值传值，跨进程安全。
-#   4002 返回的 7201/7202/7203 正是 XfsCreateLexer() 里 名字->词法器 的一一映射，
-#   等价证明了「自研词法器真的挂上去了」。名字本身由 test_atelexer 的工厂用例
-#   在进程内断言（TestFactory）。
+#   4002 返回的整数正是 XfsCreateLexer() 里 名字->词法器 的一一映射，等价证明了
+#   「自研词法器真的挂上去了」。名字本身由 test_atelexer 的工厂用例在进程内断言
+#   （TestFactory），唯一性也在那里钉死。
+#
+# 【数字全部从源码头文件解析，不硬编码】
+#   批次 73 重排了 .pat 组的样式号并改掉了大半样式名，本脚本的批次 72 版本因此
+#   静默失效（硬编码 66/80/88… 已经全是错的了）。现在样式号取自
+#   src/language/XfsLexerStyles.h、词法器号取自 src/language/XfsLexer.h 的
+#   kOwnLexers 表，名字对不上就直接抛错（见 scripts/_lexer-ids.ps1）。
 #
 # The real %APPDATA%\xfsWinPad\session.json is backed up and restored.
 # ASCII only.
 
 $ErrorActionPreference = "Stop"
 
-# ---- SCE_* numbers (src/language/XfsLexerStyles.h, base 64) -------------------
-$S_ATEP_COMMENT   = 65
-$S_ATEP_OPCODE    = 66
-$S_ATEP_LABEL     = 67
-$S_ATEP_PIN       = 68
-$S_ATEP_VECTOR    = 69   # drive
-$S_ATEP_EXPECT    = 70
-$S_ATEP_MASK      = 71
-$S_ATEP_NUMBER    = 73
-$S_ATEP_STRING    = 74
-$S_ATEP_OPERATOR  = 75
-$S_ATEP_DIRECTIVE = 77
-$S_STIL_BLOCK     = 80
-$S_STIL_KEYWORD   = 81
-$S_STIL_NAME      = 82
-$S_STIL_UNIT      = 84
-$S_ATEL_DEFAULT   = 88
-$S_ATEL_SITE      = 91
-$S_ATEL_TESTNAME  = 92
-$S_ATEL_FAIL      = 96
+$repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "_lexer-ids.ps1")
+$styles = Get-StyleMap (Join-Path $repoRoot "src\language\XfsLexerStyles.h")
+$lexers = Get-LexerMap  (Join-Path $repoRoot "src\language\XfsLexer.h")
+Write-Output ("[setup] parsed {0} style ids, {1} own lexers" -f $styles.Count, $lexers.Count)
 
 Add-Type @"
 using System;using System.Text;using System.Runtime.InteropServices;
@@ -79,7 +72,7 @@ public static class ATE {
       if (c.ToString() == "Scintilla") { list.Add(h); } return true; }, IntPtr.Zero);
     return list.ToArray(); }
   public static int StyleAt(IntPtr ed, int pos){ return (int)SendMessageW(ed, 2010, (IntPtr)pos, IntPtr.Zero); }
-  public static int LineStart(IntPtr ed, int line){ return (int)SendMessageW(ed, 2167, (IntPtr)line, IntPtr.Zero); }
+  public static int LineEndPos(IntPtr ed, int line){ return (int)SendMessageW(ed, 2136, (IntPtr)line, IntPtr.Zero); }
   public static int StyleFore(IntPtr ed, int style){ return (int)SendMessageW(ed, 2481, (IntPtr)style, IntPtr.Zero); }
   // Scintilla hands colours back in 0x00BBGGRR (the old COLORREF order), so a raw
   // print reads backwards: theme RGB(0x09,0x86,0x58) comes out as 0x588609.
@@ -183,27 +176,35 @@ function Start-App([string]$file) {
   $script:g_dumped = $false   # allow one style-map dump per fixture
 }
 
-function Expect-Lexer([int]$wantId, [string]$wantName) {
+function Expect-Lexer([string]$lexerName) {
+  if (-not $lexers.ContainsKey($lexerName)) {
+    Fail "unknown own lexer '$lexerName' - check kOwnLexers in XfsLexer.h" }
+  $want = [int]$lexers[$lexerName]
   $len = [ATE]::TextLength($g_ed)
   $id  = [ATE]::GetLexerId($g_ed)
   Write-Output "  [diag] textLength=$len lexerId=$id"
   if ($len -le 0) { Fail "editor is empty (len=$len) - probed the wrong window?" }
-  if ($id -ne $wantId) {
-    Fail "lexer id = $id, want $wantId ('$wantName') - self-built lexer not attached" }
-  Write-Output "  OK lexer id=$id ($wantName)"
+  if ($id -ne $want) {
+    Fail "lexer id = $id, want $want ('$lexerName') - self-built lexer not attached" }
+  Write-Output "  OK lexer id=$id ($lexerName)"
 }
 
-function Expect-Style([int]$line, [int]$col, [int]$want, [string]$what) {
+function Expect-Style([int]$line, [int]$col, [string]$styleName, [string]$what) {
   # A vanished document means the probe is no longer measuring the lexer; say so
   # instead of reporting a bogus style mismatch.
   if ([ATE]::TextLength($g_ed) -le 0) {
     Fail "$what : editor went away (textLength=0) - did xfsWinPad crash?" }
-  $pos = [ATE]::LineStart($g_ed, $line) + $col
+  $want = StyleOf $styles $styleName
+  # Line start from the previous line's end: SCI_GETLINEENDPOSITION is a
+  # value-only message, so this stays cross-process safe (no buffer reads).
+  $ls = 0
+  if ($line -gt 0) { $ls = [ATE]::LineEndPos($g_ed, $line - 1) + 2 }   # CRLF = 2
+  $pos = $ls + $col
   $got = [ATE]::StyleAt($g_ed, $pos)
   if ($got -ne $want) {
     Dump-Styles
-    Fail "$what : line $line col $col (pos $pos) style = $got, want $want" }
-  Write-Output ("  OK {0,-40} style = {1}" -f $what, $got)
+    Fail "$what : line $line col $col (pos $pos) style = $got, want $want ($styleName)" }
+  Write-Output ("  OK {0,-46} style = {1} ({2})" -f $what, $got, $styleName)
 }
 
 # Print the whole style byte map as runs, plus the endStyled watermark. This is
@@ -236,60 +237,51 @@ if (Test-Path $sess) { Copy-Item $sess $bak -Force }
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 try {
-  # ---------------------------------------------------------------- P1: .pat
-  Write-Output "[P1] .pat"
+  # ------------------------------------------- P1: .pat colour separability
+  # The per-byte style matrix for .pat is asserted in chroma-e2e.ps1 P1. What is
+  # checked here is the thing batch 72 shipped broken and no style-id assertion
+  # could catch: the FIVE vector classes must be five visually distinct colours,
+  # and the mask colour must not equal the body-text colour. Batch 72 had mask
+  # mapped to ROperator, which equals editorFg in both themes, so X/N/Z/U drew
+  # exactly like an ordinary identifier - and every assertion of the form "the
+  # three differ from each other" still passed.
+  Write-Output "[P1] .pat - vector classes must be five distinct colours"
   $pat = Join-Path $work "t.pat"
   (@(
-    '# comment line'
-    'RPT 4'
-    '( VDD RESET ) 0 1'
-    'LBL_A:'
-    '    JMP LBL_A'
-    '.INCLUDE "x"'
-    '( VDD RESET ) X N Z'
+    '*0 1 H L Z*  *R S T U X*  *V K 2*'
   ) -join "`r`n") + "`r`n" | Set-Content -Path $pat -Encoding ASCII
 
   Start-App $pat
-  Expect-Lexer 7201 "ate_pattern"
-  Expect-Style 0 0  $S_ATEP_COMMENT   "line0 '#' comment"
-  Expect-Style 1 0  $S_ATEP_OPCODE    "line1 'RPT' opcode"
-  Expect-Style 1 4  $S_ATEP_NUMBER    "line1 '4' counter number"
-  Expect-Style 2 0  $S_ATEP_OPERATOR  "line2 '(' operator"
-  Expect-Style 2 2  $S_ATEP_PIN       "line2 'VDD' pin in group"
-  Expect-Style 2 6  $S_ATEP_PIN       "line2 'RESET' pin (also an opcode)"
-  Expect-Style 2 14 $S_ATEP_VECTOR    "line2 '0' drive"
-  Expect-Style 2 16 $S_ATEP_VECTOR    "line2 '1' drive"
-  Expect-Style 3 0  $S_ATEP_LABEL     "line3 'LBL_A:' label def"
-  Expect-Style 4 4  $S_ATEP_OPCODE    "line4 'JMP' opcode"
-  Expect-Style 4 8  $S_ATEP_LABEL     "line4 'LBL_A' jump target"
-  Expect-Style 5 0  $S_ATEP_DIRECTIVE "line5 '.INCLUDE' directive"
-  Expect-Style 5 9  $S_ATEP_STRING    "line5 quoted string"
-  # line6 exists purely so SCE_ATEP_MASK is really produced by the live lexer -
-  # a colour check on a style that never occurs would be vacuous.
-  Expect-Style 6 14 $S_ATEP_MASK      "line6 'X' mask"
-  Expect-Style 6 16 $S_ATEP_MASK      "line6 'N' mask"
-  Expect-Style 6 18 $S_ATEP_MASK      "line6 'Z' mask"
-
-  # drive / expect / mask must resolve to three DISTINCT colors - the whole
-  # point of splitting them instead of lumping them into one number style.
-  $fDrive  = [ATE]::StyleFore($g_ed, $S_ATEP_VECTOR)
-  $fExpect = [ATE]::StyleFore($g_ed, $S_ATEP_EXPECT)
-  $fMask   = [ATE]::StyleFore($g_ed, $S_ATEP_MASK)
+  Expect-Lexer "ate_pattern"
+  $fDrive = [ATE]::StyleFore($g_ed, (StyleOf $styles "SCE_ATEP_VEC_DRIVE"))
+  $fCmp   = [ATE]::StyleFore($g_ed, (StyleOf $styles "SCE_ATEP_VEC_CMP"))
+  $fBoth  = [ATE]::StyleFore($g_ed, (StyleOf $styles "SCE_ATEP_VEC_DRV_CMP"))
+  $fMask  = [ATE]::StyleFore($g_ed, (StyleOf $styles "SCE_ATEP_VEC_MASK"))
+  $fCtrl  = [ATE]::StyleFore($g_ed, (StyleOf $styles "SCE_ATEP_VEC_CTRL"))
   # STYLE_DEFAULT (32) carries the body text colour, so this is the check with
-  # teeth: mask must NOT look like ordinary text. Asserting only "the three
-  # differ from each other" passes happily while mask == editorFg, which is
-  # exactly the defect this batch shipped and then fixed (RDim role).
-  $fBody   = [ATE]::StyleFore($g_ed, 32)
-  Write-Output ("  [diag] drive={0} expect={1} mask={2} body(STYLE_DEFAULT)={3}" -f `
-                [ATE]::HexRgb($fDrive), [ATE]::HexRgb($fExpect),
-                [ATE]::HexRgb($fMask), [ATE]::HexRgb($fBody))
-  if ($fDrive -eq $fExpect -or $fExpect -eq $fMask -or $fDrive -eq $fMask) {
-    Fail ("vector styles not visually distinct: drive={0} expect={1} mask={2}" -f `
-          [ATE]::HexRgb($fDrive), [ATE]::HexRgb($fExpect), [ATE]::HexRgb($fMask)) }
+  # teeth: mask must NOT look like ordinary text.
+  $fBody  = [ATE]::StyleFore($g_ed, 32)
+  Write-Output ("  [diag] drive={0} cmp={1} drive+cmp={2} mask={3} ctrl={4} body={5}" -f `
+                [ATE]::HexRgb($fDrive), [ATE]::HexRgb($fCmp), [ATE]::HexRgb($fBoth),
+                [ATE]::HexRgb($fMask), [ATE]::HexRgb($fCtrl), [ATE]::HexRgb($fBody))
+  $palette = @{
+    "drive"     = $fDrive
+    "cmp"       = $fCmp
+    "drive+cmp" = $fBoth
+    "mask"      = $fMask
+    "ctrl"      = $fCtrl
+  }
+  $names = @($palette.Keys)
+  for ($i = 0; $i -lt $names.Count; $i++) {
+    for ($j = $i + 1; $j -lt $names.Count; $j++) {
+      if ($palette[$names[$i]] -eq $palette[$names[$j]]) {
+        Fail ("vector classes {0} and {1} share colour {2} - the five manual classes " +
+              "must be separable at a glance" -f $names[$i], $names[$j],
+              [ATE]::HexRgb($palette[$names[$i]])) } } }
   if ($fMask -eq $fBody) {
-    Fail ("mask colour {0} equals the body text colour - X/N/Z/U would be " +
+    Fail ("mask colour {0} equals the body text colour - X would be " +
           "indistinguishable from an ordinary identifier" -f [ATE]::HexRgb($fMask)) }
-  Write-Output "  OK drive/expect/mask distinct, and mask is not body text"
+  Write-Output "  OK five vector classes distinct, and mask is not body text"
   Write-Output "P1-OK"
 
   # --------------------------------------------------------------- P2: .stil
@@ -303,12 +295,12 @@ try {
   ) -join "`r`n") + "`r`n" | Set-Content -Path $stil -Encoding ASCII
 
   Start-App $stil
-  Expect-Lexer 7202 "stil"
-  Expect-Style 0 0 $S_STIL_BLOCK   "line0 'Signals' block keyword"
-  Expect-Style 1 0 $S_STIL_NAME    "line1 'CLK' quoted name"
-  Expect-Style 1 6 $S_STIL_KEYWORD "line1 'In' direction keyword"
-  Expect-Style 2 0 $S_STIL_KEYWORD "line2 'Period' keyword"
-  Expect-Style 2 7 $S_STIL_UNIT    "line2 '20ns' quantity with unit"
+  Expect-Lexer "stil"
+  Expect-Style 0 0 "SCE_STIL_BLOCK"   "line0 'Signals' block keyword"
+  Expect-Style 1 0 "SCE_STIL_NAME"    "line1 'CLK' quoted name"
+  Expect-Style 1 6 "SCE_STIL_KEYWORD" "line1 'In' direction keyword"
+  Expect-Style 2 0 "SCE_STIL_KEYWORD" "line2 'Period' keyword"
+  Expect-Style 2 7 "SCE_STIL_UNIT"    "line2 '20ns' quantity with unit"
   Write-Output "P2-OK"
 
   # ---------------------------------------------------------------- P3: .log
@@ -320,18 +312,18 @@ try {
   ) -join "`r`n") + "`r`n" | Set-Content -Path $log -Encoding ASCII
 
   Start-App $log
-  Expect-Lexer 7203 "ate_log"
-  Expect-Style 0 0  $S_ATEL_SITE    "line0 'SITE1' site marker"
-  Expect-Style 0 6  $S_ATEL_TESTNAME "line0 'VDD' test name"
-  Expect-Style 0 10 $S_ATEL_FAIL    "line0 measurement escalated (FAIL line)"
-  Expect-Style 0 14 $S_ATEL_FAIL    "line0 'FAIL' verdict"
-  Expect-Style 0 19 $S_ATEL_FAIL    "line0 limit escalated (FAIL line)"
+  Expect-Lexer "ate_log"
+  Expect-Style 0 0  "SCE_ATEL_SITE"     "line0 'SITE1' site marker"
+  Expect-Style 0 6  "SCE_ATEL_TESTNAME" "line0 'VDD' test name"
+  Expect-Style 0 10 "SCE_ATEL_FAIL"     "line0 measurement escalated (FAIL line)"
+  Expect-Style 0 14 "SCE_ATEL_FAIL"     "line0 'FAIL' verdict"
+  Expect-Style 0 19 "SCE_ATEL_FAIL"     "line0 limit escalated (FAIL line)"
   # The conservative gate: a PROPER subset of ATE evidence must not be enough.
   # Line1 is a timestamped app log with no SITE, no verdict and no limit range,
   # so every byte of it must stay SCE_ATEL_DEFAULT.
-  Expect-Style 1 0  $S_ATEL_DEFAULT "line1 generic log, line start uncolored"
-  Expect-Style 1 20 $S_ATEL_DEFAULT "line1 generic log, 'INFO' uncolored"
-  Expect-Style 1 25 $S_ATEL_DEFAULT "line1 generic log, test name uncolored"
+  Expect-Style 1 0  "SCE_ATEL_DEFAULT"  "line1 generic log, line start uncolored"
+  Expect-Style 1 20 "SCE_ATEL_DEFAULT"  "line1 generic log, 'INFO' uncolored"
+  Expect-Style 1 25 "SCE_ATEL_DEFAULT"  "line1 generic log, test name uncolored"
   Write-Output "P3-OK"
 
   Write-Output "ATE-LANGS-E2E-PASS"

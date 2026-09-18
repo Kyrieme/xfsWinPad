@@ -61,9 +61,19 @@ int main() {
         CHECK(dark->caret         == RGB(0xF0, 0xF0, 0xF0));
         CHECK(dark->dim           == RGB(0x80, 0x80, 0x80));
         CHECK(dark->tabEdge       == RGB(0x3F, 0x3F, 0x46));   // 末项
+        // 批次 73 在 dim 之后插了 4 个向量语义色（vector/expect/both/ctrl），
+        // 位置正好在 dim 与 tab* 之间——**最容易整段错位的一段**，逐个钉死。
+        CHECK(light->vector       == RGB(0x6A, 0x1B, 0x9A));
+        CHECK(light->expect       == RGB(0xE6, 0x51, 0x00));
+        CHECK(light->both         == RGB(0xC2, 0x18, 0x5B));
+        CHECK(light->ctrl         == RGB(0x00, 0x6C, 0x7A));
+        CHECK(dark->vector        == RGB(0xC7, 0x92, 0xEA));
+        CHECK(dark->expect        == RGB(0xFF, 0xB7, 0x4D));
+        CHECK(dark->both          == RGB(0xF0, 0x62, 0x92));
+        CHECK(dark->ctrl          == RGB(0x4D, 0xD0, 0xE1));
         // 字段表（Style Configurator 按索引读写、JSON 按名读写）必须覆盖全部字段，
         // 否则新加的字段存不进主题 JSON。
-        CHECK(theme::ThemeFieldCount() == 28);
+        CHECK(theme::ThemeFieldCount() == 32);
     }
     // --- ATE 语义角色（批次 72）-------------------------------------------------
     // 锁两件事：

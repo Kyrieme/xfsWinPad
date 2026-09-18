@@ -238,6 +238,8 @@ static void TestFactory() {
     CHECK(XfsIsOwnLexer(kLexAtePattern));
     CHECK(XfsIsOwnLexer(kLexStil));
     CHECK(XfsIsOwnLexer(kLexAteLog));
+    CHECK(XfsIsOwnLexer(kLexChromaDec));
+    CHECK(XfsIsOwnLexer(kLexChromaPlan));
     CHECK(!XfsIsOwnLexer("cpp"));
     CHECK(!XfsIsOwnLexer(nullptr));
     // 非自研名必须返回 nullptr，让 Editor 回退到 Lexilla 的 ::CreateLexer
@@ -245,18 +247,32 @@ static void TestFactory() {
     CHECK(XfsCreateLexer("") == nullptr);
     CHECK(XfsCreateLexer(nullptr) == nullptr);
 
-    struct { const char* name; int ident; } kCases[] = {
-        { kLexAtePattern, 7201 },
-        { kLexStil,       7202 },
-        { kLexAteLog,     7203 },
-    };
-    for (const auto& c : kCases) {
+    // ---- 标识号唯一性：先查，再逐条查 --------------------------------------
+    // kOwnLexers 是「名字 -> ILexer5 标识号」的唯一真源。**号必须两两不等**：
+    // SCI_GETLEXER 返回的就是它，而跨进程 E2E 只拿得到这个整数（缓冲区出参的
+    // 查询跨不过进程，见 XfsLexer.h 与该标志号的说明），所以撞号 = E2E 的
+    // "词法器真的挂上去了"这条判定失去分辨力。批次 73 实测撞过：
+    // chroma_dec 与 stil 同为 7202、chroma_plan 与 ate_log 同为 7203。
+    const int nOwn = (int)(sizeof(kOwnLexers) / sizeof(kOwnLexers[0]));
+    for (int i = 0; i < nOwn; ++i) {
+        for (int j = i + 1; j < nOwn; ++j) {
+            if (kOwnLexers[i].id == kOwnLexers[j].id) {
+                ++g_fail;
+                printf("FAIL %s:%d  lexer id collision: %s and %s both = %d\n",
+                       __FILE__, __LINE__, kOwnLexers[i].name, kOwnLexers[j].name,
+                       kOwnLexers[i].id);
+            }
+        }
+    }
+
+    for (const auto& c : kOwnLexers) {
         Scintilla::ILexer5* lx = XfsCreateLexer(c.name);
         CHECK(lx != nullptr);
         if (!lx) continue;
         CHECK(lx->Version() == Scintilla::lvRelease5);
         CHECK(std::strcmp(lx->GetName(), c.name) == 0);
-        CHECK(lx->GetIdentifier() == c.ident);
+        // 清单里的号必须就是词法器自己报的号（两处写反了也会在这里现形）
+        CHECK(lx->GetIdentifier() == c.id);
         // 自研族不参与 substyle / 行尾类型 / 具名样式，必须给出安全默认值
         CHECK(lx->LineEndTypesSupported() == 0);
         CHECK(lx->NamedStyles() == 0);
@@ -285,9 +301,12 @@ static void TestStyleNumbering() {
     CHECK(kXfsStyleBase > 39);
     CHECK(kXfsStyleEnd <= 128);
     // 三族区间必须互不重叠，否则切换语言会串色
-    CHECK(SCE_ATEP_DEFAULT < SCE_STIL_DEFAULT);
+    // （批次 73 重排后 .pat 组在前、.dec/.pln 居中、STIL/Log 在后）
+    CHECK(SCE_ATEP_DEFAULT < SCE_DEC_DEFAULT);
+    CHECK(SCE_ATEP_OPERATOR < SCE_DEC_DEFAULT);   // .pat 组的末号
+    CHECK(SCE_DEC_DEFAULT < SCE_PLN_DEFAULT);
+    CHECK(SCE_PLN_DEFAULT < SCE_STIL_DEFAULT);
     CHECK(SCE_STIL_DEFAULT < SCE_ATEL_DEFAULT);
-    CHECK(SCE_ATEP_DIRECTIVE < SCE_STIL_DEFAULT);
     CHECK(SCE_STIL_STRING < SCE_ATEL_DEFAULT);
     CHECK(SCE_ATEL_RECORD < kXfsStyleEnd);
     // Push() 把样式归一到 7 位（style & 0x7F），所以任何 ≥128 的样式号都会
@@ -364,111 +383,157 @@ static void TestKeywordSet() {
 }
 
 // ==================================================== 4. ATE Pattern 行分类
+//
+// 【批次 73 重写】批次 72 的这组用例是按**自拟语言**写的（RPT/opcode/.INCLUDE
+// 三分类），与真实 Chroma .pat 对不上。这里改用手册 3.1.2 / 3.2.3 / 3.4.1 的
+// 原文形态：SET_DEC_FILE 末尾**没有**分号、HEADER 的 pin 列表可跨行、向量在
+// `* ... *` 之间且**逐字符**分类、`%pin` 的前缀本身是运算符。
 
 static void TestAtePattern() {
     MockDoc doc(
-        "RPT 10\n"                         // 0  计数行（首记号是 opcode → 否定向量）
-        "0 1 X\n"                          // 1  向量行：驱动/驱动/掩码
-        "( P1 P2 ) 1 0 H\n"                // 2  pin 组行 + 驱动 + 比较
-        "0101\n"                           // 3  位块 → 向量行
-        "LBL_MAIN:\n"                      // 4  标签定义
-        "    JMP LBL_MAIN\n"               // 5  opcode + 跳转目标
-        ".INCLUDE \"cfg.pat\"\n"           // 6  指令 + 字符串
-        "VDD P1\n"                         // 7  pin 目录行
-        "0x1F\n"                           // 8  十六进制
-        "10\n"                             // 9  非向量行 → 号码而非向量
-        "TSET ts1\n"                       // 10 timing 引用
-        "RPT 2 # 尾部注释\n");             // 11 尾部注释
+        "SET_DEC_FILE \"./chip.dec\"\n"                  // 0  模块语句 + 字符串
+        "HEADER CLR,%SEL0,SEL1,%G1,G2,\n"                // 1  HEADER 列表：模块 + %pin
+        "       QD,QE,QF;\n"                             // 2  续行（行内自证判据）
+        "SPM_PATTERN (os_pat) {\n"                       // 3  模块 + 括号
+        "os_st::  *0 00 0 *TS15;\n"                      // 4  标签 + 向量 + 时序集
+        "    *Z z0 * RPT 100;\n"                         // 5  向量 + 微指令 + 计数
+        "*0 1 H L Z*  *R S T U X*  *V K 2*\n"            // 6  五分类全符号
+        "RPT 2 # 尾部注释\n"                              // 7  微指令 + 行注释
+        "0x1F\n");                                       // 8  十六进制（非向量区）
 
     Scintilla::ILexer5* lx = XfsCreateLexer(kLexAtePattern);
     LexAll(lx, doc);
+    const std::string& text = doc.Text();
 
-    // 行 0：`RPT 10` —— 首记号是 opcode，10 必须保持**号码**色（不能升格成向量）
-    CheckTokenStyle(doc, "RPT 10", SCE_ATEP_OPCODE);
-    CheckTokenStyle(doc, "10", SCE_ATEP_NUMBER);
-    // 行 1：向量行的 0/1 是驱动色，X 是掩码色 —— 同一拍必须都能分出来
+    // 行 0：模块语句（不是「指令」——真实语言里没有 .directive 这种记号）
+    CheckTokenStyle(doc, "SET_DEC_FILE", SCE_ATEP_MODULE);
+    CheckTokenStyle(doc, "\"./chip.dec\"", SCE_ATEP_STRING);
+
+    // 行 1：HEADER 行本身是模块；列表里的名字全是 pin，`%` 是运算符
+    CheckTokenStyle(doc, "HEADER", SCE_ATEP_MODULE);
     {
-        const std::size_t l1 = FindIn(doc.Text(), "0 1 X");
-        CHECK(l1 != (std::size_t)-1);
-        CHECK(doc.RangeIs(l1 + 0, 1, SCE_ATEP_VECTOR));   // 0 → 驱动
-        CHECK(doc.RangeIs(l1 + 1, 1, SCE_ATEP_DEFAULT));  // 空格
-        CHECK(doc.RangeIs(l1 + 2, 1, SCE_ATEP_VECTOR));   // 1 → 驱动
-        CHECK(doc.RangeIs(l1 + 4, 1, SCE_ATEP_MASK));     // X → 掩码
+        const std::size_t p = FindIn(text, "HEADER ");
+        CHECK(p != (std::size_t)-1);
+        CHECK(doc.RangeIs(p + 7, 3, SCE_ATEP_PIN));    // CLR
+        CHECK(doc.RangeIs(p + 10, 1, SCE_ATEP_OPERATOR));  // ,
+        CHECK(doc.RangeIs(p + 11, 1, SCE_ATEP_OPERATOR));  // %
+        CHECK(doc.RangeIs(p + 12, 4, SCE_ATEP_PIN));   // SEL0
+        // 行 2 是续行：没有 HEADER 关键字，靠「整行只由标识符/%,;组成」自证
+        const std::size_t q = FindIn(text, "QD,QE,QF;");
+        CHECK(q != (std::size_t)-1);
+        CHECK(doc.RangeIs(q, 2, SCE_ATEP_PIN));
+        CHECK(doc.RangeIs(q + 3, 2, SCE_ATEP_PIN));
+        CHECK(doc.RangeIs(q + 6, 2, SCE_ATEP_PIN));
     }
-    // 行 2：括号 pin 组里的名字是 pin 色，组外的 0/1/H 按向量分色
+
+    // 行 3：模块语句 + 普通标识符（`(os_pat)` 里的名字不在任何表里 → default）
     {
-        const std::size_t l2 = FindIn(doc.Text(), "( P1 P2 ) 1 0 H");
-        CHECK(l2 != (std::size_t)-1);
-        CHECK(doc.RangeIs(l2, 1, SCE_ATEP_OPERATOR));         // '('
-        CHECK(doc.RangeIs(l2 + 2, 2, SCE_ATEP_PIN));          // P1
-        CHECK(doc.RangeIs(l2 + 5, 2, SCE_ATEP_PIN));          // P2
-        CHECK(doc.RangeIs(l2 + 10, 1, SCE_ATEP_VECTOR));      // 1 → 驱动
-        CHECK(doc.RangeIs(l2 + 12, 1, SCE_ATEP_VECTOR));      // 0 → 驱动
-        CHECK(doc.RangeIs(l2 + 14, 1, SCE_ATEP_EXPECT));      // H → 比较
+        const std::size_t p = FindIn(text, "SPM_PATTERN");
+        CHECK(p != (std::size_t)-1);
+        CHECK(doc.RangeIs(p + 12, 1, SCE_ATEP_OPERATOR));  // '('
+        CHECK(doc.RangeIs(p + 13, 6, SCE_ATEP_DEFAULT));   // os_pat
     }
-    // 行 3：`0101` 四位位块 → 整块驱动色（不是号码）
-    CheckTokenStyle(doc, "0101", SCE_ATEP_VECTOR);
-    // 行 4：标签定义（NAME:）
-    CheckTokenStyle(doc, "LBL_MAIN:", SCE_ATEP_LABEL);
-    // 行 5：跳转 opcode 后的标识符是**目标标签**，不是普通名
-    CheckTokenStyle(doc, "JMP", SCE_ATEP_OPCODE);
+
+    // 行 4：`名字:` 是标签（:: 全局 / : 局部），前缀优先于词表
     {
-        const std::size_t p = FindIn(doc.Text(), "JMP ");
-        CHECK(doc.RangeIs(p + 4, 8, SCE_ATEP_LABEL));
+        const std::size_t p = FindIn(text, "os_st::");
+        CHECK(p != (std::size_t)-1);
+        CHECK(doc.RangeIs(p, 5, SCE_ATEP_LABEL));
+        CHECK(doc.RangeIs(p + 5, 2, SCE_ATEP_OPERATOR));   // ::
+        // 向量界定符 * 与向量数据
+        CHECK(doc.RangeIs(p + 9, 1, SCE_ATEP_SEP));
+        CHECK(doc.RangeIs(p + 10, 1, SCE_ATEP_VEC_DRIVE));      // 0
+        // 收尾 * 之后的 TS15 是时序集引用
+        const std::size_t ts = FindIn(text, "TS15");
+        CHECK(ts != (std::size_t)-1);
+        CHECK(doc.RangeIs(ts, 4, SCE_ATEP_TIMESET));
+        CHECK(doc.RangeIs(ts + 4, 1, SCE_ATEP_OPERATOR));  // ;
     }
-    // 行 6：以 '.' 开头 → 指令；引号串 → 字符串
-    CheckTokenStyle(doc, ".INCLUDE", SCE_ATEP_DIRECTIVE);
-    CheckTokenStyle(doc, "\"cfg.pat\"", SCE_ATEP_STRING);
-    // 行 7：内置 pin 表命中 + pin 目录行（全是标识符）整体按 pin 上色
-    CheckTokenStyle(doc, "VDD", SCE_ATEP_PIN);
+
+    // 行 5：大小写区分向量符号与十六进制引导 ——
+    //   大写 Z = 比较符号；小写 z + 十六进制位 = 十六进制组。手册两者不混，
+    //   靠大小写就能无歧义地区分（否则 `Z0` 是「一个符号还是两个」说不清）。
     {
-        const std::size_t p = FindIn(doc.Text(), "VDD ");
-        CHECK(doc.RangeIs(p + 4, 2, SCE_ATEP_PIN));          // P1：靠 pinListLine 判据
+        const std::size_t p = FindIn(text, "*Z z0 *");
+        CHECK(p != (std::size_t)-1);
+        CHECK(doc.RangeIs(p, 1, SCE_ATEP_SEP));
+        CHECK(doc.RangeIs(p + 1, 1, SCE_ATEP_VEC_CMP));    // Z
+        CHECK(doc.RangeIs(p + 3, 2, SCE_ATEP_HEX));        // z0
+        CHECK(doc.RangeIs(p + 6, 1, SCE_ATEP_SEP));
+        // 微指令与十进制计数（微指令表来自 Chroma3380Db::kPatMicroWords）
+        CHECK(doc.RangeIs(p + 8, 3, SCE_ATEP_MICRO));      // RPT
+        CHECK(doc.RangeIs(p + 12, 3, SCE_ATEP_NUMBER));    // 100
     }
-    // 行 8：十六进制
-    CheckTokenStyle(doc, "0x1F", SCE_ATEP_HEX);
-    // 行 9：独立 `10`（<4 位纯 01 串且非向量行）→ 号码
+
+    // 行 6：向量五分类 —— 手册 3.4.1 的「驱动/比较组合」语义
+    //   0 1 → 驱动 | H L Z → 只比较 | R S T U → 驱动+比较 | X → 掩码 | V K 2 → 控制
     {
-        const std::size_t p = FindIn(doc.Text(), "0x1F\n");
-        CHECK(doc.RangeIs(p + 5, 2, SCE_ATEP_NUMBER));
+        const std::size_t p = FindIn(text, "*0 1 H L Z*");
+        CHECK(p != (std::size_t)-1);
+        CHECK(doc.RangeIs(p, 1, SCE_ATEP_SEP));
+        CHECK(doc.RangeIs(p + 1, 1, SCE_ATEP_VEC_DRIVE));     // 0
+        CHECK(doc.RangeIs(p + 3, 1, SCE_ATEP_VEC_DRIVE));     // 1
+        CHECK(doc.RangeIs(p + 5, 1, SCE_ATEP_VEC_CMP));       // H
+        CHECK(doc.RangeIs(p + 7, 1, SCE_ATEP_VEC_CMP));       // L
+        CHECK(doc.RangeIs(p + 9, 1, SCE_ATEP_VEC_CMP));       // Z
+        CHECK(doc.RangeIs(p + 10, 1, SCE_ATEP_SEP));
+
+        const std::size_t q = FindIn(text, "*R S T U X*");
+        CHECK(q != (std::size_t)-1);
+        CHECK(doc.RangeIs(q + 1, 1, SCE_ATEP_VEC_DRV_CMP));   // R
+        CHECK(doc.RangeIs(q + 3, 1, SCE_ATEP_VEC_DRV_CMP));   // S
+        CHECK(doc.RangeIs(q + 5, 1, SCE_ATEP_VEC_DRV_CMP));   // T
+        CHECK(doc.RangeIs(q + 7, 1, SCE_ATEP_VEC_DRV_CMP));   // U（批次 72 曾误当掩码）
+        CHECK(doc.RangeIs(q + 9, 1, SCE_ATEP_VEC_MASK));      // X
+
+        const std::size_t r = FindIn(text, "*V K 2*");
+        CHECK(r != (std::size_t)-1);
+        CHECK(doc.RangeIs(r + 1, 1, SCE_ATEP_VEC_CTRL));      // V
+        CHECK(doc.RangeIs(r + 3, 1, SCE_ATEP_VEC_CTRL));      // K
+        CHECK(doc.RangeIs(r + 5, 1, SCE_ATEP_VEC_CTRL));      // 2
     }
-    // 行 10：timing 引用（内置第三张表，LanguageMap 的两个 keywords 槽位放不下）
-    CheckTokenStyle(doc, "TSET", SCE_ATEP_TIMING);
-    // 行 11：`#` 起到底都是注释
+
+    // 行 7：`#` 起到底都是注释（同行的微指令与计数仍然正常着色）
+    CheckTokenStyle(doc, "RPT", SCE_ATEP_MICRO);
     {
-        const std::size_t p = FindIn(doc.Text(), "# 尾部注释");
+        const std::size_t p = FindIn(text, "# 尾部注释");
         CHECK(p != (std::size_t)-1);
         CHECK(doc.RangeIs(p, std::strlen("# 尾部注释"), SCE_ATEP_COMMENT));
     }
+
+    // 行 8：向量区外的 0x1F 是十六进制字面量
+    CheckTokenStyle(doc, "0x1F", SCE_ATEP_HEX);
+
     // 每个字节都被显式写过（Push 总数守恒，后半篇才不会整体错位）
     CheckFullyStyled(doc);
 
     lx->Release();
 }
 
-// .pat 的词表注入：LanguageMap 的 keywords 槽位之外还能追加内置表
+// .pat 的词表注入：三张表分别是 [0]模块语句 [1]微指令 [2]常见 pin 名。
+// LanguageMap 只给自研词法器留了两个 keywords 槽位，所以表必须内置在词法器里
+// （批次 73 起由 Chroma3380Db 提供，不再是手写清单）。
 static void TestAtePatternWordList() {
-    MockDoc doc("MYOP 5\nXPIN 2\nrpt 3\n");
+    MockDoc doc("MYOP 5\nXPIN 2\nset_dec_file\nSPM_PATTERN\n");
     Scintilla::ILexer5* lx = XfsCreateLexer(kLexAtePattern);
-    CHECK(lx->WordListSet(0, "MYOP") == 0);
-    CHECK(lx->WordListSet(1, "XPIN") == 0);
+    CHECK(lx->WordListSet(0, "MYOP") == 0);      // 追加进模块语句表
+    CHECK(lx->WordListSet(2, "XPIN") == 0);      // 追加进 pin 表
     LexAll(lx, doc);
-    CheckTokenStyle(doc, "MYOP", SCE_ATEP_OPCODE);
+    CheckTokenStyle(doc, "MYOP", SCE_ATEP_MODULE);
     CheckTokenStyle(doc, "XPIN", SCE_ATEP_PIN);
-    // 小写输入照样命中 opcode（现场文件大小写混用）
-    CheckTokenStyle(doc, "rpt", SCE_ATEP_OPCODE);
-    // 注入是追加，内置表仍在
-    CHECK(lx->WordListSet(0, "RPT") == 0);
+    // 注入是**追加**：内置表仍在，且大小写不敏感（现场文件大小写混用）
+    CheckTokenStyle(doc, "set_dec_file", SCE_ATEP_MODULE);
+    CheckTokenStyle(doc, "SPM_PATTERN", SCE_ATEP_MODULE);
     lx->Release();
 }
 
 // .pat 折叠：缩进表达 pattern 内的层级
 static void TestAtePatternFold() {
     MockDoc doc(
-        "LBL_A:\n"          // 0  indent 0
-        "    RPT 2\n"       // 1  indent 4  → 使 0 成为块头
-        "    RPT 3\n"       // 2  indent 4  同层，不得把 1 弹成父层
-        "RPT 4\n");         // 3  indent 0
+        "SPM_PATTERN (os_pat) {\n"    // 0  indent 0
+        "    os_st:: *0 00 *;\n"      // 1  indent 4  → 使 0 成为块头
+        "    os_sp:  *0 00 *;\n"      // 2  indent 4  同层，不得把 1 弹成父层
+        "}\n");                       // 3  indent 0
 
     Scintilla::ILexer5* lx = XfsCreateLexer(kLexAtePattern);
     lx->Fold(0, doc.Length(), 0, &doc);
@@ -488,34 +553,25 @@ static void TestAtePatternFold() {
     lx->Release();
 }
 
-// .pat 判定优先级：上下文必须压过词表。
-// RESET/TRIG/STROBE 同时躺在 opcode、timing、pin 三张表里，纯按表顺序判定会
-// 给出反直觉结果 —— 这几个 case 全部来自 sample.pat 的真实 dump。
+// .pat 判定优先级：上下文/前缀必须压过词表。
+// 【为什么这条重要】同一行里 `%HEADER` 的 HEADER 是 pin 名（不是模块语句）、
+// `os_st:` 的 os_st 是标签（不是普通标识符）、`TS15` 是时序集（不是 pin）。
+// 判据顺序写反就会出现「明明写了 pin 却被染成语句色」这类难查的问题。
 static void TestAtePatternPrecedence() {
-    MockDoc doc(
-        "( VDD RESET TRIG ) 0 1\n"   // pin 组：同一括号里三者必须同色
-        "TSET ts_main\n"             // 首记号是 timing 引用 -> 不是 pin 目录行
-        "MAIN:\n");                  // 标签定义压过 opcode 表
+    MockDoc doc("%HEADER os_st: TS15 VDD\n");
 
     Scintilla::ILexer5* lx = XfsCreateLexer(kLexAtePattern);
     LexAll(lx, doc);
 
-    // 同一个 pin 组里的三个词必须都是 pin 色（原来 RESET/TRIG 会被抢走）
-    {
-        const std::size_t p = FindIn(doc.Text(), "( VDD RESET TRIG )");
-        CHECK(p != (std::size_t)-1);
-        CHECK(doc.RangeIs(p + 2, 3, SCE_ATEP_PIN));   // VDD
-        CHECK(doc.RangeIs(p + 6, 5, SCE_ATEP_PIN));   // RESET（也是 opcode）
-        CHECK(doc.RangeIs(p + 12, 4, SCE_ATEP_PIN));  // TRIG（也是 opcode/timing）
-    }
-    // timing set 名不得被当成 pin（原来整行被误判为 pin 目录行）
-    {
-        const std::size_t p = FindIn(doc.Text(), "ts_main");
-        CHECK(p != (std::size_t)-1);
-        CHECK(doc.RangeIs(p, 7, SCE_ATEP_DEFAULT));
-    }
-    // `MAIN:` 是定义，不是指令
-    CheckTokenStyle(doc, "MAIN", SCE_ATEP_LABEL);
+    const std::size_t p = FindIn(doc.Text(), "%HEADER");
+    CHECK(p != (std::size_t)-1);
+    CHECK(doc.RangeIs(p, 1, SCE_ATEP_OPERATOR));            // %
+    CHECK(doc.RangeIs(p + 1, 6, SCE_ATEP_PIN));             // HEADER：% 之后一律 pin
+    CHECK(doc.RangeIs(p + 8, 5, SCE_ATEP_LABEL));           // os_st：后随 ':' → 标签
+    CHECK(doc.RangeIs(p + 13, 1, SCE_ATEP_OPERATOR));       // :
+    CHECK(doc.RangeIs(p + 15, 4, SCE_ATEP_TIMESET));         // TS15
+    CHECK(doc.RangeIs(p + 20, 3, SCE_ATEP_PIN));            // VDD：常见 pin 表兜底
+
     CheckFullyStyled(doc);
     lx->Release();
 }
@@ -867,19 +923,19 @@ static void TestDegenerate() {
     // 无行尾的末行（CRLF 与裸 CR 也要覆盖）
     {
         Scintilla::ILexer5* lx = XfsCreateLexer(kLexAtePattern);
-        MockDoc crlf("RPT 2\r\n0 1 X\r\n");
+        MockDoc crlf("RPT 2\r\n*0 1 X*\r\n");
         LexAll(lx, crlf);
-        CheckTokenStyle(crlf, "RPT", SCE_ATEP_OPCODE);
-        CheckTokenStyle(crlf, "0 1 X", SCE_ATEP_VECTOR);
+        CheckTokenStyle(crlf, "RPT", SCE_ATEP_MICRO);
+        CheckTokenStyle(crlf, "0 1 X", SCE_ATEP_VEC_DRIVE);   // 向量区内的 0
         CheckFullyStyled(crlf);
         lx->Release();
     }
     {
         Scintilla::ILexer5* lx = XfsCreateLexer(kLexAtePattern);
-        MockDoc cr("RPT 2\r0 1 X");            // 裸 CR、无末行尾
+        MockDoc cr("RPT 2\r*0 1 X*");                          // 裸 CR、无末行尾
         LexAll(lx, cr);
-        CheckTokenStyle(cr, "RPT", SCE_ATEP_OPCODE);
-        CheckTokenStyle(cr, "0 1 X", SCE_ATEP_VECTOR);
+        CheckTokenStyle(cr, "RPT", SCE_ATEP_MICRO);
+        CheckTokenStyle(cr, "0 1 X", SCE_ATEP_VEC_DRIVE);
         CheckFullyStyled(cr);
         lx->Release();
     }
@@ -900,21 +956,49 @@ static void TestDegenerate() {
 
 static const char* StyleName(int st) {
     switch (st) {
-    // ---- .pat（SCE_ATEP_*）----
-    case SCE_ATEP_DEFAULT:   return "default";
-    case SCE_ATEP_COMMENT:   return "comment";
-    case SCE_ATEP_OPCODE:    return "opcode";
-    case SCE_ATEP_LABEL:     return "label";
-    case SCE_ATEP_PIN:       return "pin";
-    case SCE_ATEP_VECTOR:    return "DRIVE";    // 向量 0/1
-    case SCE_ATEP_EXPECT:    return "EXPECT";   // 向量 H/L/T
-    case SCE_ATEP_MASK:      return "MASK";     // 向量 X/N/Z/U/D
-    case SCE_ATEP_HEX:       return "hex";
-    case SCE_ATEP_NUMBER:    return "number";
-    case SCE_ATEP_STRING:    return "string";
-    case SCE_ATEP_TIMING:    return "timing";
-    case SCE_ATEP_DIRECTIVE: return "directive";
-    case SCE_ATEP_OPERATOR:  return "oper";
+    // ---- .pat（SCE_ATEP_*，批次 73 按手册第 3 章重排）----
+    case SCE_ATEP_DEFAULT:     return "default";
+    case SCE_ATEP_COMMENT:     return "comment";
+    case SCE_ATEP_MODULE:      return "MODULE";
+    case SCE_ATEP_MICRO:       return "MICRO";
+    case SCE_ATEP_LABEL:       return "label";
+    case SCE_ATEP_SEP:         return "sep";
+    case SCE_ATEP_TIMESET:     return "timeset";
+    case SCE_ATEP_PIN:         return "pin";
+    case SCE_ATEP_VEC_DRIVE:   return "DRIVE";
+    case SCE_ATEP_VEC_CMP:     return "CMP";
+    case SCE_ATEP_VEC_DRV_CMP: return "DRV+CMP";
+    case SCE_ATEP_VEC_MASK:    return "MASK";
+    case SCE_ATEP_VEC_CTRL:    return "CTRL";
+    case SCE_ATEP_HEX:         return "hex";
+    case SCE_ATEP_NUMBER:      return "number";
+    case SCE_ATEP_STRING:      return "string";
+    case SCE_ATEP_OPERATOR:    return "oper";
+    // ---- .dec（SCE_DEC_*）----
+    case SCE_DEC_DEFAULT:      return "default";
+    case SCE_DEC_COMMENT:      return "comment";
+    case SCE_DEC_BLOCK:        return "BLOCK";
+    case SCE_DEC_PINTYPE:      return "pintype";
+    case SCE_DEC_PIN:          return "pin";
+    case SCE_DEC_CHANNEL:      return "channel";
+    case SCE_DEC_MODEVAL:      return "modeval";
+    case SCE_DEC_OPERATOR:     return "oper";
+    case SCE_DEC_STRING:       return "string";
+    // ---- .pln（SCE_PLN_*）----
+    case SCE_PLN_DEFAULT:      return "default";
+    case SCE_PLN_COMMENT:      return "comment";
+    case SCE_PLN_BLOCK:        return "BLOCK";
+    case SCE_PLN_STMT:         return "STMT";
+    case SCE_PLN_MACRO:        return "macro";
+    case SCE_PLN_CLIB:         return "clib";
+    case SCE_PLN_PINTYPE:      return "pintype";
+    case SCE_PLN_FLOW:         return "flow";
+    case SCE_PLN_LABEL:        return "label";
+    case SCE_PLN_CKEYWORD:     return "ckey";
+    case SCE_PLN_CTYPE:        return "ctype";
+    case SCE_PLN_STRING:       return "string";
+    case SCE_PLN_NUMBER:       return "number";
+    case SCE_PLN_OPERATOR:     return "oper";
     // ---- .stil（SCE_STIL_*）----
     case SCE_STIL_DEFAULT:   return "default";
     case SCE_STIL_COMMENT:   return "comment";
@@ -1005,6 +1089,63 @@ static int DumpFile(const char* lexerName, const char* path) {
     return 0;
 }
 
+static void TestChromaPlanPreprocessor() {
+    const char* directives[] = { "#include", "#define", "#if", "#ifdef", "#ifndef", "#i", "#d" };
+    const char* endings[] = { "\n", "\r\n", "\r", "" };
+    for (const char* directive : directives) {
+        for (const char* ending : endings) {
+            std::string text = std::string("  ") + directive + " \"test.h\"" + ending;
+            MockDoc doc(text);
+            Scintilla::ILexer5* lx = XfsCreateLexer(kLexChromaPlan);
+            LexAll(lx, doc);
+            CHECK(doc.RangeIs(0, 2, SCE_PLN_DEFAULT));
+            CHECK(doc.RangeIs(2, std::strlen(directive), SCE_PLN_FLOW));
+            CHECK(doc.RangeIs(3 + std::strlen(directive), 8, SCE_PLN_STRING));
+            CheckFullyStyled(doc);
+            lx->Release();
+        }
+    }
+    MockDoc doc("#define LIMIT 42\nTEST_PRO {\n  test ? #F(next) : #C(fail, fail);\n}\n");
+    Scintilla::ILexer5* lx = XfsCreateLexer(kLexChromaPlan);
+    LexAll(lx, doc);
+    CheckTokenStyle(doc, "42", SCE_PLN_NUMBER);
+    CheckTokenStyle(doc, "TEST_PRO", SCE_PLN_BLOCK);
+    CHECK(doc.RangeIs(FindIn(doc.Text(), "#F"), 2, SCE_PLN_FLOW));
+    CHECK(doc.RangeIs(FindIn(doc.Text(), "#C"), 2, SCE_PLN_FLOW));
+    CheckFullyStyled(doc);
+    lx->Release();
+}
+
+// 批次 75：块注释开符 `/*` 消耗 2 字节却不 Push 样式 → MockDoc 的样式游标比文本
+// 落后 2 字节，**整个文档**的样式随之左移 2 字节（末尾必然剩 kUnstyled 字节）。
+// 现场 AAA .pln（以 /* 头注释开始）dump 实测：#include 的 flow 段 8→6、
+// TEST_PRO 12→10、注释 71→73——全文件颜色错位两个字节，而 CheckFullyStyled 之外的
+// 断言全被移位打乱。StilLexer 的开符整体入 COMMENT 色（Push(COMMENT,2)），本来
+// 就没这个病；三个带泄漏的词法器（ChromaPlan/ChromaDec/AtePattern）在这里一起钉死。
+// （批次 74 修的是 #include 死循环——同是「真实文件才触发、开发机样例没有」的漏网，
+//  这条的教训一样：fixture 必须贴近现场形态。）
+static void TestBlockCommentOpenerAlignment() {
+    struct { const char* lexer; const char* word; int style; } kCases[] = {
+        { kLexChromaPlan,  "TEST_PRO",     SCE_PLN_BLOCK },
+        { kLexChromaDec,   "DEC_MODE",     SCE_DEC_BLOCK },
+        { kLexAtePattern,  "SET_DEC_FILE", SCE_ATEP_MODULE },
+        { kLexStil,        "Signals",      SCE_STIL_BLOCK },
+    };
+    for (const auto& c : kCases) {
+        const std::string prefix = "/* head */\n";
+        MockDoc doc(prefix + c.word + " x\n");
+        Scintilla::ILexer5* lx = XfsCreateLexer(c.lexer);
+        CHECK(lx != nullptr);
+        if (!lx) continue;
+        LexAll(lx, doc);
+        // 注释闭合后的第一个词必须落在它自己的字节上（不移位才算过）
+        CHECK(doc.RangeIs((Sci_Position)prefix.size(),
+                          (Sci_Position)std::strlen(c.word), c.style));
+        CheckFullyStyled(doc);
+        lx->Release();
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc >= 4 && std::strcmp(argv[1], "--dump") == 0)
         return DumpFile(argv[2], argv[3]);
@@ -1029,6 +1170,8 @@ int main(int argc, char** argv) {
     TestAteLogTrailingComment();
     TestAteLogGateHardening();
     TestDegenerate();
+    TestChromaPlanPreprocessor();
+    TestBlockCommentOpenerAlignment();
 
     printf("test_atelexer: %d checks, %d failures\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;

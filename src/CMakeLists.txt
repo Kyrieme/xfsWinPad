@@ -50,6 +50,11 @@ set(XFS_APP_SOURCES
     language/AtePatternLexer.cpp
     language/StilLexer.cpp
     language/AteLogLexer.cpp
+    language/Chroma3380Db.cpp
+    language/ChromaDecLexer.cpp
+    language/ChromaPlanLexer.cpp
+    language/ChromaSignature.cpp
+    language/Chroma3380Complete.cpp
     theme/Styler.cpp
     plugin/PluginManager.cpp
     plugin/PluginCatalog.cpp

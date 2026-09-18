@@ -149,11 +149,16 @@ add_test(NAME styler COMMAND test_styler)
 
 # 自研 ATE 词法器（批次 72）：假 IDocument 驱动真实 ILexer5，
 # 覆盖 .pat/.stil/.log 的行分类、跨窗口状态、折叠与保守门。
+# 批次 73 追加 .dec/.pln 两支（自研族现在是 5 个词法器）——XfsCreateLexer 里
+# 引用了它们，链接期必须有定义。
 add_executable(test_atelexer test_atelexer.cpp
     ../src/language/XfsLexer.cpp
     ../src/language/AtePatternLexer.cpp
     ../src/language/StilLexer.cpp
-    ../src/language/AteLogLexer.cpp)
+    ../src/language/AteLogLexer.cpp
+    ../src/language/ChromaDecLexer.cpp
+    ../src/language/ChromaPlanLexer.cpp
+    ../src/language/Chroma3380Db.cpp)
 
 target_include_directories(test_atelexer PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/scintilla/include)
@@ -164,6 +169,27 @@ endif()
 
 add_test(NAME atelexer COMMAND test_atelexer)
 set_tests_properties(atelexer PROPERTIES TIMEOUT 120)
+
+# 批次 73：Chroma 3380 签名提示的位置解析（纯函数，不依赖 Scintilla）。
+# 覆盖嵌套括号/多行调用/字符串里的逗号/越界/`-`与`@`前缀，并直接断言手册里
+# FORCE_V_MLDPS 的 v_range={@6V,@12V}、i_range 的 7 档——这两条同时钉死
+# 生成器曾经的「逐个去重导致候选值区间截断」静默错。
+# 批次 77 追加 Chroma3380Complete.cpp（语句补全候选生成）：它 include 了
+# XfsLexer.h 取三支词法器的名字，因此这里要给出 scintilla 的头文件目录。
+add_executable(test_chromasig test_chromasig.cpp
+    ../src/language/ChromaSignature.cpp
+    ../src/language/Chroma3380Complete.cpp
+    ../src/language/Chroma3380Db.cpp)
+
+target_include_directories(test_chromasig PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include)
+
+target_compile_definitions(test_chromasig PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_chromasig PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME chromasig COMMAND test_chromasig)
 
 add_executable(test_shortcut test_shortcut.cpp
     ../src/shortcut/ShortcutTable.cpp

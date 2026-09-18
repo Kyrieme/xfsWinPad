@@ -361,7 +361,7 @@ void LexLine(const char* s, std::size_t n, XfsStyleSink& sink) {
 
 } // namespace
 
-AteLogLexer::AteLogLexer() : XfsLexerBase(kLexAteLog, 7203) {
+AteLogLexer::AteLogLexer() : XfsLexerBase(kLexAteLog, kLexIdAteLog) {
     // 判定词/SITE/统计词的判据是硬编码的字面量比较，不走关键词表：
     // 这些词的集合很小且语义固定，注入式词表反而会让「保守门」失去确定性。
 }
