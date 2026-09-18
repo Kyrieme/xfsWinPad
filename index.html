@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.9.0 · 2026-09-18 · Windows 10/11 x64</span>
+  <span class="ver">v0.10.0 · 2026-09-18 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.0 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.3 MB）</a>
@@ -94,14 +94,26 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">02BD4455D83BB5AC3A5C51DDB712456320F61A7C18736D77A5C8F406554FE7A6</p>
+    <p class="hash">B933C1E5D329BFF483082783880A42BD936935B18C947B69ACF484431E19CDA5</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">40835BFD9056733D3A131232F89F62631AAF72F7DB48DBB02ECB664A4041A7B9</p>
+    <p class="hash">E2D596651DAF45DAF6EF5395044F14EE883DE42C04D94BC51B3329225FB3E808</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.9.0</b>（2026-09-18）</p>
+    <p><b>v0.10.0</b>（2026-09-18）</p>
+    <ul>
+      <li><b>静态检查上线</b>：v0.9.0 的校验内核接入编辑器 —— 违规处直接画红线 /
+        橙色波浪线，底部「静态检查」面板列出级别 / 行 / 列 / 规则码 / 说明，
+        双击跳转并选中问题片段</li>
+      <li>新增实参个数检查（<code>.pln</code>）：调用参数多于语句签名上限 → 错误；
+        少于必填项 → 警告。规则逐条取自语言手册，并在手册全部示例与真实工程文件
+        上回归，<b>零误报</b></li>
+      <li>状态栏新增检查结果计数（「N 错 N 警」/「未发现问题」）</li>
+      <li>View 菜单新增「Chroma 静态检查」开关（默认开启，可关闭）</li>
+      <li>所有提示明确标注 <b>「xfsWinPad 静态检查，非 CRAFT 编译结果」</b></li>
+    </ul>
+    <p style="margin-top:14px"><b>v0.9.0</b>（2026-09-18）</p>
     <ul>
       <li>新增 <b>Chroma 3380 静态校验内核</b>：按手册明文规则检查引脚重复定义、
         <code>SET_DEC_FILE</code> 多余分号这类确定性问题；本版交付底层能力与单元测试，
