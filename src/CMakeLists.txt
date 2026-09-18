@@ -17,6 +17,7 @@ set(XFS_APP_SOURCES
     app/WindowsListDialog.cpp
     app/StdfPanel.cpp
     app/CsvPanel.cpp
+    app/DiagnosticsPanel.cpp
 
     bigfile/BigFileModel.cpp
     bigfile/BigFileView.cpp

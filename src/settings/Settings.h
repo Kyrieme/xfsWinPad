@@ -44,6 +44,11 @@ struct AppSettings {
     bool indentGuides = true;    // 缩进参考线 SCI_SETINDENTATIONGUIDES
     bool showWhitespace = false; // 显示空白符 SCI_SETVIEWWS
 
+    // Chroma 3380 静态检查（批次 87）：.pln/.dec/.pat 编辑时自动跑我们自建的
+    // 校验规则，命中处画波浪线（indicator 10/11）+ 底部诊断面板列出。
+    // 关掉即完全不标红、不校验（面板显示"已关闭"）。默认开。
+    bool chromaDiagnostics = true;
+
     // searching defaults (Preferences > 搜索)
     bool searchMatchCase = false;   // FindState 初始 matchCase
     bool searchWholeWord = false;   // FindState 初始 wholeWord
@@ -74,6 +79,7 @@ struct AppSettings {
     int resultsPanelH = 0;
     int logPanelH = 0;
     int terminalPanelH = 0;
+    int diagPanelH = 0;          // 诊断面板高度 at 96 dpi (0 = default)
     int aiPanelW = 0;            // AI 右栏宽度 at 96 dpi (0 = default)
     bool aiAttachContext = true; // AI 发送时自动附带编辑器上下文（路径/光标/选区）
     bool aiAutoApprove = true;   // 自动放行 AI 权限请求（false = 用户在 opencode 侧手动确认）

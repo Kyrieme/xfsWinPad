@@ -15,6 +15,7 @@
 #include "../editor/Editor.h"
 #include "../language/LanguageMap.h"
 #include "../language/XfsLexer.h"     // 批次 73：Chroma 族词法器名（模型来源标注）
+#include "../language/Chroma3380Diagnostics.h"  // 批次 87：静态校验内核（纯函数）
 #include "../resources/resource.h"
 #include "../search/FindInFiles.h"
 #include "../search/SearchAll.h"
@@ -53,6 +54,18 @@ constexpr wchar_t kHostClassName[] = L"xfsWinPadEditorHost";
 constexpr wchar_t kSplitterClassName[] = L"xfsWinPadSplitViewDivider";
 constexpr UINT_PTR kPluginEvtTimerId = 2;   // coalesced plugin event flush
 constexpr UINT_PTR kAiReloadTimer = 4;      // AI 改盘延迟对比（3s）
+// 批次 87：静态检查防抖。编辑时每敲一个键就全量重扫既浪费又会让波浪线
+// 闪烁，所以合并成"最后一次编辑之后 450ms 跑一次"。
+// ⚠️ 定时器 id 与 1(autosave)/2(plugin 事件)/4(AI 重载) 错开。
+constexpr UINT_PTR kDiagTimerId = 5;
+constexpr int kDiagDebounceMs = 450;
+
+// 批次 87：这个文档要不要走 Chroma 静态检查？判定交给内核（FileKindFromPath），
+// 保证"什么算 Chroma 文件"只有一处实现 —— 状态栏、菜单、刷新路径都调它。
+chroma3380::ChromaFileKind KindOfDocument(const Document& d) {
+    if (!d.HasPath()) return chroma3380::ChromaFileKind::Unknown;
+    return chroma3380::FileKindFromPath(WideToUtf8(d.path.wstring()));
+}
 
 // Plain container for the tab strip + editor controls.
 // Forwards child notifications up to the main window.
@@ -592,6 +605,12 @@ void MainWindow::BuildMenus() {
     item(view, Tr(L"menu.view.log"), Cmd::ViewLogPanel);
     item(view, Tr(L"menu.view.terminal"), Cmd::ViewTerminal);
     sep(view);
+    // 批次 87：Chroma 3380 静态检查。两项刻意分开 —— "要不要被标红"和
+    // "要不要看清单"是两件事（有人只要波浪线，有人只要列表）
+    AppendMenuW(view, MF_STRING | (settings_.chromaDiagnostics ? MF_CHECKED : 0),
+                Cmd::ViewChromaCheck, Tr(L"menu.view.chromacheck"));
+    item(view, Tr(L"menu.view.diagnostics"), Cmd::ViewDiagnostics);
+    sep(view);
     item(view, Tr(L"menu.view.zoomin"), Cmd::ViewZoomIn);
     item(view, Tr(L"menu.view.zoomout"), Cmd::ViewZoomOut);
     item(view, Tr(L"menu.view.zoomreset"), Cmd::ViewZoomReset);
@@ -733,6 +752,7 @@ void MainWindow::ApplyLanguage() {
     if (terminal_) terminal_->Retranslate();
     if (ai_) ai_->Retranslate();
     if (results_) results_->Retranslate();
+    if (diag_) diag_->Retranslate();
 }
 
 void MainWindow::BuildAccelerators() {
@@ -1282,13 +1302,14 @@ void MainWindow::LayoutChildren() {
     int bfH = (bigfile_ && bigfile_->Visible()) ? MulDiv(bigfileHLogical_, dpi, 96) : 0;
     int lgH = (logPanel_ && logPanel_->Visible()) ? MulDiv(logHLogical_, dpi, 96) : 0;
     int termH = (terminal_ && terminal_->Visible()) ? MulDiv(termHLogical_, dpi, 96) : 0;
+    int dgH = (diag_ && diag_->Visible()) ? MulDiv(diagHLogical_, dpi, 96) : 0;
     int aiW = (ai_ && ai_->Visible()) ? MulDiv(aiWLogical_, dpi, 96) : 0;
     int dockH = (dockMgr_ && !dockMgr_->Empty()) ? dockMgr_->TotalHeight(dpi) : 0;
     int feW = (explorer_ && explorer_->Visible()) ? MulDiv(260, dpi, 96) : 0;
     int top = tbH;
     // AI 右栏占据最右整列（编辑器同高），dock 链与编辑器都止步于它的左缘
     int rightEdge = rc.right - aiW;
-    int hostH = rc.bottom - sbH - rpH - hxH - sdH - cvH - bfH - lgH - termH - dockH - top;
+    int hostH = rc.bottom - sbH - rpH - hxH - sdH - cvH - bfH - lgH - termH - dgH - dockH - top;
     int edW = rightEdge - feW;
     bool split = workspace_ && workspace_->SplitActive();
     int leftW = edW;   // left view width (full when not split)
@@ -1345,6 +1366,12 @@ void MainWindow::LayoutChildren() {
         MoveWindow(terminal_->Hwnd(), feW, dockY, dockW, termH, TRUE);
         terminal_->Layout(dockW, termH);
         dockY += termH;
+    }
+    // 批次 87：诊断面板排在插件 dock 之前（插件面板永远在最末，见下）
+    if (diag_ && dgH > 0) {
+        MoveWindow(diag_->Hwnd(), feW, dockY, dockW, dgH, TRUE);
+        diag_->Layout(dockW, dgH);
+        dockY += dgH;
     }
     // 4d: 插件可停靠面板排在底部 dock 链最末（DockManager 自行逐块布置）
     if (dockMgr_ && dockH > 0)
@@ -1439,6 +1466,11 @@ void MainWindow::UpdateStatusBar() {
                             strcmp(lx, kLexChromaDec) == 0 ||
                             strcmp(lx, kLexAtePattern) == 0;
         status_->SetModelNote(chroma ? Tr(L"sb.model.note") : L"");
+        // 批次 87：第 8 段 = 本文件的静态检查计数。文本由 RefreshDiagnostics
+        // 写进成员 diagStatusText_，这里只决定"该不该显示" —— 非 Chroma 文档
+        // 与功能关闭时一律清空，免得切标签的瞬间把上一个文件的计数留在状态栏。
+        status_->SetDiagnostics((chroma && settings_.chromaDiagnostics)
+                                    ? diagStatusText_ : std::wstring());
     }
 }
 
@@ -1481,6 +1513,11 @@ void MainWindow::OnWorkspaceChanged() {
     for (const LanguageMenuItem* e = LanguageMenuCatalog(); e->label; ++e) ++langCount;
     CheckMenuRadioItem(menu_, Cmd::LangFirst, Cmd::LangFirst + langCount - 1,
                        Cmd::LangFirst + langIdx, MF_BYCOMMAND);
+
+    // 批次 87：换了活动文档 → 波浪线与状态栏计数都要换成新文档的。走防抖而不是
+    // 立刻重算：本函数在改标题/切标签等路径上都会被调到，合并掉更稳；而每个
+    // 文档的标记本来就在自己的 Scintilla 控件里，切回来时不会丢。
+    ScheduleDiagnostics();
 }
 
 void MainWindow::RebuildRecentMenu(const std::vector<std::wstring>& items) {
@@ -2833,6 +2870,9 @@ void MainWindow::RunPreferences() {
 void MainWindow::RestyleAll() {
     if (theme_ && workspace_) workspace_->ApplyThemeToAll(*theme_);
     InvalidateRect(hwnd_, nullptr, TRUE);
+    // 批次 87：ApplyThemeToAll 里 STYLECLEARALL 会清掉 indicator 的定义（值还在，
+    // 丢的是画法），所以波浪线要重画一次才看得见；顺带也把新样式下的标记重算一遍。
+    ScheduleDiagnostics();
 }
 
 bool MainWindow::SwitchThemeByName(const wchar_t* name) {
@@ -3499,6 +3539,185 @@ void MainWindow::ToggleCsvView() {
         MessageBoxW(hwnd_, Tr(L"msg.csvloadfail"),
                     L"xfsWinPad CSV", MB_OK | MB_ICONWARNING);
     }
+}
+
+// --- 批次 87：Chroma 3380 静态检查（方向 C 的 UI 侧）-----------------------------
+//
+// 【三层各管什么】
+//   内核 Chroma3380Diagnostics.{h,cpp}（纯函数、零 UI、可单测）
+//        —— 判定"这份文本里有哪些**确定**的错"（零误报铁律见内核头文件）
+//   Editor::SetDiagMarks（indicator 10/11）
+//        —— 只认"(行, 列, 长度, 级别)"，不认 Chroma，画波浪线
+//   这一层（宿主）
+//        —— 何时跑、给谁看、状态栏那段显示什么
+//   分层的好处：以后加规则只动内核 + 一个单测，UI 不会随规则变多而变复杂。
+//
+// 【触发时机，以及刻意不触发的时机】
+//   跑：打开/切换标签（OnWorkspaceChanged）、编辑后 450ms（SCN_MODIFIED →
+//       kDiagTimerId）、打开面板、开关功能、样式/主题重建后。
+//   不跑：逐键实时 —— 全量扫描本身只要亚毫秒，但逐键重画波浪线只会闪，
+//         没有信息增量；大文件模式也不跑（Scintilla 自己都放弃词法分析了，
+//         我们更该让路）。非 .pln/.dec/.pat 当然不跑。
+//
+// 【为什么"非 Chroma 就一定要清标记"】
+//   规则是按文件类型分族的（.pln 的 SET_DEC_FILE 不能有分号，而 .dec 的
+//   DEC_MODE 反而必须有分号）。一个文档从 .pln 另存为 .txt 之后，旧的红波浪线
+//   必须立刻消失 —— 留下的标记既无法解释、也无法手动去掉，是"编辑器坏了"那类
+//   工单的典型来源。
+void MainWindow::ToggleChromaCheck() {
+    settings_.chromaDiagnostics = !settings_.chromaDiagnostics;
+    ::CheckMenuItem(menu_, Cmd::ViewChromaCheck, MF_BYCOMMAND |
+        (settings_.chromaDiagnostics ? MF_CHECKED : MF_UNCHECKED));
+    SettingsSave(SettingsFilePath(), settings_);
+    if (settings_.chromaDiagnostics) {
+        RefreshDiagnostics();
+    } else {
+        ClearDiagnosticsEverywhere();
+        diagStatusText_.clear();
+        if (status_) status_->SetDiagnostics(std::wstring());
+        if (diag_ && diag_->Visible()) diag_->Update(Tr(L"panel.diag.off"), {});
+    }
+}
+
+void MainWindow::ClearDiagnosticsEverywhere() {
+    if (!workspace_) return;
+    for (int i = 0; i < workspace_->Count(); ++i)
+        if (Document* d = workspace_->DocumentAt(i)) d->editor.ClearDiagMarks();
+    for (int i = 0; i < workspace_->Count1(); ++i)
+        if (Document* d = workspace_->FindByTabIndex1(i)) d->editor.ClearDiagMarks();
+}
+
+void MainWindow::ToggleDiagnostics() {
+    // 已在显示 → 收起（与其它底部面板一致的开关语义）
+    if (diag_ && diag_->Visible()) {
+        diag_->Hide();
+        ::CheckMenuItem(menu_, Cmd::ViewDiagnostics, MF_UNCHECKED);
+        LayoutChildren();
+        return;
+    }
+    if (!diag_) {
+        diag_ = std::make_unique<DiagnosticsPanel>();
+        if (!diag_->Create(hwnd_, inst_)) { diag_.reset(); return; }
+        diag_->onClose = [this]() {
+            diag_->Hide();
+            ::CheckMenuItem(menu_, Cmd::ViewDiagnostics, MF_UNCHECKED);
+            LayoutChildren();
+        };
+        diag_->onHeightChange = [this](int px) {
+            int dpi = ::GetDpiForWindow(hwnd_);
+            diagHLogical_ = (std::max)(90, (std::min)(1400,
+                MulDiv(px, 96, (std::max)(96, dpi))));
+            settings_.diagPanelH = diagHLogical_;
+            LayoutChildren();
+        };
+        diag_->onActivateRow = [this](int row) { OnDiagActivate(row); };
+        if (settings_.diagPanelH > 0) diagHLogical_ = settings_.diagPanelH;
+        diag_->Retranslate();
+    }
+    diag_->Show();
+    ::CheckMenuItem(menu_, Cmd::ViewDiagnostics, MF_CHECKED);
+    LayoutChildren();
+    // 必须在 Show() 之后：RefreshDiagnostics 只往"可见"的面板里填（省掉隐藏
+    // 时的字符串构造），所以先让它可见再刷新。
+    RefreshDiagnostics();
+}
+
+void MainWindow::RefreshDiagnostics() {
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!d) {
+        diagStatusText_.clear();
+        if (status_) status_->SetDiagnostics(std::wstring());
+        if (diag_ && diag_->Visible()) diag_->Update(Tr(L"panel.diag.nodoc"), {});
+        return;
+    }
+
+    const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
+    const bool active = settings_.chromaDiagnostics &&
+                        kind != chroma3380::ChromaFileKind::Unknown &&
+                        !d->editor.IsLargeFile();
+    if (!active) {
+        if (d->editor.HasDiagMarks()) d->editor.ClearDiagMarks();
+        diagStatusText_.clear();
+        if (status_) status_->SetDiagnostics(std::wstring());
+        if (diag_ && diag_->Visible()) {
+            diag_->Update(settings_.chromaDiagnostics ? Tr(L"panel.diag.notchroma")
+                                                      : Tr(L"panel.diag.off"), {});
+        }
+        return;
+    }
+
+    const std::vector<chroma3380::Diagnostic> found =
+        chroma3380::ValidateChromaSource(d->editor.GetTextUtf8(), kind);
+
+    const bool panelWanted = (diag_ && diag_->Visible());
+    std::vector<Editor::DiagMark> marks;
+    std::vector<DiagItem> items;
+    marks.reserve(found.size());
+    if (panelWanted) items.reserve(found.size());
+    int errs = 0, warns = 0;
+    for (const chroma3380::Diagnostic& g : found) {
+        const bool isErr = (g.severity == chroma3380::DiagSeverity::Error);
+        Editor::DiagMark mk;
+        mk.line = g.line;
+        mk.start = g.start;
+        mk.length = g.length;
+        mk.isError = isErr;
+        marks.push_back(mk);
+        if (isErr) ++errs; else ++warns;
+
+        if (panelWanted) {
+            DiagItem it;
+            it.line = g.line + 1;        // 给用户的永远是 1-based
+            it.column = g.start + 1;
+            it.start = g.start;
+            it.length = g.length;
+            it.error = isErr;
+            it.code = Utf8ToWide(g.code ? g.code : "");
+            it.message = Utf8ToWide(g.message);
+            items.push_back(std::move(it));
+        }
+    }
+    d->editor.SetDiagMarks(marks);
+
+    diagStatusText_ = found.empty()
+        ? std::wstring(Tr(L"sb.diag.clean"))
+        : I18n::Instance().Fmt(L"sb.diag.count",
+              {std::to_wstring(errs), std::to_wstring(warns)});
+    if (status_) status_->SetDiagnostics(diagStatusText_);
+
+    if (panelWanted) {
+        // 摘要里**必须**留下「非 CRAFT 编译结果」这句：Chroma 没有公开错误码表，
+        // 这些规则是我们从语言手册逐条取证的，不是编译器给的结论。
+        const std::wstring summary = found.empty()
+            ? std::wstring(Tr(L"panel.diag.summary.clean"))
+            : I18n::Instance().Fmt(L"panel.diag.summary",
+                  {std::to_wstring(errs), std::to_wstring(warns)});
+        diag_->Update(summary, std::move(items));
+    }
+}
+
+void MainWindow::ScheduleDiagnostics() {
+    if (!settings_.chromaDiagnostics) return;
+    // 对同一个 id 重复 SetTimer 等于重置计时 —— 天然的"最后一次编辑后 N ms"
+    ::SetTimer(hwnd_, kDiagTimerId, (UINT)kDiagDebounceMs, nullptr);
+}
+
+void MainWindow::OnDiagActivate(int row) {
+    if (!diag_) return;
+    const DiagItem* it = diag_->ItemAt(row);
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!it || !d) return;
+    Editor& ed = d->editor;
+    const uptr_t line0 = (uptr_t)(std::max)(0, it->line - 1);
+    const sptr_t lineStart = ed.Send(SCI_POSITIONFROMLINE, line0);
+    const sptr_t lineEnd = ed.Send(SCI_GETLINEENDPOSITION, line0);
+    sptr_t from = lineStart + (std::max)(0, it->start);
+    if (from > lineEnd) from = lineEnd;
+    sptr_t len = it->length > 0 ? (sptr_t)it->length : 1;
+    if (from + len > lineEnd) len = (std::max)((sptr_t)1, lineEnd - from);
+    ed.GotoPosition(it->line, it->column);   // 先滚到行（列位），再上选区
+    ed.SelectRange(from, from + len);        // 选中被判错的片段
+    ::SetFocus(ed.Hwnd());
 }
 
 // --- big-file viewer (>2GB read-only, paged mmap) ------------------------------
@@ -4552,6 +4771,8 @@ void MainWindow::ExecuteCommand(unsigned int id) {
         case Cmd::ViewHexView: ToggleHexView(); break;
         case Cmd::ViewStdfView: ToggleStdfView(); break;
         case Cmd::ViewCsvView: ToggleCsvView(); break;
+        case Cmd::ViewDiagnostics: ToggleDiagnostics(); break;
+        case Cmd::ViewChromaCheck: ToggleChromaCheck(); break;
         case Cmd::ViewBigFile: ToggleBigFileView(); break;
         case Cmd::ViewLogPanel: ToggleLogPanel(); break;
         case Cmd::ViewTerminal: ToggleTerminal(); break;
@@ -5063,6 +5284,13 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                             pluginEvtPending_ |= XFS_EVT_TEXT_MODIFIED;
                             ::SetTimer(hwnd_, kPluginEvtTimerId, 250, nullptr);
                             UpdateUndoRedoState();
+                            // 批次 87：位置全变了，旧诊断的 (行,列) 已经不可信。
+                            // 不立刻重算（逐键全量扫描没信息增量、只会让波浪线闪），
+                            // 合并成"最后一次编辑后 450ms 跑一次"。
+                            // ⚠️ 填 indicator / 加 marker 自身也会发 SCN_MODIFIED，
+                            // 但 modificationType 不含 INSERTTEXT/DELETETEXT，
+                            // 所以不会自激（与上面 ClearOccurrenceHighlight 同理）。
+                            ScheduleDiagnostics();
                         } else if (sn->modificationType & (SC_MOD_CONTAINER |
                                     SC_PERFORMED_UNDO | SC_PERFORMED_REDO)) {
                             // undo/redo 以 container actions 回放文本时也走这里
@@ -5124,6 +5352,10 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_TIMER: {
             if (wp == 1) DoAutoSave();
+            else if (wp == kDiagTimerId) {
+                ::KillTimer(hwnd_, kDiagTimerId);
+                RefreshDiagnostics();   // 批次 87：编辑防抖到期
+            }
             else if (wp == kAiReloadTimer) {
                 ::KillTimer(hwnd_, kAiReloadTimer);
                 AutoReloadChangedNow();

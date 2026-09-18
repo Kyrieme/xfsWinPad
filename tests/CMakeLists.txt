@@ -194,10 +194,21 @@ add_test(NAME chromasig COMMAND test_chromasig)
 # 批次 80：Chroma 3380 静态校验内核（方向 C）。纯函数，不用 Scintilla，
 # 因此这里只编它自己 —— 但**必须**用**手册原文**当正例（§2.3.3 / §2.4.3 的官方
 # .dec 示例），再用真实 AAA .pln 全文当"零诊断"回归。
+# 批次 86：规则 8 要读手册签名（Chroma3380Db）与"语句起始"判定（Chroma3380Complete），
+# 两者同样是纯字符串逻辑、不依赖 Scintilla，所以并到同一个测试目标里，
+# 好处是 `test_chromadiag <文件>` 这个回归入口拿到的就是完整的校验能力。
 add_executable(test_chromadiag test_chromadiag.cpp
-    ../src/language/Chroma3380Diagnostics.cpp)
+    ../src/language/Chroma3380Diagnostics.cpp
+    ../src/language/Chroma3380Db.cpp
+    ../src/language/Chroma3380Complete.cpp)
 
 target_compile_definitions(test_chromadiag PRIVATE UNICODE _UNICODE NOMINMAX)
+# Chroma3380Complete.cpp 只为取三个词法器的**名字常量**而 include 了 XfsLexer.h，
+# 后者又 include <ILexer.h>（上游放在 scintilla/include，不在 lexilla/）。
+# 所以这里只需要两个头文件搜索路径，不链接 Scintilla / Lexilla 的任何符号。
+target_include_directories(test_chromadiag PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
+    ${CMAKE_SOURCE_DIR}/third_party/lexilla/include)
 if(MSVC)
     target_compile_options(test_chromadiag PRIVATE /utf-8 /W3)
 endif()

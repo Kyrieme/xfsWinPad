@@ -90,6 +90,10 @@ enum Cmd : unsigned int {
     // CSV table view
     ViewCsvView = 589,
 
+    // Chroma 3380 静态检查（批次 87）
+    ViewDiagnostics = 590,   // View > 诊断面板（列表 + 双击跳转）
+    ViewChromaCheck = 591,   // View > Chroma 静态检查（勾选：是否标红）
+
     // Diff compare
     DiffCompare = 570,
     DiffExitCompare = 571,

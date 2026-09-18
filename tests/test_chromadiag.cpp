@@ -246,6 +246,113 @@ static void RunPinGroup() {
     }
 }
 
+// 批次 86：规则 8（参数个数，只对 .pln）。
+//
+// 【本组最值钱的三处】
+//   1) **手册自己的示例**必须 0 诊断。`POWER_DOWN_FAIL_SITE( )`（§4.16，签名是
+//      `POWER_DOWN_FAIL_SITE([ mode ])`）就是批次 86 抓出 C++ 漏守卫的那一行：
+//      "整个参数表包在方括号里"时必填数必须是 0，不是一个。
+//   2) **边界**：只在「恰好越过上限 / 恰好少于必填」时报，卡在两端之间不报。
+//   3) **排除表绊线**：`SET_JUDGE_MODE( NORM , FEOP_ON )` 是手册 §4.15 自己的示例，
+//      而它 Format 只写了 1 个参数 —— 谁把 .cpp 里的排除表删了，这里立刻红。
+static void RunArgumentCount() {
+    const ChromaFileKind P = ChromaFileKind::Plan;
+
+    // ---- 正例：整体可选（手册 §4.16 原文写法）----
+    CHECK(ValidateChromaSource("POWER_DOWN_FAIL_SITE( );\n", P).empty());
+    CHECK(ValidateChromaSource("POWER_DOWN_FAIL_SITE();\n", P).empty());
+    CHECK(ValidateChromaSource("POWER_DOWN_FAIL_SITE(NORM);\n", P).empty());
+
+    // ---- 正例：恰好等于必填数 / 恰好等于上限 ----
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF, 1mS);\n", P).empty());                    // 2 = 必填
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF, 1mS, 10, AVE, 50uS);\n", P).empty());    // 5 = 上限
+    CHECK(ValidateChromaSource("FORCE_V_DPS(DPS1, 3.3V, @4V, @100mA, 100mA, NORM, ON, 1mS);\n", P).empty());  // 8 = 必填
+    CHECK(ValidateChromaSource("FORCE_V_DPS(DPS1, 3.3V, @4V, @100mA, 100mA, NORM, ON, 1mS, 1mS);\n", P).empty());  // 9 = 上限
+    CHECK(ValidateChromaSource("FORCE_I_PMU(PMU, 1mA, @1mA, @6V, 6V, ON, 3mS);\n", P).empty());  // 7 = 必填 = 上限（交替写法 `x[|x]`）
+    CHECK(ValidateChromaSource("JUDGE_VARIABLE_MS(v, 0, 100);\n", P).empty());               // 3 = 必填
+    CHECK(ValidateChromaSource("JUDGE_VARIABLE_MS(v, 0, 100, \"tag\");\n", P).empty());      // 4 = 上限
+
+    // ---- 正例：空槽（手册与真实工程文件都用它占位省略）→ 一律不报 ----
+    CHECK(ValidateChromaSource("SET_LEVELN(l, P, 0V, 0.5V, 0.2V, 1.2V, 150uA, -150uA, 0V,,);\n", P).empty());
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF, , 1mS);\n", P).empty());
+
+    // ---- 正例：认不出的形态一律不报 ----
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF,\n  1mS);\n", P).empty());        // 实参表跨行
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(pick_pin(), 1mS);\n", P).empty());     // 实参里有嵌套调用
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(\"a,b\", 1mS);\n", P).empty());        // 字符串里的逗号
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF, 1mS);   // , , ,\n", P).empty()); // 注释里的逗号
+    CHECK(ValidateChromaSource("int r = MEAS_I_MLDPS(PREF);\n", P).empty());        // 不在语句起始位置
+    CHECK(ValidateChromaSource("MY_HELPER(1, 2, 3);\n", P).empty());               // 不在库里
+    CHECK(ValidateChromaSource("#define MEAS_I_MLDPS(a) a\n", P).empty());          // 预处理指令整行不算
+    // 歧义签名（`SET_CONST_CURRENT_LOAD([ … ])` 有重复组）→ 跳过
+    CHECK(ValidateChromaSource("SET_CONST_CURRENT_LOAD(1, 2, 3);\n", P).empty());
+
+    // ---- 正例：排除表绊线（手册示例 vs 手册 Format 自相矛盾）----
+    CHECK(ValidateChromaSource("SET_JUDGE_MODE( NORM , FEOP_ON );\n", P).empty());  // §4.15 示例
+    CHECK(ValidateChromaSource("PIN_MODE_HV (G1, NRZ, EDGE, ENABLE, IO_NRZ );\n", P).empty());  // §5.5 示例
+    CHECK(ValidateChromaSource("USE_WD_WAVEFORM(Without_LPF,5mS);\n", P).empty());  // §4.23 示例
+
+    // ---- 规则只对 .pln 开 ----
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF);\n", ChromaFileKind::Dec).empty());
+    CHECK(ValidateChromaSource("MEAS_I_MLDPS(PREF);\n", ChromaFileKind::Pattern).empty());
+
+    // ---- 反例 1：少于必填（PLN-011，Warning）----
+    {
+        const std::string s = "MEAS_I_MLDPS(PREF);\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, P);
+        CHECK(d.size() == 1);
+        CHECK(CountCode(d, "C3380-PLN-011") == 1);
+        CHECK(d[0].line == 0);
+        CHECK(d[0].start == 0);                    // 高亮范围 = 语句名
+        CHECK(d[0].length == 12);                  // strlen("MEAS_I_MLDPS")
+        CHECK(d[0].severity == DiagSeverity::Warning);   // 取证较弱 → Warning
+        CHECK(d[0].manualPage == 0);               // 0 = 无单一页码，章节号在 message 里
+        CHECK(d[0].message.find("4.3") != std::string::npos);
+        CHECK(d[0].message.find("2") != std::string::npos);
+    }
+    // 少一个也算（6 个必填，给了 5 个）
+    CHECK(CountCode(ValidateChromaSource("FORCE_I_PMU(PMU, 1mA, @1mA, @6V, 6V, ON);\n", P),
+                    "C3380-PLN-011") == 1);
+    // 缩进 + 全小写：照样认出来，且列号对得上
+    {
+        const std::vector<Diagnostic> d =
+            ValidateChromaSource("    meas_i_mldps(PREF);\n", P);
+        CHECK(d.size() == 1 && d[0].start == 4 && d[0].length == 12);
+    }
+
+    // ---- 反例 2：多于上限（PLN-010，Error）----
+    {
+        const std::string s = "MEAS_I_MLDPS(PREF, 1mS, 10, AVE, 50uS, 3);\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, P);
+        CHECK(d.size() == 1);
+        CHECK(CountCode(d, "C3380-PLN-010") == 1);
+        CHECK(d[0].severity == DiagSeverity::Error);     // 手册没定义过这种形式
+        CHECK(d[0].length == 12);
+        CHECK(d[0].message.find("5") != std::string::npos);
+    }
+    CHECK(CountCode(ValidateChromaSource("FORCE_I_PMU(PMU, 1mA, @1mA, @6V, 6V, ON, 3mS, 3mS);\n", P),
+                    "C3380-PLN-010") == 1);
+
+    // ---- 两档 severity + 行号升序 ----
+    {
+        const std::vector<Diagnostic> d = ValidateChromaSource(
+            "MEAS_I_MLDPS(PREF, 1mS, 10, AVE, 50uS, 3);\nMEAS_I_MLDPS(PREF);\n", P);
+        CHECK(d.size() == 2);
+        CHECK(d[0].line == 0 && d[0].severity == DiagSeverity::Error);
+        CHECK(d[1].line == 1 && d[1].severity == DiagSeverity::Warning);
+    }
+    // 同一行上两条语句（分号分隔）→ 各报一次
+    {
+        const std::vector<Diagnostic> d = ValidateChromaSource(
+            "MEAS_I_MLDPS(PREF); MEAS_I_MLDPS(PREF);\n", P);
+        CHECK(d.size() == 2);
+        CHECK(d[0].line == 0 && d[1].line == 0);
+        CHECK(d[0].start < d[1].start);
+    }
+    // CRLF 与 LF 等价
+    CHECK(CountCode(ValidateChromaSource("MEAS_I_MLDPS(PREF);\r\n", P), "C3380-PLN-011") == 1);
+}
+
 static void RunCrossKind() {
     // SET_DEC_FILE 的规则不适用 .dec（.dec 的 DEC_MODE 反而必须有分号）
     CHECK(ValidateChromaSource("SET_DEC_FILE \"a.dec\" ;\n", ChromaFileKind::Dec).empty());
@@ -313,6 +420,7 @@ int main(int argc, char** argv) {
     RunSetDecFile(ChromaFileKind::Pattern);
     RunPinList();
     RunPinGroup();
+    RunArgumentCount();
     RunCrossKind();
     if (g_fail) {
         std::printf("FAILED: %d check(s)\n", g_fail);

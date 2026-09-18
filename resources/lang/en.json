@@ -147,6 +147,8 @@
   "menu.view.stdf": "STDF &Viewer",
 
   "menu.view.csv": "CSV &Table View",
+  "menu.view.chromacheck": "Chroma Static &Check",
+  "menu.view.diagnostics": "&Diagnostics Panel",
 
   "panel.csv": "CSV Table View",
   "panel.csv.close": "✕ Close",
@@ -320,6 +322,23 @@
   "menu.ai.attach": "Attach editor context (&X)",
   "panel.results": "Search Results",
   "panel.results.close": "✕ Close",
+
+  "panel.diag.title": "Static Check",
+  "panel.diag.close": "✕ Close",
+  "panel.diag.col.level": "Level",
+  "panel.diag.col.line": "Line",
+  "panel.diag.col.column": "Col",
+  "panel.diag.col.code": "Rule",
+  "panel.diag.col.message": "Message",
+  "panel.diag.level.error": "Error",
+  "panel.diag.level.warning": "Warning",
+  "panel.diag.summary": "{0} error(s) / {1} warning(s) - xfsWinPad static check (not a CRAFT build result)",
+  "panel.diag.summary.clean": "No confirmed problem - xfsWinPad static check (not a CRAFT build result)",
+  "panel.diag.off": "Static check is off (View > Chroma Static Check).",
+  "panel.diag.notchroma": "The static check covers .pln / .dec / .pat files only.",
+  "panel.diag.nodoc": "No open document.",
+  "sb.diag.count": "{0}E {1}W",
+  "sb.diag.clean": "Check passed",
 
   "cmd.new": "New",
   "cmd.open": "Open",

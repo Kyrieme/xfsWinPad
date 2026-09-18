@@ -21,10 +21,12 @@ void StatusBar::Layout(int width, int dpi) {
     // 段语义（SB_SETPARTS 的值 = 各段右缘；第 i 段占 [parts_[i-1], parts_[i]]，
     // 最后一段右缘值被忽略、自动延伸到窗口右缘）：
     //   [0] Ln/Col/Sel   [1] Length/Lines/Words   [2] Binary/ReadOnly
-    //   [3] EOL          [4] Encoding             [5] Language   [6] 模型来源
+    //   [3] EOL          [4] Encoding             [5] Language
+    //   [6] 模型来源     [7] 静态检查（批次 87）
     // 旧实现三处硬伤：EOL 段宽度恒为 0；Encoding 段右缘 < 左缘（倒挂不渲染）；
     // int u = dpi/96 在 >100% 缩放下恒为 1，宽度从不随 DPI 放大（"C/C++" 被裁）。
     auto S = [&](int px96) { return ::MulDiv(px96, (std::max)(dpi, 96), 96); };
+    const int diagW = S(130);   // 静态检查："3 错 1 警" / "未发现问题"
     const int noteW = S(150);   // 模型来源："非 CRAFT 编译结果"
     const int langW = S(150);   // Language：容纳 "JavaScript"/"PowerShell" 等长名
     const int encW  = S(120);   // Encoding："UTF-8 with BOM" 等
@@ -34,14 +36,15 @@ void StatusBar::Layout(int width, int dpi) {
     const int posW  = S(230);   // Ln/Col/Sel
 
     // 右簇从右往左排，保证右缘严格单调递增
-    parts_[6] = width;                       // 模型来源（最后段，右缘值被忽略）
+    parts_[7] = width;                       // 静态检查（最后段，右缘值被忽略）
+    parts_[6] = parts_[7] - diagW;           // 模型来源
     parts_[5] = parts_[6] - noteW;           // Language
     parts_[4] = parts_[5] - langW;           // Encoding
     parts_[3] = parts_[4] - encW;            // EOL
     parts_[2] = parts_[3] - eolW;            // Binary/ReadOnly
     parts_[1] = (std::max)(parts_[2] - binW, posW + docW);  // Length/Lines/Words
     parts_[0] = (std::max)(S(10), parts_[1] - docW);        // Ln/Col/Sel
-    ::SendMessageW(hwnd_, SB_SETPARTS, 7, (LPARAM)parts_);
+    ::SendMessageW(hwnd_, SB_SETPARTS, 8, (LPARAM)parts_);
 }
 
 void StatusBar::SetPart(int index, const std::wstring& text) {
@@ -73,6 +76,7 @@ void StatusBar::SetEol(const std::wstring& eol) { SetPart(3, eol); }
 void StatusBar::SetEncoding(const std::wstring& enc) { SetPart(4, enc); }
 void StatusBar::SetLanguage(const std::wstring& lang) { SetPart(5, lang); }
 void StatusBar::SetModelNote(const std::wstring& note) { SetPart(6, note); }
+void StatusBar::SetDiagnostics(const std::wstring& text) { SetPart(7, text); }
 
 void StatusBar::SetBinary(bool isBinary) {
     SetPart(2, isBinary ? L"Binary" : L"");

@@ -147,6 +147,8 @@
   "menu.view.stdf": "STDF 视图(&S)",
 
   "menu.view.csv": "CSV 表格视图(&T)",
+  "menu.view.chromacheck": "Chroma 静态检查(&K)",
+  "menu.view.diagnostics": "诊断面板(&D)",
 
   "panel.csv": "CSV 表格视图",
   "panel.csv.close": "✕ 关闭",
@@ -320,6 +322,23 @@
   "menu.ai.attach": "附带编辑器上下文(&X)",
   "panel.results": "搜索结果",
   "panel.results.close": "✕ 关闭",
+
+  "panel.diag.title": "静态检查",
+  "panel.diag.close": "✕ 关闭",
+  "panel.diag.col.level": "级别",
+  "panel.diag.col.line": "行",
+  "panel.diag.col.column": "列",
+  "panel.diag.col.code": "规则",
+  "panel.diag.col.message": "说明",
+  "panel.diag.level.error": "错误",
+  "panel.diag.level.warning": "警告",
+  "panel.diag.summary": "{0} 个错误 · {1} 个警告 · xfsWinPad 静态检查（非 CRAFT 编译结果）",
+  "panel.diag.summary.clean": "未发现确定的问题 · xfsWinPad 静态检查（非 CRAFT 编译结果）",
+  "panel.diag.off": "静态检查已关闭（视图 > Chroma 静态检查）。",
+  "panel.diag.notchroma": "静态检查只覆盖 .pln / .dec / .pat 三类文件。",
+  "panel.diag.nodoc": "没有打开的文档。",
+  "sb.diag.count": "{0} 错 {1} 警",
+  "sb.diag.clean": "检查通过",
 
   "cmd.new": "新建",
   "cmd.open": "打开",

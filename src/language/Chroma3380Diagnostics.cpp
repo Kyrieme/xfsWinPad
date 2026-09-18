@@ -12,6 +12,9 @@
 
 #include "Chroma3380Diagnostics.h"
 
+#include "Chroma3380Complete.h"   // IsStatementStart：与补全共用同一个"语句起始"口径
+#include "Chroma3380Db.h"         // 语句签名库（规则 8 用）
+
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -212,12 +215,13 @@ void CheckSetDecFileNoSemicolon(const std::vector<std::string>& code,
 }
 
 void PushDiag(std::vector<Diagnostic>& out, int line, std::size_t col, std::size_t len,
-              const char* codeStr, int page, std::string msg) {
+              const char* codeStr, int page, std::string msg,
+              DiagSeverity sev = DiagSeverity::Error) {
     Diagnostic d;
     d.line = line;
     d.start = (int)col;
     d.length = (int)(len > 0 ? len : 1);
-    d.severity = DiagSeverity::Error;
+    d.severity = sev;
     d.code = codeStr;
     d.manualPage = page;
     d.message = std::move(msg);
@@ -340,6 +344,285 @@ void CheckDeviceDefinition(const std::vector<std::string>& code,
     }
 }
 
+// ---------------------------------------------------------------------------
+// 规则 8：参数个数（批次 86）
+// ---------------------------------------------------------------------------
+//
+// 【为什么不是"拿参数槽表对位置"（这条是批次 86 最重要的发现）】
+//   kParams 的槽表**不可信到可以做必填性判断**。实测两例：
+//     · `JUDGE_VARIABLE` 签名的 `[, "string" ]` 槽没被标成可选（flags 里没有可选位）；
+//     · `SOCKET_INC` 的槽名直接被枚举值顶替（"参数名"变成了 `FRZ_ON`）。
+//   而 `StatementDef::signature` 是**手册原文**（签名提示 UI 显示的就是它），
+//   所以判定一律从签名串推导，并且加一把"双钥"：推导出的上限必须与 paramCount
+//   相等，否则说明这条语句的签名抽取有问题 —— 直接跳过，不报。
+//
+// 【为什么只认两种形状】
+//   手册签名里歧义写法很多：整体可选 `[( … )]`、交替 `x[|x]`、重复组 `[…]*`、
+//   组内再嵌组、`|` 并列多个方括号。宽解必然误报，所以只认两种无歧义的：
+//     NAME(a, b, c)           → 必填 3  上限 3
+//     NAME(a, b [, c, d])     → 必填 2  上限 4     （`b [ , c ]` 写法同义）
+//   其余一律跳过。实测 309 条语句里 229 条落进可用集（占 74%）。
+//
+// 【为什么要一张"排除表"——手册自己也不自洽】
+//   和 §2.4.2/§2.4.3 的 pin_group 冲突同类，手册在**参数个数**上同样自相矛盾：
+//     `SET_JUDGE_MODE` 的 Format 只有 1 个参数，而 §4.15 自己给出
+//     `SET_JUDGE_MODE( NORM )` 与 `SET_JUDGE_MODE( NORM , FEOP_ON )` 两种示例；
+//     `PIN_MODE_HV(pin_name, d_format, io_format)` 三参，示例却是五参
+//     `PIN_MODE_HV( G1, NRZ, EDGE, ENABLE, IO_NRZ )`。
+//   这类语句一律排除 —— 漏报可以，误报不行。排除集的求法是**证据**而非判断：
+//   把手册全文里所有语句调用回放本规则，凡被本规则判红过的语句进排除表，
+//   迭代到手册语料 0 命中为止（最终恰好 10 条，见下表）。
+//
+// 【severity 为什么两档不同】
+//   手册**没有**"参数个数不对就报错"这类明文（全文 `An error will occur` 只出现
+//   2 次，都属 .dec 的 pin 规则）。本条规则的取证是两处较弱但明确的东西：
+//   各语句 Format 块（调用形式的规范定义）＋ 必填参数的 `No entry: illegal` 措辞。
+//   据此分档：
+//     · 实参**多于**签名 → 手册从未定义过这种形式 → Error；
+//     · 实参**少于**必填项 → 依据是散文措辞，且手册存在"看似必填、实可省略"的
+//       明文例外（JUDGE 族 min/max：*Omitting the parameter is possible*）
+//       → Warning。
+//
+// 【只对 .pln 开，不对 .pat 开】
+//   落入受检集的 .pat 语句只有 APM_PATTERN / SPM_PATTERN 两条，而 .pat 没有任何
+//   真实样本可回归 —— 按本模块"没有真实样本就不开口"的纪律（规则 1 同理暂缓），
+//   不在这条规则里覆盖 .pat。
+
+// 从 i 处起读一个标识符（i 处必须已是标识符首字符）。
+bool IdentAt(const std::string& s, std::size_t i, std::size_t e,
+             std::size_t& col, std::size_t& len) {
+    if (i >= e || !IsIdStart((unsigned char)s[i])) return false;
+    std::size_t j = i;
+    while (j < e && IsIdChar((unsigned char)s[j])) ++j;
+    col = i;
+    len = j - i;
+    return true;
+}
+
+// 深度感知的实参切分：只认**顶层**逗号。
+// 不能复用 SplitTopIn —— 那个不带深度，`FOO(BAR(1,2), 3)` 会被切成三段。
+std::vector<Seg> SplitArgsIn(const std::string& s, std::size_t b, std::size_t e) {
+    std::vector<Seg> out;
+    std::size_t cur = b;
+    int depth = 0;
+    for (std::size_t i = b; i <= e; ++i) {
+        const char c = (i == e) ? '\0' : s[i];
+        if (c == '(' || c == '[' || c == '{') { ++depth; continue; }
+        if (c == ')' || c == ']' || c == '}') { if (depth > 0) --depth; continue; }
+        if (i == e || (c == ',' && depth == 0)) {
+            std::size_t x = cur, y = i;
+            while (x < y && IsSpace(s[x])) ++x;
+            while (y > x && IsSpace(s[y - 1])) --y;
+            out.push_back(Seg{x, y});
+            cur = i + 1;
+        }
+    }
+    return out;
+}
+
+// 把签名某一层的内容数成「槽」数。false = 认不出（出现圆括号 / 方括号未闭合）。
+//
+//   逗号分层；**以逗号开头的方括号组**是同级兄弟槽（手册的可选参数写法
+//   `[ , a, b ]`）；**不以逗号开头的方括号**是交替写法（`PMU_number[|PMU_number]`、
+//   `[st_addr, sp_addr ] | [total_log_cnt]`），附着于当前槽，不新增槽。
+bool CountSigSlots(const std::string& s, int& n) {
+    n = 0;
+    bool hasAtom = false;
+    for (std::size_t i = 0; i < s.size();) {
+        const char c = s[i];
+        if (IsSpace(c)) { ++i; continue; }
+        if (c == '(' || c == ')') return false;
+        if (c == '[') {
+            int d = 1;
+            std::size_t j = i + 1;
+            while (j < s.size() && d) {
+                if (s[j] == '[') ++d;
+                else if (s[j] == ']') --d;
+                ++j;
+            }
+            if (d != 0) return false;                       // 方括号没闭合
+            const std::string inner = s.substr(i + 1, j - 1 - (i + 1));
+            const std::size_t t = inner.find_first_not_of(" \t");
+            if (t != kNone && inner[t] == ',') {
+                if (hasAtom) { ++n; hasAtom = false; }
+                int sub = 0;
+                if (!CountSigSlots(inner.substr(t + 1), sub)) return false;
+                n += sub;
+            } else {
+                hasAtom = true;                             // 交替写法：属于当前槽
+            }
+            i = j;
+            continue;
+        }
+        if (c == ',') {
+            if (hasAtom) { ++n; hasAtom = false; }
+            ++i;
+            continue;
+        }
+        hasAtom = true;
+        ++i;
+    }
+    if (hasAtom) ++n;
+    return true;
+}
+
+struct ArgBounds { int required; int maxArgs; };
+
+// 从手册签名推导 (必填数, 上限数)。false = 签名有歧义，**不得**据此判定。
+bool DeriveArgBounds(const std::string& sig, ArgBounds& out) {
+    const std::size_t lp = sig.find('(');
+    if (lp == kNone) return false;
+    int d = 0;
+    std::size_t rp = kNone;
+    for (std::size_t i = lp; i < sig.size(); ++i) {
+        if (sig[i] == '(') ++d;
+        else if (sig[i] == ')') { if (--d == 0) { rp = i; break; } }
+    }
+    if (rp == kNone) return false;
+    const std::string content = sig.substr(lp + 1, rp - lp - 1);
+    if (content.find("...") != kNone) return false;         // 重复组
+
+    std::size_t h = lp;
+    while (h > 0 && IsSpace(sig[h - 1])) --h;
+    if (h > 0 && sig[h - 1] == '[') return false;           // 整体可选 `NAME [( … )]`
+
+    // 整体可选的另一种写法：参数表**本身**就是一个可选组 —— `NAME([ mode ])`，
+    // 手册 §4.16 的 `POWER_DOWN_FAIL_SITE([ mode ])` 与 §4.16 示例
+    // `POWER_DOWN_FAIL_SITE( )` 配套：一个参数都不给是合法的，所以必填数 = 0。
+    // 本条在批次 86 的"Python 参考实现 vs C++ 实现"对撞中被抓出来（当时 C++ 漏了它，
+    // 于是在手册自己的示例上误报），留着注释是为了不再丢第二次。
+    {
+        const std::size_t t = content.find_first_not_of(" \t");
+        if (t != kNone && content[t] == '[' &&
+            (t + 1 >= content.size() || content[t + 1] != ',')) {
+            int mx = 0;
+            if (!CountSigSlots(content, mx)) return false;
+            out.required = 0;
+            out.maxArgs = mx;
+            return true;
+        }
+    }
+
+    // 必填 = 第一个「以逗号开头的方括号组」之前的槽数
+    std::size_t cut = content.size();
+    for (std::size_t i = 0; i < content.size(); ++i) {
+        if (content[i] != '[') continue;
+        const std::size_t t = content.find_first_not_of(" \t", i + 1);
+        if (t != kNone && content[t] == ',') { cut = i; break; }
+    }
+    int req = 0, mx = 0;
+    if (!CountSigSlots(content.substr(0, cut), req)) return false;
+    if (!CountSigSlots(content, mx)) return false;
+    out.required = req;
+    out.maxArgs = mx;
+    return true;
+}
+
+// 手册 Format 与手册**自己的示例**互相矛盾的语句：本条规则一律跳过。
+// 表里每一条都有至少一个手册示例能打红它。绊线在 tests/test_chromadiag.cpp
+// （`SET_JUDGE_MODE( NORM , FEOP_ON )` 必须 0 诊断）：谁把这表删了，测试立刻红。
+const char* const kArgCountExcluded[] = {
+    "SET_JUDGE_MODE",        // §4.15 Format 1 参，示例同时有 (NORM) 与 (NORM, FEOP_ON)
+    "SET_CAPTURE_MEM_MODE",  // §4.21
+    "SET_OSC_CLK",           // §4.13 Format 2 参，示例 4 参 (clk, 100nS, 25nS, 75nS)
+    "JUDGE_PAT",             // §4.15
+    "JUDGE_VARIABLE",        // §4.17 可选尾巴在示例里时有时无
+    "SET_SHMOO_X",           // §4.22 Format 2 参，另有 1 参示例
+    "USE_WD_WAVEFORM",       // §4.23 Format 3 参，示例 2 参与 3 参并存
+    "LOAD_ADDA_WAVEFORM",    // §4.23 Format 2 参，示例 1 参
+    "PIN_MODE_HV",           // §5.5  Format 3 参，示例 5 参（含空槽）
+    "INPUT_BOX",             // §5.1  实为 printf 式变参，Format 只写了 3 个
+};
+const int kArgCountExcludedCount =
+    (int)(sizeof(kArgCountExcluded) / sizeof(kArgCountExcluded[0]));
+
+bool IsArgCountExcluded(const char* name, std::size_t len) {
+    for (int i = 0; i < kArgCountExcludedCount; ++i) {
+        const char* e = kArgCountExcluded[i];
+        std::size_t j = 0;
+        for (; e[j] && j < len; ++j) {
+            if (std::toupper((unsigned char)e[j]) != std::toupper((unsigned char)name[j])) break;
+        }
+        if (e[j] == '\0' && j == len) return true;
+    }
+    return false;
+}
+
+// 规则 8 主体：逐行找「语句起始位置」的语句名，读它的实参表，与签名推导的
+// 必填数 / 上限比。
+//
+// 宽容之处（全都是为了不误报）：
+//   · 实参表本行没闭合 `)`（跨行书写）→ 跳过；
+//   · 表里出现**空槽**（`F, , G` 或 `…, ,)`）→ 跳过。手册的
+//     `PIN_MODE_HV(hv_pins, NRZ, ,MASK, IO_NRZ)` 与真实工程文件的
+//     `SET_LEVELN(…, 0V,,)` 都靠空槽占位来省略参数，而"空槽怎么算"手册没写；
+//   · 签名有歧义，或推导上限与 paramCount 不等（双钥）→ 跳过；
+//   · 语句不在库中、不在语句起始位置、或 (st->flags & kStmtPositional) 未置位 → 跳过。
+//
+// 高亮范围：两种诊断都只标**语句名**（不是实参表）。理由：少参数时"缺的那段"
+// 在原文里根本不存在，标名字是唯一稳定的锚点；实参表的字节跨度可能很长，
+// 画出来反而看不清。细节在 message 里（含手册章节号）。
+void CheckArgumentCount(const std::vector<std::string>& code, std::vector<Diagnostic>& out) {
+    for (std::size_t i = 0; i < code.size(); ++i) {
+        const std::string& ln = code[i];
+        for (std::size_t p = 0; p < ln.size();) {
+            std::size_t col = 0, len = 0;
+            if (!IdentAt(ln, p, ln.size(), col, len)) { ++p; continue; }
+            p = col + len;
+
+            if (!IsStatementStart(ln, col)) continue;
+            if (IsArgCountExcluded(ln.c_str() + col, len)) continue;
+
+            const StatementDef* st = FindStatement(ln.c_str() + col, len);
+            if (!st) continue;
+            if ((st->flags & kStmtPositional) == 0) continue;    // 槽序不可信
+            if (st->paramCount <= 0) continue;
+
+            ArgBounds b{0, 0};
+            if (!DeriveArgBounds(st->signature ? st->signature : "", b)) continue;
+            if (b.maxArgs <= 0 || b.maxArgs != st->paramCount) continue;   // 双钥
+
+            std::size_t j = col + len;
+            while (j < ln.size() && IsSpace(ln[j])) ++j;
+            if (j >= ln.size() || ln[j] != '(') continue;        // 块头 / 无括号写法
+
+            int depth = 0;
+            std::size_t closed = kNone;
+            for (std::size_t k = j; k < ln.size(); ++k) {
+                if (ln[k] == '(') ++depth;
+                else if (ln[k] == ')') { if (--depth == 0) { closed = k; break; } }
+            }
+            if (closed == kNone) continue;                       // 跨行 → 跳过
+
+            int n = 0;
+            const std::string inner = ln.substr(j + 1, closed - (j + 1));
+            if (inner.find_first_not_of(" \t") != kNone) {
+                const std::vector<Seg> args = SplitArgsIn(ln, j + 1, closed);
+                bool emptySlot = false;
+                for (const Seg& a : args) {
+                    if (a.b >= a.e) { emptySlot = true; break; }
+                }
+                if (emptySlot) continue;                         // 空槽写法 → 跳过
+                n = (int)args.size();
+            }
+
+            const std::string sec = st->section ? st->section : "";
+            if (n > b.maxArgs) {
+                PushDiag(out, (int)i, col, len, "C3380-PLN-010", 0,
+                         std::string(st->name) + " 实参太多：手册 §" + sec + " 签名最多 " +
+                             std::to_string(b.maxArgs) + " 个参数，这里给了 " +
+                             std::to_string(n) + " 个");
+            } else if (n < b.required) {
+                PushDiag(out, (int)i, col, len, "C3380-PLN-011", 0,
+                         std::string(st->name) + " 实参不足：手册 §" + sec + " 签名至少 " +
+                             std::to_string(b.required) + " 个参数，这里只给了 " +
+                             std::to_string(n) + " 个",
+                         DiagSeverity::Warning);
+            }
+        }
+    }
+}
+
 } // namespace
 
 ChromaFileKind FileKindFromPath(const std::string& path) {
@@ -367,6 +650,11 @@ std::vector<Diagnostic> ValidateChromaSource(const std::string& text,
         CheckSetDecFileNoSemicolon(code, out);   // .dec 不适用（DEC_MODE 反而必须有分号）
     } else if (kind == ChromaFileKind::Dec) {
         CheckDeviceDefinition(code, out);
+    }
+    // 规则 8 只对 .pln 开：受检的 .pat 语句只有两条，而 .pat 没有真实样本可回归
+    // （见 CheckArgumentCount 上方的说明）。
+    if (kind == ChromaFileKind::Plan) {
+        CheckArgumentCount(code, out);
     }
 
     std::stable_sort(out.begin(), out.end(), [](const Diagnostic& a, const Diagnostic& b) {

@@ -194,6 +194,9 @@ void Editor::ApplyDefaultStyle(int dpi) {
     Send(SCI_INDICSETFORE, 9, RGB(255, 230, 0));
     Send(SCI_INDICSETALPHA, 9, 70);
 
+    // 批次 87：静态校验诊断波浪线（indicator 10 错误 / 11 警告）
+    DefineDiagIndicators();
+
     // Multiple selection
     Send(SCI_SETMULTIPLESELECTION, 1);
     Send(SCI_SETADDITIONALSELECTIONTYPING, 1);
@@ -385,6 +388,7 @@ void Editor::ApplyTheme(const ThemeDef& t) {
     Send(SCI_INDICSETSTYLE, 9, INDIC_ROUNDBOX);
     Send(SCI_INDICSETFORE, 9, RGB(255, 230, 0));
     Send(SCI_INDICSETALPHA, 9, 70);
+    DefineDiagIndicators();
 }
 
 // --- syntax theme tables -------------------------------------------------------
@@ -678,6 +682,7 @@ void Editor::SetLexerByName(const char* lexerName, const char* const* keywords,
     Send(SCI_INDICSETSTYLE, 9, INDIC_ROUNDBOX);
     Send(SCI_INDICSETFORE, 9, RGB(255, 230, 0));
     Send(SCI_INDICSETALPHA, 9, 70);
+    DefineDiagIndicators();
     Send(SCI_COLOURISE, 0, -1);
     UpdateLineNumberWidth();
 }
@@ -1666,6 +1671,61 @@ void Editor::MarkDiffLine(int line0, bool added) {
     if (line0 < 0) return;
     DefineMarkMarker();   // ensure marker 5/6 appearance exists (default = hollow circle)
     Send(SCI_MARKERADD, line0, added ? MARK_DIFF_ADDED : MARK_DIFF_CHANGED);
+}
+
+// --- 批次 87：静态校验诊断标记 ------------------------------------------------
+// 用 indicator 而不是 marker：波浪线要**按列**画在被判错的那段文字下面，
+// 而 marker 只能整行着色（还会把行号边距一起点亮）。定义见
+// DefineDiagIndicators()，这里只负责填/清范围。
+// 与 ClearOccurrenceHighlight 一样，用一个 bool 记住"有没有填过"，
+// 避免每次编辑都白扫全文两遍。
+void Editor::SetDiagMarks(const std::vector<DiagMark>& marks) {
+    if (!marks.empty() || diagActive_) ClearDiagMarks();
+    if (marks.empty()) return;
+
+    const sptr_t lineCount = Send(SCI_GETLINECOUNT);
+    for (const DiagMark& m : marks) {
+        // 行越界一律跳过：文本可能在两次校验之间被改短（行号失效时画在
+        // 别的行上，比不画更糟）。列越界则**收敛**到行尾，见下。
+        if (m.line < 0 || (sptr_t)m.line >= lineCount) continue;
+        const sptr_t lineStart = Send(SCI_POSITIONFROMLINE, (uptr_t)m.line);
+        const sptr_t lineEnd = Send(SCI_GETLINEENDPOSITION, (uptr_t)m.line);
+        sptr_t from = lineStart + (m.start > 0 ? (sptr_t)m.start : 0);
+        sptr_t len  = (m.length > 0 ? (sptr_t)m.length : 1);
+        if (from >= lineEnd) {
+            // 记的位置已经在行尾之后：贴到该行最后一个字节，保证波浪线
+            // 仍指在这一行（空行则退化为从行首起的 1 字节）
+            from = (lineStart < lineEnd) ? lineEnd - 1 : lineStart;
+            len = 1;
+        } else if (from + len > lineEnd) {
+            len = lineEnd - from;   // 裁剪到行尾，不越到下一行
+        }
+        Send(SCI_SETINDICATORCURRENT, m.isError ? 10 : 11);
+        Send(SCI_INDICATORFILLRANGE, from, len);
+        diagActive_ = true;
+    }
+}
+
+void Editor::ClearDiagMarks() {
+    if (!diagActive_) return;   // 无标记时跳过清扫（大文档省两次全文遍历）
+    diagActive_ = false;
+    const sptr_t docLen = Send(SCI_GETLENGTH);
+    Send(SCI_SETINDICATORCURRENT, 10);
+    Send(SCI_INDICATORCLEARRANGE, 0, docLen);
+    Send(SCI_SETINDICATORCURRENT, 11);
+    Send(SCI_INDICATORCLEARRANGE, 0, docLen);
+}
+
+void Editor::DefineDiagIndicators() {
+    // 诊断波浪线（批次 87）：
+    //   10 = IMPORTANT_ERROR 用 INDIC_SQUIGGLE（经典红波浪）
+    //   11 = 警告用 INDIC_SQUIGGLELOW（低幅橙波浪，与错误区分且更"弱"）
+    // 与 indicator 8/9 同理：STYLECLEARALL 会清掉 indicator 定义，所以每个
+    // "重建样式"的位置都要再调一次（值不会丢，丢的是画法）。
+    Send(SCI_INDICSETSTYLE, 10, INDIC_SQUIGGLE);
+    Send(SCI_INDICSETFORE, 10, RGB(0xE0, 0x30, 0x30));
+    Send(SCI_INDICSETSTYLE, 11, INDIC_SQUIGGLELOW);
+    Send(SCI_INDICSETFORE, 11, RGB(0xE0, 0x80, 0x10));
 }
 
 void Editor::FoldAll() {

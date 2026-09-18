@@ -190,6 +190,14 @@ public static class CH {
     EnumChildWindows(frame, (h,l) => { var c = new StringBuilder(64); GetClassNameW(h, c, 64);
       if (c.ToString() == cls) { list.Add(h); } return true; }, IntPtr.Zero);
     return list.ToArray(); }
+  // Same, but rooted anywhere (a docked panel's own children, not the frame's).
+  // EnumChildWindows walks the whole subtree, so this also finds nested controls.
+  public static IntPtr[] ChildrenOf(IntPtr root, string cls){
+    var list = new System.Collections.Generic.List<IntPtr>();
+    if (root == IntPtr.Zero) return list.ToArray();
+    EnumChildWindows(root, (h,l) => { var c = new StringBuilder(64); GetClassNameW(h, c, 64);
+      if (c.ToString() == cls) { list.Add(h); } return true; }, IntPtr.Zero);
+    return list.ToArray(); }
   public static IntPtr[] Editors(){ return ChildrenByClass("Scintilla"); }
   // value-only helpers
   public static int TextLength(IntPtr ed){ return (int)SendMessageW(ed, 2183, IntPtr.Zero, IntPtr.Zero); }
@@ -213,6 +221,25 @@ public static class CH {
     SendMessageW(ed, 0x0101, (IntPtr)vk, IntPtr.Zero); }
   public static int StatusPartLen(IntPtr sb, int part){
     return (int)((SendMessageW(sb, 1036, (IntPtr)part, IntPtr.Zero).ToInt64()) & 0xFFFF); }
+  // ---- batch 87: static-check probes ----------------------------------------
+  // SCI_INDICATORVALUEAT(2507) takes two INTEGERS and returns 1 when that
+  // indicator is set at that position; nothing crosses as a pointer, so it is
+  // safe from another process (see the WM_USER note above).
+  // ARGUMENT ORDER - this bit us once: Scintilla.iface says
+  // `IndicatorValueAt(int indicator, position pos)`, i.e. indicator is WPARAM
+  // and pos is LPARAM. Swapping them makes every probe read position
+  // "indicator" (a 1-digit offset) and report "no squiggle anywhere", which
+  // looks exactly like "the feature is not wired at all".
+  public static int IndicatorAt(IntPtr ed, int pos, int ind){
+    return (int)SendMessageW(ed, 2507, (IntPtr)ind, (IntPtr)pos); }
+  // LVM_GETITEMCOUNT (LVM_FIRST+4) is a value-returning listview message.
+  public static int ListCount(IntPtr lv){
+    return (int)SendMessageW(lv, 0x1004, IntPtr.Zero, IntPtr.Zero); }
+  // WM_COMMAND is below WM_USER, so USER32 marshals it for us - this is how the
+  // harness drives a menu command in the running app.
+  public static void Command(IntPtr frame, int id){
+    SendMessageW(frame, 0x0111, (IntPtr)id, IntPtr.Zero); }
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   // WM_GETTEXT (0x0D) is below WM_USER, so USER32 marshals the buffer for us -
   // this is the ONLY way to read a Scintilla document from another process
   // (SCI_GETTEXT would hand the target our pointer; see the header).
@@ -817,6 +844,73 @@ try {
     Fail "a signature calltip was raised for a statement whose signature must be empty" }
   Write-Output ("  OK '{0}' + Tab inserted the name alone (no paren)" -f $want9b)
   Write-Output "P9B-OK"
+
+  # ------------ P10: STATIC DIAGNOSTICS (batch 87) ------------------------------
+  # Rule 8 (argument count, .pln) wired to the real UI: the status bar gains an
+  # 8th part and the editor draws squiggles with indicator 10 (error) / 11
+  # (warning). The minimal PLN-010 case below is lifted verbatim from
+  # tests/test_chromadiag.cpp, so unit and e2e guard the same input.
+  # The squiggle covers ONLY the statement name (12 chars at line offset 0),
+  # which is exactly what the kernel reports.
+  Write-Output "[P10] rule-8 violation draws the error squiggle + fills status part 7"
+  $p10 = Join-Path $work "p10.pln"
+  Write-Fixture $p10 @(
+    'TEST_PRO {'
+    'MEAS_I_MLDPS(PREF, 1mS, 10, AVE, 50uS, 3);'
+    '}'
+  )
+  Start-App $p10
+  Expect-Lexer "chroma_plan"
+  # refresh runs synchronously on document open, but poll briefly so a slow
+  # first-paint can never flake the probe
+  $ls10 = [CH]::LineEndPos($g_ed, 0) + 2   # line 1 start (CRLF)
+  $bad10 = 0
+  $dl10 = (Get-Date).AddSeconds(5)
+  while ((Get-Date) -lt $dl10) {
+    if ([CH]::IndicatorAt($g_ed, $ls10, 10) -eq 1) { $bad10 = 1; break }
+    Start-Sleep -Milliseconds 200
+  }
+  if ($bad10 -ne 1) {
+    Fail ("indicator 10 is NOT set at the violating statement name (pos {0}) - " +
+          "rule 8 is not wired to the editor" -f $ls10) }
+  if ([CH]::IndicatorAt($g_ed, $ls10 + 5, 10) -ne 1) {
+    Fail "indicator 10 must cover the whole 12-char statement name (probe at +5)" }
+  if ([CH]::IndicatorAt($g_ed, $ls10 + 20, 10) -ne 0) {
+    Fail "indicator 10 must NOT extend past the statement name (probe at +20)" }
+  if ([CH]::IndicatorAt($g_ed, 0, 10) -ne 0) {
+    Fail "indicator 10 on the clean TEST_PRO line - over-marking" }
+  if ([CH]::IndicatorAt($g_ed, $ls10, 11) -ne 0) {
+    Fail "indicator 11 (warning) set for an Error-severity finding" }
+  if ($g_sb -eq [IntPtr]::Zero) { Fail "status bar not found" }
+  $len7 = [CH]::StatusPartLen($g_sb, 7)
+  if ($len7 -le 0) { Fail "status part 7 (diagnostics) is EMPTY with 1 finding" }
+  Write-Output ("  OK squiggle on line 1 name + status part 7 len={0}" -f $len7)
+  Write-Output "P10-OK"
+
+  # P10B negative control: a syntactically clean call must leave indicator 10
+  # and 11 silent everywhere while the status part still shows "no findings".
+  Write-Output "[P10B] clean .pln: no squiggle anywhere, status part 7 says clean"
+  $p10b = Join-Path $work "p10b.pln"
+  Write-Fixture $p10b @(
+    'TEST_PRO {'
+    'MEAS_I_MLDPS(PREF, 1mS, 10, AVE, 50uS);'
+    '}'
+  )
+  Start-App $p10b
+  Expect-Lexer "chroma_plan"
+  $ls10b = [CH]::LineEndPos($g_ed, 0) + 2
+  Start-Sleep -Milliseconds 600   # allow the open-time refresh to settle
+  $hits10b = 0
+  for ($i = 0; $i -lt 40; $i++) {
+    if ([CH]::IndicatorAt($g_ed, $ls10b + $i, 10) -ne 0) { $hits10b++ }
+    if ([CH]::IndicatorAt($g_ed, $ls10b + $i, 11) -ne 0) { $hits10b++ }
+  }
+  if ($hits10b -ne 0) {
+    Fail ("clean line 1 has {0} indicator hits - false positives in the UI" -f $hits10b) }
+  $len7b = [CH]::StatusPartLen($g_sb, 7)
+  if ($len7b -le 0) { Fail "status part 7 empty for a clean Chroma file (clean text missing)" }
+  Write-Output ("  OK 0 squiggle hits on the clean call + status part 7 len={0}" -f $len7b)
+  Write-Output "P10B-OK"
 
   Write-Output "CHROMA-E2E-PASS"
   Cleanup

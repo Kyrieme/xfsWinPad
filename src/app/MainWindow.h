@@ -18,6 +18,7 @@
 #include "ShortcutMapperDialog.h"
 #include "StdfPanel.h"
 #include "CsvPanel.h"
+#include "DiagnosticsPanel.h"
 #include "../bigfile/BigFileView.h"
 #include "../git/GitClient.h"
 #include "../hex/HexPanel.h"
@@ -128,6 +129,15 @@ private:
     void ToggleHexView();
     void ToggleStdfView();
     void ToggleCsvView();
+    // --- 批次 87：Chroma 3380 静态检查 --------------------------------------
+    // 内核在 src/language/Chroma3380Diagnostics.{h,cpp}（纯函数、可单测），
+    // 这里只负责三件事：什么时候跑、把结果画到编辑器（波浪线）、把列表交给面板。
+    void ToggleDiagnostics();          // View > 诊断面板（底部列表）
+    void ToggleChromaCheck();          // View > Chroma 静态检查（勾选：是否校验+标红）
+    void RefreshDiagnostics();         // 重扫活动文档：标红 + 面板 + 状态栏计数
+    void ScheduleDiagnostics();        // 编辑防抖：延迟合并一次重扫
+    void ClearDiagnosticsEverywhere(); // 关功能时清掉所有已打开文档的标记
+    void OnDiagActivate(int row);      // 面板双击：跳到那行并选中被判错的片段
     void ToggleBigFileView(const std::wstring& forcedPath = std::wstring());
     void ToggleLogPanel();
     void ToggleTerminal();
@@ -235,6 +245,11 @@ private:
     std::unique_ptr<HexPanel> hex_;
     std::unique_ptr<StdfPanel> stdf_;
     std::unique_ptr<CsvPanel> csv_;
+    std::unique_ptr<DiagnosticsPanel> diag_;
+    // 状态栏第 8 段的文本（"3 错 1 警"/"未发现问题"）。存在成员里是因为状态栏
+    // 会被 UpdateStatusBar 反复重刷（改标题、切标签、光标移动），而计数只在
+    // RefreshDiagnostics 时才算得出来 —— 存下来让两边不必互相知道对方何时跑。
+    std::wstring diagStatusText_;
     std::unique_ptr<BigFileView> bigfile_;
     std::unique_ptr<LogPanel> logPanel_;
     std::unique_ptr<TerminalPanel> terminal_;
@@ -253,6 +268,7 @@ private:
 int hexHLogical_ = 230;              // panel height at 96 dpi, splitter-adjustable
 int stdfHLogical_ = 260;
 int csvHLogical_ = 320;              // CSV 表格视图高度（批次 32）
+int diagHLogical_ = 200;             // 诊断面板高度 at 96 dpi（批次 87）
 int bigfileHLogical_ = 320;             // STDF panel height at 96 dpi, splitter-adjustable
 int rpHLogical_ = 190;               // results panel height at 96 dpi, splitter-adjustable
 int logHLogical_ = 300;              // log panel height at 96 dpi, splitter-adjustable

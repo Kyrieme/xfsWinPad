@@ -7,6 +7,7 @@
 #include <Scintilla.h>
 #include <string>
 #include <set>
+#include <vector>
 #include <functional>
 
 namespace xfs {
@@ -115,6 +116,26 @@ public:
     // diff markers (marker 5 = changed line, 6 = added/removed)
     void ClearDiffMarks();
     void MarkDiffLine(int line0, bool added);
+
+    // --- 批次 87：静态校验诊断标记（indicator 10 = 错误 / 11 = 警告）---------
+    // 与任何具体校验器**无关**：宿主把 (行, 列, 长度, 级别) 交过来即可，
+    // Editor 既不认识 Chroma、也不跑规则，因此这一层可以独立演进。
+    // indicator 8（括号匹配）、9（双击词高亮）已被占用，诊断取 10/11：
+    //   10 = INDIC_SQUIGGLE     红色波浪线（Error）
+    //   11 = INDIC_SQUIGGLELOW  橙色低波浪线（Warning）
+    // 两者都天然画在文字下方，不需要 SCI_INDICSETUNDER。
+    struct DiagMark {
+        int  line   = 0;      // 0-based 行号（与 Diagnostic::line 同口径）
+        int  start  = 0;      // 行内起始字节列
+        int  length = 0;      // 覆盖字节数（<=0 取 1，保证波浪线可见）
+        bool isError = true;  // true -> indicator 10，false -> indicator 11
+    };
+    // 先清空两个 indicator 再按 marks 填充（marks 为空 == ClearDiagMarks）。
+    // 越界一律**收敛**而不是跳过：文本可能在两次校验之间被改过，
+    // 行号/列号失效时贴到行尾即可，不必让整批标记失败。
+    void SetDiagMarks(const std::vector<DiagMark>& marks);
+    void ClearDiagMarks();
+    bool HasDiagMarks() const { return diagActive_; }
     void InsertTextAtCaret(const std::string& utf8) { Send(SCI_REPLACESEL, 0, (LPARAM)utf8.c_str()); }
     void GotoLine(int line1based);
     void GotoPosition(int line1based, int columnDisplay);  // restore caret col too (GETCOLUMN 1-based)
@@ -213,6 +234,7 @@ private:
     bool CollectLineRange(std::string* out, sptr_t* outStart, sptr_t* outEnd);
     void ReplaceLineRange(sptr_t start, sptr_t end, const std::string& repl);
     void CancelSignatureHint();     // 批次 73：收起签名气泡（下拉框归 Scintilla 管）
+    void DefineDiagIndicators();    // 批次 87：indicator 10/11 的画法（样式重建点都要重挂）
 
     HWND hwnd_ = nullptr;
     bool wordWrap_ = false;
@@ -228,6 +250,7 @@ private:
     bool showLineNumber_ = true;   // 首选项行号开关（UpdateLineNumberWidth 遵守）
     bool autoDetect_ = true;       // 打开文件时按扩展名自动检测语言
     bool occActive_ = false;       // 双击词高亮（indicator 9）是否有内容
+    bool diagActive_ = false;      // 批次 87：诊断波浪线（indicator 10/11）是否有内容
     std::string defaultFont_ = "Consolas";   // 无全局/语言字体覆盖时的回退字体（UTF-8）
     int defaultFontSize_ = 10;
     int lastLineCountDigits_ = 0;

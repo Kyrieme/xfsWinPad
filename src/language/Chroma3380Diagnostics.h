@@ -1,5 +1,8 @@
 #pragma once
-// xfsWinPad - Chroma 3380 静态校验内核（批次 80，方向 C 第一刀）
+// xfsWinPad - Chroma 3380 静态校验内核（批次 80 起，方向 C）
+//
+// 【当前进度】批次 80 = 规则 2/5/6（.dec 侧）；批次 86 = 规则 8（.pln 侧参数个数）。
+//   UI 尚未接入 —— 内核是纯函数，产出的诊断列表由调用方决定怎么展示。
 //
 // 【为什么要有这一层】
 //   Chroma 官方工作流是「TextPad 编辑 → Makefile 调 plncmp/patcmp → 看编译结果页
@@ -22,10 +25,17 @@
 //   决定怎么展示（squiggle / 面板 / 状态栏）。因此可以直接单测。
 //
 // 【与其它模块的关系】
-//   Chroma3380Db.h    —— 语句/参数/候选值数据库（本模块暂不依赖它，规则 8「参数个数
-//                        与必填性」是下一批要接的）
-//   ChromaSignature.h —— 签名提示的位置解析（不做校验）
+//   Chroma3380Db.h      —— 语句/参数/候选值数据库。规则 8（参数个数）经
+//                          `FindStatement` 取手册签名；**但不用 kParams 的参数槽表**
+//                          做必填性判断（实测槽表不可信，理由见 .cpp 里规则 8 一节）。
+//   Chroma3380Complete.h —— 复用 `IsStatementStart`，与补全共用同一个"语句起始"口径，
+//                          避免"补全认它是语句、校验不认"这种两套口径打架。
 //   本模块只回答「这段文本有哪些**确定**的错」。
+//
+// 【manualPage 的取值约定】
+//   1..N = 手册（Language Manual）PDF 页码；**0 = 没有单一页码**。
+//   规则 8 的依据是"该语句自己的 Format 块"，不是某一页，所以取 0，
+//   章节号写在 message 里（形如「手册 §4.5 签名最多 9 个参数」）。
 
 #include <string>
 #include <vector>
@@ -46,8 +56,8 @@ enum class ChromaFileKind {
 ChromaFileKind FileKindFromPath(const std::string& path);
 
 enum class DiagSeverity {
-    Error,    // 手册明文说会报错
-    Warning,  // 手册用希望/建议语气，或者需要跨文件才能确认
+    Error,    // 手册明文说会报错（`An error will occur …`），或手册从未定义过这种写法
+    Warning,  // 依据较弱：手册用希望/建议语气、依据是散文措辞、或需要跨文件才能确认
 };
 
 struct Diagnostic {
@@ -67,11 +77,27 @@ struct Diagnostic {
 //   C3380-DEC-002  PIN_LIST：同一个 ATE 通道号定义了多次             p25 §2.3.2
 //   C3380-DEC-003  PIN_LIST：同一个 DUT pin 号定义了多次             p25 §2.3.2
 //   C3380-DEC-004  PIN_GROUP：同一个 pin_group 名定义了多次          p27 §2.4.2
+//   C3380-PLN-010  实参个数多于手册签名的上限                       各语句 Format 块（Error）
+//   C3380-PLN-011  实参个数少于手册签名的必填项                     各语句 Format 块 + `No entry: illegal`（Warning）
 //
 // 取证原文（§2.3.2）：
 //   "An error will occur if the same DUT or ATE pin numbers are defined more than
 //    once." / "An error will occur if the same pin name is given to more than one
 //    DUT pin.  Pin names must be unique within the device definition."
+//
+// 【PLN-010 / PLN-011 为什么一档 Error 一档 Warning】
+//   手册**没有**"参数个数不对就报错"的明文（全文 `An error will occur` 只出现 2 次，
+//   都属 .dec 的 pin 规则）。这两条的取证是较弱的兩处：各语句 Format 块（调用形式的
+//   规范定义）＋ 必填参数的 `No entry: illegal` 措辞。因此：
+//     · 多于签名 = 手册从未定义过这种形式 → Error；
+//     · 少于必填 = 依据是散文措辞，且手册有"看似必填、实可省略"的**明文例外**
+//       （JUDGE 族 min/max：*Omitting the parameter is possible*）→ Warning。
+//
+// 【PLN-010 / PLN-011 的覆盖面】
+//   只对 `.pln` 开。判定只用在"签名无歧义 + 推导上限 == paramCount"的语句上
+//   （实测 309 条里 229 条可用），另有 10 条因**手册自己的示例与 Format 矛盾**
+//   而被排除 —— 排除了就不报，宁可漏报。`.pat` 不覆盖：能落进受检集的只有两条，
+//   而 `.pat` 没有真实样本可回归（与规则 1 暂缓同理）。
 //
 // 【为什么不实现「同一 pin 不得属于两个 group」（§2.4.2 原话）
 //  "The same pin cannot be assigned to more than one group."】

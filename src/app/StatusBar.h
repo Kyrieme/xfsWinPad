@@ -26,13 +26,17 @@ public:
     // 都建在我们从语言手册抽取的数据模型上，**不是 CRAFT 编译器的输出**
     // （Chroma 未公开错误码表）。非 Chroma 文件传空串即可。
     void SetModelNote(const std::wstring& note);
+    // 批次 87：[7] 静态检查结果（最右）。Chroma 文件传 "3 错 1 警"/"未发现问题"，
+    // 非 Chroma 文件或功能关闭时传空串。
+    void SetDiagnostics(const std::wstring& text);
     void SetPart(int index, const std::wstring& text);
 
 private:
 
     HWND hwnd_ = nullptr;
-    // 段序号：[0]位置 [1]文档 [2]二进制/只读 [3]EOL [4]编码 [5]语言 [6]模型来源
-    int parts_[7] = {0};
+    // 段序号：[0]位置 [1]文档 [2]二进制/只读 [3]EOL [4]编码 [5]语言
+    //        [6]模型来源 [7]静态检查
+    int parts_[8] = {0};
 };
 
 } // namespace xfs
