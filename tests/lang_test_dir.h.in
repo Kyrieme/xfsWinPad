@@ -1,0 +1,9 @@
+#pragma once
+// 由 CMake configure_file 生成（见 tests/CMakeLists.txt）。
+// 指向仓库里的真实语言文件目录，供 test_i18n 做"五份语言文件键集合必须一致"
+// 的完整性校验。
+//
+// 为什么不用 target_compile_definitions 传字符串：
+//   形如 -DXFS_LANG_DIR="C:/path with spaces/lang" 的定义在含空格/反斜杠的
+//   路径下转义极易出错，而错了以后宏会静默变成别的值。生成头文件没有这个问题。
+#define XFS_LANG_DIR L"@XFS_LANG_DIR_FWD@"

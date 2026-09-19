@@ -243,12 +243,46 @@ void PushDiag(std::vector<Diagnostic>& out, int line, std::size_t col, std::size
     out.push_back(d);
 }
 
+// pin 类型的"资源域"。手册与编译器都把 pin 分成**互不相通**的若干域：
+//   §2.4.1  IO_ALLPINS   = { IN, OUT, IO }         —— 唯一性在这里面判定
+//   §2.4.1  Notice：TMU pin-type & pin_group **can not** be assigned in the same
+//           IO_ALLPINS  ⇒ TMU 自成一域
+//   §2.5.1  UR_ALLPINS   = { UR }
+//   §5.4.1  MLDPS_ALLPINS（功率脚族，MLDPS / DPS / UVI / PREF）
+// 厂商编译器生成的 pin 初始化源码里确实只声明这四个 `*_ALLPINS` 默认组，佐证了该划分。
+//
+// **为什么要按域判定**（两条硬证据，都不是推断）：
+//   ① 手册 §2.5.3 自己的 UR 官方示例就让 UR 脚复用信号脚的 ATE 号：
+//        SEL0 = 0:288:320:352 = 1 = IN ;   …   UR_C0 = 0:1:2:3 = = UR ;
+//      ATE 0/1/2/3 同时被 SEL0/SEL1/G1/SL 与 UR_C0 使用，手册判为**正确**写法。
+//   ② 厂商的 GANG（多工位并测）范例工程里，功率脚与信号脚共用 dut#、用户继电器脚
+//      与信号脚共用 ATE 通道号，而该工程**编译成功**：编译器生成的 pin 初始化源码
+//      把全部 54 个 pin 原样声明（无去重、无报错），并产出了可加载的 DLL 与
+//      测试程序可执行文件；同工程的编译记录显示最后一次编译成功于 2019-02-01。
+//      （完整取证见项目私密文档，代码里不写那些文件名。）
+// 因此"同一号码定义多次"只在**同一域内**才是错误；跨域复用是合法且常见的
+// （多站点 pin 列表、功率脚模块编号、用户继电器复用通道）。
+// 这与内核纪律一致：**宁可少报，不可误报**。
+std::string PinDomain(const std::string& typeUpper) {
+    if (typeUpper == "IN" || typeUpper == "OUT" || typeUpper == "IO") return "IO";
+    return typeUpper;   // 其余每个类型自成一域（TMU / UR / MLDPS / DPS / UVI / PREF / GND…）
+}
+
 // 一块 PIN_LIST 里的三个"不得重复"的集合。
 struct PinListScope {
     std::map<std::string, int> nameFirstLine;   // pin 名 → 首次出现的 0-based 行
-    std::map<std::string, int> ateFirstLine;    // ATE 通道号（十进制串）→ 首次行
-    std::map<std::string, int> dutFirstLine;    // DUT pin 号 → 首次行
+    std::map<std::string, int> ateFirstLine;    // 域 + ATE 通道号 → 首次行
+    std::map<std::string, int> dutFirstLine;    // 域 + DUT pin 号 → 首次行
 };
+
+// 把 (域, 号码) 合成一个键。用 0x1F（单元分隔符）分隔，号码本身是纯数字串，
+// 不会与之冲突，因此不会出现"域 A 的 1"和"域 A1 的 x"撞键。
+std::string DomainKey(const std::string& domain, const std::string& num) {
+    std::string k = domain;
+    k.push_back('\x1f');
+    k += num;
+    return k;
+}
 
 // 解析一行 pin 条目：`pin_name = ate[:ate]… = dut = pin_type ;`
 //   宽容：段数 < 4、首段不是标识符、末尾不是 `;` —— 一律跳过，不报。
@@ -278,17 +312,28 @@ void ParsePinEntry(const std::string& s, std::size_t b, std::size_t e, int lineN
 
     note(scope.nameFirstLine, name, parts[0].b, name.size(), "C3380-DEC-001", "pin 名");
 
+    // 末段 = pin_type（`pin_name = ate_pin = dut_pin = pin_type ;`）。
+    // 类型认不出（空 / 非标识符）就**不判** 002/003：域未知时无法区分"跨域复用"
+    // 与"同域重复"，按内核纪律宁漏不误。
+    std::size_t tb = parts.back().b, te = parts.back().e;
+    while (tb < te && std::isspace((unsigned char)s[tb])) ++tb;
+    while (te > tb && std::isspace((unsigned char)s[te - 1])) --te;
+    if (tb >= te) return;
+    const std::string typeUp = Upper(s.substr(tb, te - tb));
+    for (char c : typeUp) if (!IsIdChar((unsigned char)c)) return;
+    const std::string domain = PinDomain(typeUp);
+
     // 倒数第二段 = dut_pin，其余中段 = ate_pin 列表
     const Seg& dutSeg = parts[parts.size() - 2];
     for (std::size_t k = 1; k + 2 < parts.size(); ++k) {
         for (const Num& n : NumbersIn(s, parts[k].b, parts[k].e)) {
-            note(scope.ateFirstLine, s.substr(n.b, n.e - n.b), n.b, n.e - n.b,
-                 "C3380-DEC-002", "ATE 通道");
+            note(scope.ateFirstLine, DomainKey(domain, s.substr(n.b, n.e - n.b)),
+                 n.b, n.e - n.b, "C3380-DEC-002", "ATE 通道");
         }
     }
     for (const Num& n : NumbersIn(s, dutSeg.b, dutSeg.e)) {
-        note(scope.dutFirstLine, s.substr(n.b, n.e - n.b), n.b, n.e - n.b,
-             "C3380-DEC-003", "DUT pin 号");
+        note(scope.dutFirstLine, DomainKey(domain, s.substr(n.b, n.e - n.b)),
+             n.b, n.e - n.b, "C3380-DEC-003", "DUT pin 号");
     }
 }
 

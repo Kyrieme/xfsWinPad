@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = "")
 # chroma-e2e.ps1 - Batch 73 end-to-end: the Chroma 3380 language pack and the
 # signature hint, against a REAL xfsWinPad.exe.
 #
@@ -110,6 +110,21 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $stylesH  = Join-Path $repoRoot "src\language\XfsLexerStyles.h"
 $lexerH   = Join-Path $repoRoot "src\language\XfsLexer.h"
 
+# Where is the editor?  Derive it from this script's OWN location by default.
+# This harness may also be launched from the shared folder inside a VM, where
+# the host's D:\ is NOT a drive (only the VirtualBox share is, under whatever
+# letter it got mapped to).  A hardcoded D:\ default would make the whole
+# harness unrunnable there.  -Exe still overrides.
+if (-not $Exe) { $Exe = Join-Path $repoRoot "build\bin\Release\xfsWinPad.exe" }
+if (-not (Test-Path $Exe)) {
+  # Cannot use Fail() yet: Cleanup and its backup paths are defined further down,
+  # and nothing has been touched at this point anyway.
+  Write-Output "CHROMA-E2E-FAIL: editor not found: $Exe"
+  Write-Output "  build it first:  cmake --build build --config Release"
+  Write-Output "  or pass an explicit path:  -Exe <path to xfsWinPad.exe>"
+  exit 1
+}
+
 # ---- messages we use (all value-returning) -----------------------------------
 $SCI_GETCURRENTPOS     = 2008
 $SCI_GOTOPOS           = 2025
@@ -130,6 +145,7 @@ $WM_KEYUP              = 0x0101
 $WM_CHAR               = 0x0102
 $VK_TAB                = 0x09
 $VK_DOWN               = 0x28
+$VK_BACK               = 0x08      # P12 diagnostics only: untype the prefix and retype
 
 # ---- style ids / lexer ids come from the headers (shared with the other
 # ---- E2E harnesses; see scripts/_lexer-ids.ps1 for why they are parsed rather
@@ -1023,6 +1039,10 @@ try {
     'FORCE_V_DPS('
     '}'
   )
+  # This section types as soon as the window is up, on purpose: the word source
+  # must be ready by then. It used to be filled only by the 450 ms edit debounce
+  # (ScheduleDiagnostics), so the first keystrokes after opening a plan raced it.
+  $t12 = Get-Date
   Start-App $p12
   Expect-Lexer "chroma_plan"
   $c12 = [CH]::LineEndPos($g_ed, 2)              # end of the FORCE_V_DPS( line
@@ -1032,8 +1052,24 @@ try {
   [CH]::TypeChar($g_ed, [int][char]'p')
   Start-Sleep -Milliseconds 500
   $act12 = [CH]::AutoCActive($g_ed)
-  Write-Output ("  [diag] prefix 'Vdp' -> autoC={0}" -f $act12)
+  $ms12 = [int](((Get-Date) - $t12).TotalMilliseconds)
+  Write-Output ("  [diag] prefix 'Vdp' -> autoC={0} (typed {1} ms after launch)" -f $act12, $ms12)
   if ($act12 -ne 1) {
+    # ---- diagnostics only; the verdict below stays exactly as strict -------------
+    # Distinguish "the word source was not ready yet" from every other cause, so a
+    # single re-run is enough to tell them apart:
+    #   retry -> 1  = the source was simply late (a timing/ordering defect)
+    #   retry -> 0  = not timing; the source itself is wrong or unreachable
+    $tip12 = [CH]::CallTipActive($g_ed)
+    Write-Output ("  [diag] callTip={0} docLen={1}" -f $tip12, [CH]::TextLength($g_ed))
+    Start-Sleep -Milliseconds 800              # clear the 450 ms edit debounce
+    for ($i = 0; $i -lt 3; $i++) { [CH]::PressKey($g_ed, $VK_BACK) }
+    [CH]::TypeChar($g_ed, [int][char]'V')
+    [CH]::TypeChar($g_ed, [int][char]'d')
+    [CH]::TypeChar($g_ed, [int][char]'p')
+    Start-Sleep -Milliseconds 500
+    $retry12 = [CH]::AutoCActive($g_ed)
+    Write-Output ("  [diag] retyped after the debounce window -> autoC={0}" -f $retry12)
     Fail "no dropdown for prefix Vdp - the dec's symbols are not reaching word completion" }
   [CH]::PressKey($g_ed, $VK_TAB)
   Start-Sleep -Milliseconds 500

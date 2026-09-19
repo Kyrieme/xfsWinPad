@@ -94,6 +94,12 @@ target_link_libraries(test_workshop PRIVATE shlwapi user32 shell32)
 add_test(NAME workshop COMMAND test_workshop)
 
 # I18n：字典加载/回退/格式化/切换回调（fixture 目录由测试自建）
+# 另加"真实语言文件键集合一致"的完整性校验：路径经 configure_file 生成头文件
+# 传入，不用 -D 字符串宏（含空格/反斜杠的路径在命令行上转义极易出错）。
+set(XFS_LANG_DIR_FWD "${CMAKE_SOURCE_DIR}/resources/lang")
+configure_file(lang_test_dir.h.in
+               "${CMAKE_CURRENT_BINARY_DIR}/lang_test_dir.h" @ONLY)
+
 add_executable(test_i18n test_i18n.cpp
     ../src/core/I18n.cpp
     ../src/core/JsonLite.cpp
@@ -101,6 +107,7 @@ add_executable(test_i18n test_i18n.cpp
     ../src/core/Log.cpp)
 
 target_compile_definitions(test_i18n PRIVATE UNICODE _UNICODE NOMINMAX)
+target_include_directories(test_i18n PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 if(MSVC)
     target_compile_options(test_i18n PRIVATE /utf-8 /W3)
 endif()
@@ -214,6 +221,39 @@ if(MSVC)
 endif()
 
 add_test(NAME chromadiag COMMAND test_chromadiag)
+
+# 批次 94：CRAFT 工程模型内核（方向 D 第一刀）。同样是纯字符串逻辑、零 Windows API，
+# 所以单独一个目标、不链任何 Scintilla / Util。
+# 用例把**厂商 makefile 原文**与**厂商中间产物的字节**都钉住了（见测试文件头）。
+# 额外提供 `test_craftproj <工程文件>` 探针：拿真实工程跑一遍打印模型，人工核对。
+add_executable(test_craftproj test_craftproj.cpp
+    ../src/language/CraftProject.cpp)
+
+target_compile_definitions(test_craftproj PRIVATE UNICODE _UNICODE NOMINMAX)
+# CraftProject.cpp 用 "language/CraftProject.h" 自包含路径，所以要给 src/ 作为搜索根。
+target_include_directories(test_craftproj PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(test_craftproj PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME craftproj COMMAND test_craftproj)
+
+# 批次 95：CRAFT 编译命令执行器（方向 D 第二刀）。这个测试会**真的起进程**，
+# 所以它链 CraftRunner.cpp（需要 windows.h）而不只是纯字符串逻辑。
+# 被测子进程就是它自己（`--child <mode>`），不依赖 cmd.exe / ping 之类的系统工具。
+# 另提供 `test_craftrunner <工程文件>` 手工探针：真的把该工程编译一遍并打印输出。
+add_executable(test_craftrunner test_craftrunner.cpp
+    ../src/language/CraftRunner.cpp
+    ../src/language/CraftHost.cpp
+    ../src/language/CraftProject.cpp)
+
+target_compile_definitions(test_craftrunner PRIVATE UNICODE _UNICODE NOMINMAX)
+target_include_directories(test_craftrunner PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(test_craftrunner PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME craftrunner COMMAND test_craftrunner)
 
 add_executable(test_shortcut test_shortcut.cpp
     ../src/shortcut/ShortcutTable.cpp

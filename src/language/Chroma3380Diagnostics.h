@@ -4,7 +4,9 @@
 // 【当前进度】批次 80 = 规则 2/5/6（.dec 侧）；批次 86 = 规则 8（.pln 侧参数个数）；
 //   批次 87 = 诊断 UI 接线；批次 88 = 规则 3（跨文件 DEC_MODE APAS → IMATCH 失效）；
 //   批次 91 = 规则 1（.pat 侧 HEADER pin 数 == 向量宽度，靠闸 B 做到零误报）；
-//   批次 92 = 规则 4/10（.pat 侧 SPM_PATTERN 模式组合、RPT 次数区间）。
+//   批次 92 = 规则 4/10（.pat 侧 SPM_PATTERN 模式组合、RPT 次数区间）；
+//   批次 93 = **收窄** DEC-002/003 为按 pin 资源域判定（拿到厂商编译过的真实语料后
+//   发现原先的全局判定会误报，详见下方【DEC-002 / DEC-003 为什么必须按资源域判定】）。
 //   内核是纯函数，产出的诊断列表由调用方决定怎么展示；跨文件规则需要宿主先把
 //   被引用的 .dec 读出来传进来（内核零 IO）。
 //
@@ -12,6 +14,11 @@
 //   Chroma 官方工作流是「TextPad 编辑 → Makefile 调 plncmp/patcmp → 看编译结果页
 //   点击跳转」（操作手册 §2.5），也就是说**错误只有在编译之后才看得到**。把这件
 //   事提前到「边写边标」，是与官方工具链相比唯一真正有增量价值的方向。
+//   官方构建脚本里的真实命令（2026-09-19 从厂商范例工程取证，变量名即官方原名）：
+//     plncmp $(PLN_CFLAGS) <name>.pln          # .pln → .pin，并生成中间 C++ 源码
+//     patcmp -c -s $(PAT_CFLAGS) <name>.pat    # .pat → .pdt
+//     patcmp $(PAT_LFLAGS) -o<out> -f <lst>    # .pdt → .ppo
+//   其中 `.pln` 目标依赖同目录的 `.dec`，即 **plncmp 会读 .dec**。
 //
 // 【定位：自建诊断模型，不是官方错误码】
 //   手册与操作手册里**没有公开错误码表**（操作手册全文 `error` 只出现 14 次）。
@@ -78,8 +85,8 @@ struct Diagnostic {
 //
 //   C3380-PLN-001  SET_DEC_FILE 末尾不能有分号                        p41 §3.3.2
 //   C3380-DEC-001  PIN_LIST：同一个 pin 名定义了多次                 p25 §2.3.2
-//   C3380-DEC-002  PIN_LIST：同一个 ATE 通道号定义了多次             p25 §2.3.2
-//   C3380-DEC-003  PIN_LIST：同一个 DUT pin 号定义了多次             p25 §2.3.2
+//   C3380-DEC-002  PIN_LIST：同一**资源域**内同一个 ATE 通道号定义了多次  p25 §2.3.2 + §2.4.1/§2.5.1 分域
+//   C3380-DEC-003  PIN_LIST：同一**资源域**内同一个 DUT pin 号定义了多次  p25 §2.3.2 + §2.4.1/§2.5.1 分域
 //   C3380-DEC-004  PIN_GROUP：同一个 pin_group 名定义了多次          p27 §2.4.2
 //   C3380-PLN-010  实参个数多于手册签名的上限                       各语句 Format 块（Error）
 //   C3380-PLN-011  实参个数少于手册签名的必填项                     各语句 Format 块 + `No entry: illegal`（Warning）
@@ -92,6 +99,39 @@ struct Diagnostic {
 //   "An error will occur if the same DUT or ATE pin numbers are defined more than
 //    once." / "An error will occur if the same pin name is given to more than one
 //    DUT pin.  Pin names must be unique within the device definition."
+//
+// 【DEC-002 / DEC-003 为什么必须**按资源域**判定（2026-09-19 收窄，附两条实证）】
+//   上面那句原文**不能按字面全局执行** —— 会误报。证据两条，都不是推断：
+//
+//   ① 手册 §2.5.3（p29）自己的 UR 官方示例就让 UR 脚复用信号脚的 ATE 号：
+//        SEL0   =  0 : 288 : 320 : 352  =  1  =  IN  ;
+//        G1     =  2 : 290 : 322 : 354  =  2  =  IN  ;
+//        …
+//        UR_C0  =  0 : 1  :  2  :   3   =     =  UR  ;
+//        UR_C1  =  4 : 5  :  6  :   7   =     =  UR  ;
+//      ATE 0/1/2/3 同时属于 SEL0/SEL1/G1/SL，手册把这段判为**正确**写法。
+//      ⇒ UR 与信号脚不在同一个号段空间里。
+//
+//   域怎么划（手册自己的默认组就是域的划分，§2.4.1 / §2.5.1 / §5.4.1）：
+//     IO_ALLPINS    = { IN, OUT, IO }   ← 这三者**同域**，跨它们仍要报
+//     MXTMU_ALLPINS = { TMU }           ← §2.4.1 Notice 明文："TMU pin-type &
+//                                          pin_group can not be assigned in the
+//                                          same IO_ALLPINS"
+//     UR_ALLPINS    = { UR }
+//     MLDPS_ALLPINS = 功率脚（MLDPS / DPS / UVI / PREF）
+//     其余类型（GND / TRG / EXT / WG / WD）各自成域。
+//   厂商编译器生成的 pin 初始化源码里确实只声明这四个 `*_ALLPINS` 默认组，
+//   与该划分吻合。
+//
+//   结论：**同一号码定义多次只在同一域内才是错误**；跨域复用是合法且常见的
+//   （多站点 pin 列表、功率脚模块编号、用户继电器复用通道）。这与内核纪律一致
+//   —— 宁可少报，不可误报。
+//
+//   注意 DEC-001（pin 名重复）**不分域**：手册说的是 "Pin names must be unique
+//   within the device definition"，且真实语料里跨域同名从未出现，无证据支持分域。
+//
+//   （上面两条实证的完整取证 —— 含样本工程名、编译记录、生成源码路径 ——
+//     记在项目私密文档里，不写进代码：公开仓库的读者无从打开那些文件。）
 //
 // 【PLN-010 / PLN-011 为什么一档 Error 一档 Warning】
 //   手册**没有**"参数个数不对就报错"的明文（全文 `An error will occur` 只出现 2 次，

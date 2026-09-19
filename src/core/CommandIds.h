@@ -94,6 +94,18 @@ enum Cmd : unsigned int {
     ViewDiagnostics = 590,   // View > 诊断面板（列表 + 双击跳转）
     ViewChromaCheck = 591,   // View > Chroma 静态检查（勾选：是否标红）
 
+    // CRAFT 编译集成（批次 96，方向 D）。与上面两项**刻意分开**：那是我们自建的
+    // 静态规则，这里是**编译器自己的结论**（见 CompilePanel.h 头部说明）。
+    //
+    // 本批**刻意不做「重新编译」**：它的真正语义是"删掉中间目录 `.<stem>` 再编"，
+    // 而那是一个**删除目录的破坏性动作**；`patcmp -c` 本来就会重编，所以"编译"
+    // 已经覆盖了日常需求。等有 CRAFT 可验证时再加，且必须带"列出将被删除的目录 +
+    // 明确确认"。
+    BuildCompile = 592,       // 工具 > 编译工程
+    ViewCompileOutput = 593,  // 工具 > 编译输出面板（勾选态）
+    BuildClearOutput = 594,   // 工具 > 清除编译输出
+    BuildChooseToolDir = 595, // 工具 > 指定 CRAFT 工具目录…
+
     // Diff compare
     DiffCompare = 570,
     DiffExitCompare = 571,

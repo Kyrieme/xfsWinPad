@@ -177,6 +177,8 @@ bool SettingsLoad(const std::wstring& path, AppSettings* out) {
         {L"terminalPanelH", KeyVal::Int, &out->terminalPanelH},
         {L"diagPanelH", KeyVal::Int, &out->diagPanelH},
         {L"chromaDiagnostics", KeyVal::Bool, &out->chromaDiagnostics},
+        {L"craftToolDir", KeyVal::Str, &out->craftToolDir},
+        {L"compilePanelH", KeyVal::Int, &out->compilePanelH},
         {L"aiPanelW", KeyVal::Int, &out->aiPanelW},
         {L"aiPanelVisible", KeyVal::Bool, &out->aiPanelVisible},
         {L"aiAttachContext", KeyVal::Bool, &out->aiAttachContext},
@@ -264,6 +266,8 @@ bool SettingsSave(const std::wstring& path, const AppSettings& s) {
     j += num(L"terminalPanelH", s.terminalPanelH, false);
     j += num(L"diagPanelH", s.diagPanelH, false);
     j += std::wstring(L"  \"chromaDiagnostics\": ") + (s.chromaDiagnostics ? L"true" : L"false") + L",\r\n";
+    j += L"  \"craftToolDir\": \"" + Escape(s.craftToolDir) + L"\",\r\n";
+    j += num(L"compilePanelH", s.compilePanelH, false);
     j += num(L"aiPanelW", s.aiPanelW, false);
     j += std::wstring(L"  \"aiPanelVisible\": ") + (s.aiPanelVisible ? L"true" : L"false") + L",\r\n";
     j += std::wstring(L"  \"aiAttachContext\": ") + (s.aiAttachContext ? L"true" : L"false") + L",\r\n";

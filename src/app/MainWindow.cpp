@@ -16,6 +16,8 @@
 #include "../language/LanguageMap.h"
 #include "../language/XfsLexer.h"     // 批次 73：Chroma 族词法器名（模型来源标注）
 #include "../language/Chroma3380Diagnostics.h"  // 批次 87：静态校验内核（纯函数）
+#include "../language/CraftHost.h"   // 批次 96：LoadProject / DetectToolchainFromEnv
+                                     //（与探针 test_craftrunner 走**同一段**读盘代码）
 #include "../resources/resource.h"
 #include "../search/FindInFiles.h"
 #include "../search/SearchAll.h"
@@ -673,6 +675,18 @@ void MainWindow::BuildMenus() {
     item(themeMenu, Tr(L"menu.view.theme.light"), Cmd::ThemeLight);
     item(themeMenu, Tr(L"menu.view.theme.dark"), Cmd::ThemeDark);
 
+    // 批次 96：工具菜单（CRAFT 编译集成，方向 D）。
+    // 位置在「视图」之后、「AI」之前 —— 编译是"对工程做一件事"，不是视图开关；
+    // 也不属于文件操作（它不改源码）。刻意**不放「重新编译」**，理由见 CommandIds.h。
+    HMENU tools = popup(menu_, Tr(L"menu.tools"));
+    item(tools, Tr(L"menu.tools.compile"), Cmd::BuildCompile);
+    sep(tools);
+    AppendMenuW(tools, MF_STRING, Cmd::ViewCompileOutput,
+                Tr(L"menu.tools.compileoutput"));
+    item(tools, Tr(L"menu.tools.clearoutput"), Cmd::BuildClearOutput);
+    sep(tools);
+    item(tools, Tr(L"menu.tools.choosetool"), Cmd::BuildChooseToolDir);
+
     // AI 顶级菜单（用户要求的入口：菜单栏 AI > 打开/关闭 opencode）
     HMENU aiMenu = popup(menu_, Tr(L"menu.ai"));
     item(aiMenu, Tr(L"menu.ai.toggle"), Cmd::ViewAiPanel);
@@ -804,6 +818,7 @@ void MainWindow::ApplyLanguage() {
     if (ai_) ai_->Retranslate();
     if (results_) results_->Retranslate();
     if (diag_) diag_->Retranslate();
+    if (compile_) compile_->Retranslate();
 }
 
 void MainWindow::BuildAccelerators() {
@@ -1354,13 +1369,14 @@ void MainWindow::LayoutChildren() {
     int lgH = (logPanel_ && logPanel_->Visible()) ? MulDiv(logHLogical_, dpi, 96) : 0;
     int termH = (terminal_ && terminal_->Visible()) ? MulDiv(termHLogical_, dpi, 96) : 0;
     int dgH = (diag_ && diag_->Visible()) ? MulDiv(diagHLogical_, dpi, 96) : 0;
+    int cplH = (compile_ && compile_->Visible()) ? MulDiv(compileHLogical_, dpi, 96) : 0;
     int aiW = (ai_ && ai_->Visible()) ? MulDiv(aiWLogical_, dpi, 96) : 0;
     int dockH = (dockMgr_ && !dockMgr_->Empty()) ? dockMgr_->TotalHeight(dpi) : 0;
     int feW = (explorer_ && explorer_->Visible()) ? MulDiv(260, dpi, 96) : 0;
     int top = tbH;
     // AI 右栏占据最右整列（编辑器同高），dock 链与编辑器都止步于它的左缘
     int rightEdge = rc.right - aiW;
-    int hostH = rc.bottom - sbH - rpH - hxH - sdH - cvH - bfH - lgH - termH - dgH - dockH - top;
+    int hostH = rc.bottom - sbH - rpH - hxH - sdH - cvH - bfH - lgH - termH - dgH - cplH - dockH - top;
     int edW = rightEdge - feW;
     bool split = workspace_ && workspace_->SplitActive();
     int leftW = edW;   // left view width (full when not split)
@@ -1423,6 +1439,13 @@ void MainWindow::LayoutChildren() {
         MoveWindow(diag_->Hwnd(), feW, dockY, dockW, dgH, TRUE);
         diag_->Layout(dockW, dgH);
         dockY += dgH;
+    }
+    // 批次 96：编译输出面板紧挨诊断面板下方 —— 两者都是"底部结果列表"，
+    // 但**内容来源不同**（我们自建的静态规则 vs 编译器自己的结论），见 CompilePanel.h。
+    if (compile_ && cplH > 0) {
+        MoveWindow(compile_->Hwnd(), feW, dockY, dockW, cplH, TRUE);
+        compile_->Layout(dockW, cplH);
+        dockY += cplH;
     }
     // 4d: 插件可停靠面板排在底部 dock 链最末（DockManager 自行逐块布置）
     if (dockMgr_ && dockH > 0)
@@ -1564,6 +1587,12 @@ void MainWindow::OnWorkspaceChanged() {
     for (const LanguageMenuItem* e = LanguageMenuCatalog(); e->label; ++e) ++langCount;
     CheckMenuRadioItem(menu_, Cmd::LangFirst, Cmd::LangFirst + langCount - 1,
                        Cmd::LangFirst + langIdx, MF_BYCOMMAND);
+
+    // 批次 96 补：跨文件补全词源**同步**刷新一次，不等防抖。
+    // 理由是"补全随时可能发生"：换文档（含打开文件）之后用户可能立刻在实参里
+    // 敲 dec 里的符号名，而防抖那条路要 450ms 才填 —— 那段时间里补全候选是空的。
+    // 读盘代价是 1~8 个小文件（.dec 通常几 KB），比"补全静默失灵"划算得多。
+    RefreshDecSymbols();
 
     // 批次 87：换了活动文档 → 波浪线与状态栏计数都要换成新文档的。走防抖而不是
     // 立刻重算：本函数在改标题/切标签等路径上都会被调到，合并掉更稳；而每个
@@ -3673,6 +3702,44 @@ void MainWindow::ToggleDiagnostics() {
     RefreshDiagnostics();
 }
 
+// 批次 96 补：跨文件补全词源（被引用 .dec 的符号）刷新。
+//
+// 【为什么必须从 RefreshDiagnostics 里抽出来、而且不能等防抖】
+//   批次 89 把这段放在 RefreshDiagnostics 里，于是它继承了两个本不该继承的
+//   性质 —— 而批次 89 自己的注释恰恰写着"与静态检查开关无关"，注释是对的、
+//   实现是错的：
+//     ① **触发时机**：RefreshDiagnostics 由 ScheduleDiagnostics() 调度，那是
+//        "编辑后 450ms 防抖"。换文档（打开 .pln）之后 450ms 内 decSymbols 仍是
+//        空的 —— 跨文件补全在这段时间里拿不到任何 dec 符号。e2e 的 P12 正好撞在
+//        这个窗口上：打开 fixture 后立刻敲 "Vdp" → 候选为空 → 不弹下拉；
+//        再等 500ms 看，词源其实已经填好了，但补全早就过去了。
+//     ② **开关短路**：ScheduleDiagnostics() 在 settings_.chromaDiagnostics 为
+//        false 时直接 return ⇒ 关掉静态检查的人**永远**拿不到词源，
+//        跨文件补全整个功能静默失效。
+//   所以这里改成：换文档时**同步**刷一次（读 1~8 个小文件，代价可接受），
+//   编辑路径仍由防抖那条路刷（dec 内容可能被改），并且不再受开关短路。
+//
+// 返回值是读到的 .dec 文本：规则 3（CheckApasImatch）要用同一批内容，
+// 免得同一轮里读两遍盘。
+std::vector<std::string> MainWindow::RefreshDecSymbols() {
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!d) return {};
+
+    const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
+    const bool wantsDec = (kind == chroma3380::ChromaFileKind::Plan ||
+                           kind == chroma3380::ChromaFileKind::Pattern);
+    if (!wantsDec || d->editor.IsLargeFile()) {
+        // 非 Chroma / 大文件：清空缓存（弹窗少一路词源，不是错）。
+        d->decSymbols.clear();
+        return {};
+    }
+
+    std::vector<std::string> decTexts =
+        LoadReferencedDecTexts(*d, d->editor.GetTextUtf8());
+    d->decSymbols = MergeDecSymbols(decTexts);
+    return decTexts;
+}
+
 void MainWindow::RefreshDiagnostics() {
     Document* d = workspace_ ? workspace_->Active() : nullptr;
     if (!d) {
@@ -3688,15 +3755,8 @@ void MainWindow::RefreshDiagnostics() {
     // 批次 89：被引用 .dec 的符号缓存（跨文件补全词源）。**与静态检查开关无关**
     // —— 关掉检查不代表不要补全。.dec 读不到时缓存清空（弹窗就少一路词源），
     // 非 Chroma / 大文件同理。decTexts 下面规则 3 复用，盘只读一次。
-    std::vector<std::string> decTexts;
-    if ((kind == chroma3380::ChromaFileKind::Plan ||
-         kind == chroma3380::ChromaFileKind::Pattern) &&
-        !d->editor.IsLargeFile()) {
-        decTexts = LoadReferencedDecTexts(*d, chromaText);
-        d->decSymbols = MergeDecSymbols(decTexts);
-    } else {
-        d->decSymbols.clear();
-    }
+    // 批次 96 补：填充逻辑抽到 RefreshDecSymbols()，换文档时也会同步调一次。
+    const std::vector<std::string> decTexts = RefreshDecSymbols();
 
     const bool active = settings_.chromaDiagnostics &&
                         kind != chroma3380::ChromaFileKind::Unknown &&
@@ -3779,7 +3839,11 @@ void MainWindow::RefreshDiagnostics() {
 }
 
 void MainWindow::ScheduleDiagnostics() {
-    if (!settings_.chromaDiagnostics) return;
+    // 批次 96 补：**不要**在开关关闭时短路。这条定时器到期后跑的
+    // RefreshDiagnostics 除了重扫静态检查，还负责刷新跨文件补全词源
+    // （decSymbols）—— 而词源与开关无关（批次 89 写在代码里的设计意图：
+    // "关掉检查不代表不要补全"）。开关关闭时 RefreshDiagnostics 会在刷新
+    // 词源之后提前返回，不会多跑一遍校验、也不会画波浪线。
     // 对同一个 id 重复 SetTimer 等于重置计时 —— 天然的"最后一次编辑后 N ms"
     ::SetTimer(hwnd_, kDiagTimerId, (UINT)kDiagDebounceMs, nullptr);
 }
@@ -3800,6 +3864,389 @@ void MainWindow::OnDiagActivate(int row) {
     ed.GotoPosition(it->line, it->column);   // 先滚到行（列位），再上选区
     ed.SelectRange(from, from + len);        // 选中被判错的片段
     ::SetFocus(ed.Hwnd());
+}
+
+// ============================================================================
+// 批次 96：CRAFT 编译集成（方向 D 第三刀）
+//
+// 【这一层只做三件事】什么时候跑、把结果画到哪、双击跳到哪。三层内核各管一段：
+//   CraftProject（纯函数：该跑什么）→ CraftHost（读盘 / 读环境）→ CraftRunner（真的跑）
+// 与批次 87 同一分层理由：以后换工具、加步骤只动内核，UI 不会跟着变复杂。
+//
+// 【三条硬约束（见 CompilePanel.h）】
+//   ① 没 CRAFT 也必须能用 —— 找不到 plncmp/patcmp 时是「面板里说明 + 怎么配」，
+//      **不是 MessageBox**。本机实测自动探测必然失败，所以这是现实需求不是假想。
+//   ② 编译输出面板与静态检查面板分开 —— 后者是我们自建的规则，前者是编译器结论。
+//   ③ 解析不出位置就退化为纯文本 —— 认不出的行照样显示，只是双击不响应。
+//
+// 【为什么编译要开后台线程】
+//   `plncmp` 会自己调 C++ 编译器，大工程可能跑几分钟。在 UI 线程里跑等于把编辑器
+//   冻住几分钟 —— 那比没有这个功能更糟。所以走 std::thread + PostMessage 回 UI 线程
+//   （与 GitClient 同口径）。
+// ============================================================================
+
+namespace {
+
+// 面板上的步骤标签："1/4"
+std::wstring StepLabel(std::size_t idx, std::size_t total) {
+    return std::to_wstring(idx + 1) + L"/" + std::to_wstring(total);
+}
+
+// 一步的结局。写进分隔行，让人一眼看出**哪一步**挂了、**为什么** ——
+// 否则一串"文件不存在"会盖住真正的第一现场。
+std::wstring StepOutcome(const craft::StepResult& s) {
+    if (s.spawnFailed) return Tr(L"panel.compile.step.spawnfailed");
+    if (s.timedOut)    return Tr(L"panel.compile.step.timeout");
+    if (s.exitCode == 0)
+        return I18n::Instance().Fmt(L"panel.compile.step.ok",
+                                    {std::to_wstring(s.elapsedMs)});
+    return I18n::Instance().Fmt(L"panel.compile.step.exit",
+                                {std::to_wstring(s.exitCode),
+                                 std::to_wstring(s.elapsedMs)});
+}
+
+// BuildResult → 面板行。**一步都不省**：
+//   每个步骤一条分隔行（header），然后是这一步输出的每一行。
+//   ParseCompilerOutput 保证"非空行一条不丢"，所以认不出位置的行也会出现在
+//   面板上（file 为空 → Jumpable() 为假 → 双击不响应），这是硬约束 ③。
+std::vector<CompileRow> RowsFromBuild(const craft::BuildResult& br,
+                                      const std::wstring& projectRoot) {
+    std::vector<CompileRow> rows;
+    const std::size_t total = br.steps.size();
+    for (std::size_t i = 0; i < total; ++i) {
+        const craft::StepResult& s = br.steps[i];
+        CompileRow h;
+        h.header = true;
+        h.step = StepLabel(i, total);
+        h.text = s.exe;
+        if (!s.args.empty()) { h.text += L" "; h.text += s.args; }
+        h.text += L"    ";
+        h.text += StepOutcome(s);
+        rows.push_back(std::move(h));
+
+        const craft::CompileOutput co = craft::ParseCompilerOutput(s.output, projectRoot);
+        for (const craft::CompileIssue& is : co.issues) {
+            CompileRow r;
+            r.file   = is.file;
+            r.line   = is.line;
+            r.column = is.column;
+            r.kind   = (is.kind == craft::IssueKind::Error)   ? 2
+                     : (is.kind == craft::IssueKind::Warning) ? 1 : 0;
+            r.text   = is.text;
+            rows.push_back(std::move(r));
+        }
+    }
+    return rows;
+}
+
+// 统计可跳转的行数，写进摘要（用户据此知道"有多少条能点"）
+int CountJumpable(const std::vector<CompileRow>& rows) {
+    int n = 0;
+    for (const CompileRow& r : rows) if (r.Jumpable()) ++n;
+    return n;
+}
+
+} // namespace
+
+void MainWindow::ToggleCompilePanel() {
+    if (compile_ && compile_->Visible()) {
+        compile_->Hide();
+        ::CheckMenuItem(menu_, Cmd::ViewCompileOutput, MF_UNCHECKED);
+        LayoutChildren();
+        return;
+    }
+    if (!compile_) {
+        compile_ = std::make_unique<CompilePanel>();
+        if (!compile_->Create(hwnd_, inst_)) { compile_.reset(); return; }
+        compile_->onClose = [this]() {
+            compile_->Hide();
+            ::CheckMenuItem(menu_, Cmd::ViewCompileOutput, MF_UNCHECKED);
+            LayoutChildren();
+        };
+        compile_->onHeightChange = [this](int px) {
+            int dpi = ::GetDpiForWindow(hwnd_);
+            compileHLogical_ = (std::max)(90, (std::min)(1400,
+                MulDiv(px, 96, (std::max)(96, dpi))));
+            settings_.compilePanelH = compileHLogical_;
+            LayoutChildren();
+        };
+        compile_->onActivateRow = [this](int row) { OnCompileActivate(row); };
+        if (settings_.compilePanelH > 0) compileHLogical_ = settings_.compilePanelH;
+        compile_->Retranslate();
+    }
+    compile_->Show();
+    ::CheckMenuItem(menu_, Cmd::ViewCompileOutput, MF_CHECKED);
+    LayoutChildren();
+}
+
+void MainWindow::ShowCompileNotice(const std::wstring& summary,
+                                   std::vector<CompileRow> rows) {
+    if (!compile_) {
+        // 复用开关的创建分支（它会把面板建出来并打勾），再写内容。
+        ToggleCompilePanel();
+        if (!compile_) return;
+    } else if (!compile_->Visible()) {
+        compile_->Show();
+        ::CheckMenuItem(menu_, Cmd::ViewCompileOutput, MF_CHECKED);
+        LayoutChildren();
+    }
+    compile_->Update(summary, std::move(rows));
+}
+
+void MainWindow::ClearCompileOutput() {
+    if (!compile_ || !compile_->Visible()) return;
+    compile_->Update(Tr(L"panel.compile.title"), {});
+}
+
+void MainWindow::CompileActiveProject() {
+    if (compileBusy_) {
+        // 防重入：**不弹框** —— 编译可能跑十几分钟，误触一次不该打断，
+        // 在面板上说明就够了。
+        ShowCompileNotice(Tr(L"panel.compile.busy"), {});
+        return;
+    }
+
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!d) { ShowCompileNotice(Tr(L"panel.compile.nodoc"), {}); return; }
+    if (!d->HasPath()) {
+        ShowCompileNotice(Tr(L"panel.compile.needssave"), {});
+        return;
+    }
+
+    const std::wstring path = d->path.wstring();
+    const craft::Project proj = craft::LoadProject(path);
+    if (!proj.ok) {
+        // 找不到工程根（多半是没有 makefile）。面板里说明，不弹框。
+        std::vector<CompileRow> rows;
+        CompileRow r;
+        r.text = Tr(L"panel.compile.noproject.hint");
+        rows.push_back(std::move(r));
+        ShowCompileNotice(Tr(L"panel.compile.noproject"), std::move(rows));
+        return;
+    }
+
+    const craft::Toolchain tc = craft::DetectToolchainFromEnv(settings_.craftToolDir);
+    if (!tc.Complete()) {
+        // ---- 硬约束 ①：缺工具链 = 「说明 + 怎么配」，不是报错弹窗 ----
+        // 逐来源列出来，因为"没找到"和"配了但路径是死的"是完全不同的两件事，
+        // 而后者在工业现场极常见（换机 / 卸载不干净 / 盘符漂移）。
+        std::vector<CompileRow> rows;
+        CompileRow h;
+        h.header = true;
+        h.text = Tr(L"panel.compile.nocraft.title");
+        rows.push_back(std::move(h));
+
+        auto line = [&rows](const std::wstring& t) {
+            CompileRow r; r.text = t; rows.push_back(std::move(r));
+        };
+        line(I18n::Instance().Fmt(L"panel.compile.nocraft.plncmp",
+                                  {tc.plncmp.empty() ? Tr(L"panel.compile.notfound")
+                                                     : tc.plncmp}));
+        line(I18n::Instance().Fmt(L"panel.compile.nocraft.patcmp",
+                                  {tc.patcmp.empty() ? Tr(L"panel.compile.notfound")
+                                                     : tc.patcmp}));
+        line(I18n::Instance().Fmt(L"panel.compile.nocraft.settings",
+                                  {settings_.craftToolDir.empty()
+                                       ? Tr(L"panel.compile.unset")
+                                       : settings_.craftToolDir}));
+        line(I18n::Instance().Fmt(L"panel.compile.nocraft.crafthome",
+                                  {tc.craftHome.empty() ? Tr(L"panel.compile.unset")
+                                                        : tc.craftHome}));
+        line(Tr(L"panel.compile.nocraft.howto"));
+        ShowCompileNotice(Tr(L"panel.compile.nocraft.summary"), std::move(rows));
+        return;
+    }
+
+    const std::vector<craft::BuildStep> steps = craft::PlanBuild(proj);
+    if (steps.empty()) {
+        ShowCompileNotice(Tr(L"panel.compile.nosteps"), {});
+        return;
+    }
+
+    // ---- 起后台线程 ----
+    compileBusy_ = true;
+    if (!compile_) { ToggleCompilePanel(); if (!compile_) { compileBusy_ = false; return; } }
+    else if (!compile_->Visible()) {
+        compile_->Show();
+        ::CheckMenuItem(menu_, Cmd::ViewCompileOutput, MF_CHECKED);
+        LayoutChildren();
+    }
+    compile_->ShowBusy(I18n::Instance().Fmt(
+        L"panel.compile.running",
+        {proj.plnName, std::to_wstring(steps.size())}));
+
+    HWND main = hwnd_;
+    std::thread([main, proj, tc, steps]() {
+        auto* job = new CompileJob;
+        job->projectRoot = proj.root;
+        job->plnName     = proj.plnName;
+        job->result = craft::RunPlan(steps, tc.plncmp, tc.patcmp,
+                                     craft::kDefaultStepTimeoutMs);
+        // 窗口可能在编译期间被关掉：PostMessage 失败就把包删掉，别泄漏
+        // （与 AiPanel 的做法一致）。
+        if (!::PostMessageW(main, WM_APP_COMPILE_DONE, 0, (LPARAM)job)) delete job;
+    }).detach();
+}
+
+void MainWindow::OnCompileDone(CompileJob* job) {
+    std::unique_ptr<CompileJob> owner(job);   // 无论哪条分支都释放
+    compileBusy_ = false;
+    if (!job) return;
+    compileRoot_ = job->projectRoot;
+
+    const craft::BuildResult& br = job->result;
+    std::vector<CompileRow> rows = RowsFromBuild(br, job->projectRoot);
+
+    // 摘要：把"跑了几步 / 卡在哪一步 / 有几条能点"一次说清。
+    // 注意措辞里必须带「CRAFT 编译输出」—— 这是编译器自己的结论，
+    // 与我们自建的静态检查不是一回事（硬约束 ②）。
+    std::wstring summary;
+    if (!br.launched) {
+        summary = br.note.empty() ? Tr(L"panel.compile.notlaunched")
+                                  : std::wstring(br.note);
+    } else if (br.allOk) {
+        summary = I18n::Instance().Fmt(
+            L"panel.compile.summary.ok",
+            {std::to_wstring(br.steps.size()), std::to_wstring(CountJumpable(rows))});
+    } else {
+        summary = I18n::Instance().Fmt(
+            L"panel.compile.summary.failed",
+            {std::to_wstring(br.firstFailedStep + 1),
+             std::to_wstring(br.steps.size()),
+             std::to_wstring(CountJumpable(rows))});
+    }
+    if (compile_) compile_->Update(summary, std::move(rows));
+}
+
+void MainWindow::OnCompileActivate(int row) {
+    if (!compile_) return;
+    const CompileRow* r = compile_->RowAt(row);
+    if (!r || !r->Jumpable()) return;
+    if (!JumpToCompileLocation(*r)) {
+        Logger::Warn("OnCompileActivate: cannot resolve " + WideToUtf8(r->file));
+    }
+}
+
+bool MainWindow::JumpToCompileLocation(const CompileRow& r) {
+    if (!workspace_ || r.file.empty() || r.line <= 0) return false;
+
+    // 编译器给的路径形态我们**零实证**（只有编译成功的工程，没有失败输出），
+    // 所以三级依次尝试，**绝不猜**：猜错会跳到毫无关系的位置上，比不跳更糟。
+    std::wstring full = r.file;
+
+    // 1) 绝对路径且文件在 → 直接用
+    std::error_code ec;
+    if (full.find(L':') == std::wstring::npos) {
+        // 2) 相对路径 → 拼到工程根上（编译的工作目录就是工程根）
+        std::wstring cand = compileRoot_;
+        if (!cand.empty()) {
+            if (cand.back() != L'\\' && cand.back() != L'/') cand += L'\\';
+            cand += full;
+            if (std::filesystem::exists(cand, ec)) full = cand;
+        }
+    }
+    if (!std::filesystem::exists(full, ec)) {
+        // 3) 还找不到 → 看有没有**同名**的已打开文档（编译器可能只给文件名）
+        const std::filesystem::path want(full);
+        const std::wstring wantName = want.filename().wstring();
+        int hit = -1, view = 0;
+        for (int i = 0; i < workspace_->Count(); ++i)
+            if (workspace_->DocumentAt(i)->path.filename().wstring() == wantName) {
+                hit = i; break;
+            }
+        if (hit < 0) {
+            for (int i = 0; i < workspace_->Count1(); ++i)
+                if (workspace_->FindByTabIndex1(i)->path.filename().wstring() == wantName) {
+                    hit = i; view = 1; break;
+                }
+        }
+        if (hit < 0) return false;   // 认不出就不跳（硬约束 ③）
+        if (view == 0) workspace_->Activate(hit);
+        else           workspace_->ActivateView1(hit);
+        Document* doc = view == 0 ? workspace_->Active() : workspace_->Active1();
+        if (!doc) return false;
+        doc->editor.GotoPosition(r.line, (std::max)(1, r.column));
+        ::SetFocus(doc->editor.Hwnd());
+        return true;
+    }
+
+    // 已在某个视图里打开 → 激活即可；否则开文件并跳到那一行
+    int target = -1, targetView = 0;
+    const std::filesystem::path fp(full);
+    for (int i = 0; i < workspace_->Count(); ++i)
+        if (workspace_->DocumentAt(i)->path == fp) { target = i; break; }
+    if (target < 0) {
+        for (int i = 0; i < workspace_->Count1(); ++i)
+            if (workspace_->FindByTabIndex1(i)->path == fp) {
+                target = i; targetView = 1; break;
+            }
+    }
+    if (target >= 0) {
+        if (targetView == 0) workspace_->Activate(target);
+        else                 workspace_->ActivateView1(target);
+        Document* doc = targetView == 0 ? workspace_->Active() : workspace_->Active1();
+        if (!doc) return false;
+        doc->editor.GotoPosition(r.line, (std::max)(1, r.column));
+        ::SetFocus(doc->editor.Hwnd());
+        return true;
+    }
+    workspace_->OpenPath(full, r.line);
+    if (Document* doc = workspace_->Active()) {
+        doc->editor.GotoPosition(r.line, (std::max)(1, r.column));
+        ::SetFocus(doc->editor.Hwnd());
+    }
+    return true;
+}
+
+void MainWindow::OnCompileChooseToolDir() {
+    IFileDialog* fd = nullptr;
+    HRESULT hr = ::CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_IFileDialog, (void**)&fd);
+    if (FAILED(hr) || !fd) {
+        Logger::Error("OnCompileChooseToolDir: CoCreateInstance failed");
+        return;
+    }
+    DWORD opts = 0;
+    fd->GetOptions(&opts);
+    fd->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+    fd->SetTitle(Tr(L"msg.pickcraftdir"));
+    bool picked = false;
+    std::wstring dir;
+    if (SUCCEEDED(fd->Show(hwnd_))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(fd->GetResult(&item)) && item) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                dir = path;
+                ::CoTaskMemFree(path);
+                picked = true;
+            }
+            item->Release();
+        }
+    }
+    fd->Release();
+    if (!picked) return;
+
+    settings_.craftToolDir = dir;
+    SettingsSave(SettingsFilePath(), settings_);
+
+    // 立刻回显探测结果 —— 用户刚指定完就该看到"到底认没认出来"，
+    // 而不是等下次编译才发现填错了。
+    const craft::Toolchain tc = craft::DetectToolchainFromEnv(settings_.craftToolDir);
+    std::vector<CompileRow> rows;
+    auto line = [&rows](const std::wstring& t) {
+        CompileRow r; r.text = t; rows.push_back(std::move(r));
+    };
+    line(I18n::Instance().Fmt(L"panel.compile.toolset.dir", {dir}));
+    line(I18n::Instance().Fmt(L"panel.compile.nocraft.plncmp",
+                              {tc.plncmp.empty() ? Tr(L"panel.compile.notfound")
+                                                 : tc.plncmp}));
+    line(I18n::Instance().Fmt(L"panel.compile.nocraft.patcmp",
+                              {tc.patcmp.empty() ? Tr(L"panel.compile.notfound")
+                                                 : tc.patcmp}));
+    ShowCompileNotice(tc.Complete() ? Tr(L"panel.compile.toolset.ok")
+                                    : Tr(L"panel.compile.toolset.incomplete"),
+                      std::move(rows));
 }
 
 // --- big-file viewer (>2GB read-only, paged mmap) ------------------------------
@@ -4855,6 +5302,11 @@ void MainWindow::ExecuteCommand(unsigned int id) {
         case Cmd::ViewCsvView: ToggleCsvView(); break;
         case Cmd::ViewDiagnostics: ToggleDiagnostics(); break;
         case Cmd::ViewChromaCheck: ToggleChromaCheck(); break;
+        // 批次 96：CRAFT 编译集成（工具菜单）
+        case Cmd::BuildCompile: CompileActiveProject(); break;
+        case Cmd::ViewCompileOutput: ToggleCompilePanel(); break;
+        case Cmd::BuildClearOutput: ClearCompileOutput(); break;
+        case Cmd::BuildChooseToolDir: OnCompileChooseToolDir(); break;
         case Cmd::ViewBigFile: ToggleBigFileView(); break;
         case Cmd::ViewLogPanel: ToggleLogPanel(); break;
         case Cmd::ViewTerminal: ToggleTerminal(); break;
@@ -5430,6 +5882,12 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_APP_GIT_OP:
             OnGitOp((GitOpResult*)lp);
+            return 0;
+
+        case WM_APP_COMPILE_DONE:
+            // lParam 是 CompileJob*（含 BuildResult + 工程根 + pln 名），
+            // 不是裸 BuildResult* —— 跳转要用工程根拼相对路径。
+            OnCompileDone((CompileJob*)lp);   // 批次 96：接管所有权
             return 0;
 
         case WM_TIMER: {

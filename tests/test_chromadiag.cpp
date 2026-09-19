@@ -210,6 +210,83 @@ static void RunPinList() {
         CHECK(CountCode(ValidateChromaSource(s, ChromaFileKind::Dec),
                         "C3380-DEC-001") == 1);
     }
+
+    // ================= 资源域（pin_type 分域）=================
+    // 唯一性只在**同一资源域内**判定。域 = 手册的 *_ALLPINS 默认组：
+    //   {IN, OUT, IO} 一个域（§2.4.1 IO_ALLPINS）；其余每个 pin_type 自成一域。
+    // 依据（两条都是实证，不是推断）：
+    //   ① §2.5.3 的 UR 官方示例里 UR_C0/UR_C1 复用了信号脚的 ATE 0..7，手册判为正确；
+    //   ② 厂商的 GANG 范例工程里功率脚与信号脚共用 dut#、用户继电器脚与信号脚
+    //      共用 ATE 通道号，而该工程**编译成功**（编译器生成的 pin 初始化源码把
+    //      全部 54 个 pin 原样声明，无去重无报错）。完整取证见项目私密文档。
+
+    // 跨域复用**不报**：手册 §2.5.3 的 UR 示例原样（ATE 0/2 被 IN 与 UR 同时使用）
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  SEL0  = 0 = 1 = IN;\n"
+                        "  G1    = 2 = 2 = IN;\n"
+                        "  UR_C0 = 0 : 1 : 2 : 3 = = UR;\n"
+                        "}\n";
+        CHECK(ValidateChromaSource(s, ChromaFileKind::Dec).empty());
+    }
+    // 跨域复用**不报**：TMU 与 IO 共用 ATE（§2.4.1 Notice：TMU 不得与 IO 同组）
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  A = 5 = 1 = IO;\n"
+                        "  T = 5 = = TMU;\n"
+                        "}\n";
+        CHECK(ValidateChromaSource(s, ChromaFileKind::Dec).empty());
+    }
+    // 跨域复用**不报**：功率脚 MLDPS 与信号脚共用 dut#（厂商 GANG 样本的形状）
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  SEL0 = 40  = 1 = IO;\n"
+                        "  Gnd  =     = 1 = GND;\n"
+                        "  Vdd1 = 577 = 1 = MLDPS;\n"
+                        "}\n";
+        CHECK(ValidateChromaSource(s, ChromaFileKind::Dec).empty());
+    }
+    // 同域内**仍要报**：MLDPS vs MLDPS 共用 dut#
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  Vdd  = 576 = 0 = MLDPS;\n"
+                        "  VddX = 577 = 0 = MLDPS;\n"
+                        "}\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, ChromaFileKind::Dec);
+        CHECK(CountCode(d, "C3380-DEC-003") == 1);
+        CHECK(d[0].line == 2);
+    }
+    // 同域内**仍要报**：UR vs UR 共用 ATE
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  U1 = 8 = = UR;\n"
+                        "  U2 = 8 = = UR;\n"
+                        "}\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, ChromaFileKind::Dec);
+        CHECK(CountCode(d, "C3380-DEC-002") == 1);
+    }
+    // IN / OUT / IO 属**同一个域**（IO_ALLPINS）：跨这三个类型仍要报
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  A = 7 = 1 = IN;\n"
+                        "  B = 7 = 2 = OUT;\n"
+                        "  C = 9 = 3 = IO;\n"
+                        "  D = 9 = 4 = IO;\n"
+                        "}\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, ChromaFileKind::Dec);
+        CHECK(CountCode(d, "C3380-DEC-002") == 2);
+    }
+    // pin_type 段认不出 → 002/003 一律不报（域未知，宁漏不误）；001 照报
+    {
+        const char* s = "PIN_LIST (B) {\n"
+                        "  A = 0 = 1 = ;\n"
+                        "  A = 0 = 1 = IN;\n"
+                        "}\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, ChromaFileKind::Dec);
+        CHECK(CountCode(d, "C3380-DEC-001") == 1);
+        CHECK(CountCode(d, "C3380-DEC-002") == 0);
+        CHECK(CountCode(d, "C3380-DEC-003") == 0);
+    }
 }
 
 static void RunPinGroup() {

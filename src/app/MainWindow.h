@@ -19,6 +19,8 @@
 #include "StdfPanel.h"
 #include "CsvPanel.h"
 #include "DiagnosticsPanel.h"
+#include "CompilePanel.h"
+#include "../language/CraftRunner.h"   // craft::BuildResult / Toolchain / BuildStep
 #include "../bigfile/BigFileView.h"
 #include "../git/GitClient.h"
 #include "../hex/HexPanel.h"
@@ -56,6 +58,10 @@ StartupOptions ParseCommandLine(LPCWSTR cmd);
 // 会话恢复跳行（wParam/lParam=0）：RestoreSession 攒好 PendingJump 后 Post，
 // 消息循环侧 ApplyRestoreJumps 统一应用，避免编辑器未挂载时 SCI 跳行丢失。
 constexpr UINT WM_APP_RESTOREJUMP = WM_APP + 90;
+// 批次 96：后台编译线程跑完 → lParam = craft::BuildResult*（接收方 delete）。
+// 用堆指针而不是塞进 WPARAM 的原因是结果里有整个输出文本与逐行解析，
+// 不是几个整数能装下的（与 WM_APP_GIT_DONE 同口径）。
+constexpr UINT WM_APP_COMPILE_DONE = WM_APP + 91;
 
 class MainWindow : public IPrefsApplier, public IStyleApplier, public IShortcutChange {
 public:
@@ -138,6 +144,35 @@ private:
     void ScheduleDiagnostics();        // 编辑防抖：延迟合并一次重扫
     void ClearDiagnosticsEverywhere(); // 关功能时清掉所有已打开文档的标记
     void OnDiagActivate(int row);      // 面板双击：跳到那行并选中被判错的片段
+    // 批次 96 补：跨文件补全词源（被引用 .dec 的符号）。
+    // **与静态检查开关无关**，也**不等防抖** —— 见 .cpp 里的说明。
+    // 返回读到的 .dec 文本（规则 3 复用，同一轮不读两遍盘）。
+    std::vector<std::string> RefreshDecSymbols();
+
+    // --- 批次 96：CRAFT 编译集成（方向 D 第三刀）-----------------------------
+    // 内核分三层，这里只负责"何时跑、结果给谁看"：
+    //   CraftProject（纯函数：该跑什么）→ CraftHost（读盘/读环境）→ CraftRunner（真的跑）
+    // 三条硬约束（见 CompilePanel.h）：① 没 CRAFT 也能用，缺工具链是"灰掉 + 说明"
+    // 不是报错弹窗；② 编译输出面板与静态检查面板**必须分开**；③ 解析不出位置就
+    // 退化为纯文本，绝不猜着跳。
+    // 后台编译线程的产物。用堆指针 PostMessage 回 UI 线程，接收方 delete
+    // （与 WM_APP_GIT_DONE 同口径）——结果里有整个输出文本与逐行解析，
+    // 不是几个整数能装下的。
+    struct CompileJob {
+        craft::BuildResult result;
+        std::wstring       projectRoot;   // 解析输出里的相对路径要用
+        std::wstring       plnName;
+    };
+
+    void ToggleCompilePanel();          // 工具 > 编译输出面板（勾选）
+    void CompileActiveProject();        // 工具 > 编译工程（后台线程，结果 PostMessage 回来）
+    void OnCompileChooseToolDir();      // 工具 > 指定 CRAFT 工具目录…
+    void ClearCompileOutput();          // 工具 > 清除编译输出
+    void OnCompileDone(CompileJob* job);   // 接管所有权；把结果铺进面板
+    void OnCompileActivate(int row);    // 面板双击：跳到编译器报出的位置
+    void ShowCompileNotice(const std::wstring& summary,
+                           std::vector<CompileRow> rows);   // 铺面板（不编译）
+    bool JumpToCompileLocation(const CompileRow& r);
     void ToggleBigFileView(const std::wstring& forcedPath = std::wstring());
     void ToggleLogPanel();
     void ToggleTerminal();
@@ -246,6 +281,18 @@ private:
     std::unique_ptr<StdfPanel> stdf_;
     std::unique_ptr<CsvPanel> csv_;
     std::unique_ptr<DiagnosticsPanel> diag_;
+    // 批次 96：编译输出面板。**与 diag_ 分开是硬约束** —— 诊断面板的摘要写着
+    // "非 CRAFT 编译结果"（那是我们自建的规则），这个面板是编译器自己的结论。
+    std::unique_ptr<CompilePanel> compile_;
+    int compileHLogical_ = 220;          // 编译输出面板高度 at 96 dpi（批次 96）
+    bool compileBusy_ = false;           // 后台编译线程在跑（防重入）
+    // 最近一次编译的工程根。跳转时要用它把编译器给的**相对路径**补全 ——
+    // 我们对编译器输出的路径形态**零实证**（只有编译成功的工程，没有失败输出），
+    // 所以跳转必须按"绝对 → 根相对 → 按文件名匹配已打开文档"三级依次尝试。
+    std::wstring compileRoot_;
+    // 刻意**不加状态栏分段**：状态栏 0..7 已被占用，插第 8 段会移动分区索引，
+    // 而 GUI e2e 脚本（chroma-e2e.ps1）会读状态栏。编译状态放在面板标题行里。
+    // 等能跑 e2e 时再统一加。
     // 状态栏第 8 段的文本（"3 错 1 警"/"未发现问题"）。存在成员里是因为状态栏
     // 会被 UpdateStatusBar 反复重刷（改标题、切标签、光标移动），而计数只在
     // RefreshDiagnostics 时才算得出来 —— 存下来让两边不必互相知道对方何时跑。

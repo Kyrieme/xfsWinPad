@@ -49,6 +49,18 @@ struct AppSettings {
     // 关掉即完全不标红、不校验（面板显示"已关闭"）。默认开。
     bool chromaDiagnostics = true;
 
+    // CRAFT 编译集成（批次 96，方向 D）
+    //
+    // craftToolDir：**手动指定**的 plncmp.exe / patcmp.exe 所在目录。空 = 只靠自动
+    // 探测（CRAFT_HOME\bin → PATH）。
+    // 【为什么这个手动入口是必需的，不是锦上添花】
+    //   开发机上实测：CRAFT_HOME 指向 `G:\CRAFT`（Machine 级注册表残留），而该目录
+    //   根本不存在；PATH 里的 `G:\CRAFT\bin` 同样是死路径；全盘搜索也没有 plncmp.exe。
+    //   也就是说**自动探测在这台机器上必然失败**，没有手动入口就完全用不了。
+    //   工业现场这类"装过又被移除 / 换机 / 盘符漂移"的残留环境很常见。
+    std::wstring craftToolDir;
+    int compilePanelH = 0;   // 编译输出面板高度 at 96 dpi (0 = 用内置默认)
+
     // searching defaults (Preferences > 搜索)
     bool searchMatchCase = false;   // FindState 初始 matchCase
     bool searchWholeWord = false;   // FindState 初始 wholeWord

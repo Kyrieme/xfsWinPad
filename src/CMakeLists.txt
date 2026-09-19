@@ -18,6 +18,7 @@ set(XFS_APP_SOURCES
     app/StdfPanel.cpp
     app/CsvPanel.cpp
     app/DiagnosticsPanel.cpp
+    app/CompilePanel.cpp
 
     bigfile/BigFileModel.cpp
     bigfile/BigFileView.cpp
@@ -57,6 +58,9 @@ set(XFS_APP_SOURCES
     language/ChromaSignature.cpp
     language/Chroma3380Complete.cpp
     language/Chroma3380Diagnostics.cpp
+    language/CraftProject.cpp
+    language/CraftHost.cpp
+    language/CraftRunner.cpp
     theme/Styler.cpp
     plugin/PluginManager.cpp
     plugin/PluginCatalog.cpp

@@ -39,6 +39,32 @@ jobs:
           python scripts/check-public-surface.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # Every language id the code asks for must exist in the language files:
+      # Tr() falls back to printing the raw id, so a missing key is a visible
+      # defect ("panel.compile.title" shown to the user), not a build error.
+      - name: Language key guard
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/check-lang-keys.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # CommandIds.h is hand-assigned and mixes single values with reserved
+      # ranges used as `Cmd::XxxFirst + i`. A range colliding with another
+      # range or with a single value makes a menu item fire the wrong action
+      # silently (happened in batch 39), and neither the compiler nor the
+      # linker will complain.
+      - name: Command ID guard
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/check-command-ids.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # The sensitive word list is deliberately NOT stored in this repo, so the
       # scan materialises it from a repository secret for this step only.
       # Without the secret it skips itself (never fails the build).
