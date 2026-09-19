@@ -30,6 +30,7 @@ docs/settings-plan.md
 docs/chroma3380-language-pack.md
 /xfsWinPad*.txt
 .workbuddy/
+.workbuddy-ai/
 --- end private ---
 
 --- docs removed from public repo 2026-09-17 (local only) ---

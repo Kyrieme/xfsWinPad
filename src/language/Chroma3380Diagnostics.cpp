@@ -124,6 +124,20 @@ bool LeadingIdentIn(const std::string& s, std::size_t b, std::size_t e,
     return true;
 }
 
+// 行首标识符（col,len，来自 LeadingIdentIn）与关键字比较，大小写不敏感、**零分配**。
+// 这一层是逐行调用的：上千万行的 `Upper(substr(...))` 副本分配扛不住，所以走逐字符
+// 比较。语义与 `Upper(s.substr(col,len)) == word` 完全等价。
+bool LeadingKeywordIs(const std::string& s, std::size_t col, std::size_t len,
+                      const char* word) {
+    std::size_t k = 0;
+    for (; word[k]; ++k) {
+        if (k >= len) return false;
+        if (std::toupper((unsigned char)s[col + k]) !=
+            std::toupper((unsigned char)word[k])) return false;
+    }
+    return k == len;
+}
+
 // 区间内最后一个非空白字符的下标（没有则 kNone）。
 std::size_t LastCodeIn(const std::string& s, std::size_t b, std::size_t e) {
     std::size_t i = e;
@@ -385,9 +399,10 @@ void CheckDeviceDefinition(const std::vector<std::string>& code,
 //       → Warning。
 //
 // 【只对 .pln 开，不对 .pat 开】
-//   落入受检集的 .pat 语句只有 APM_PATTERN / SPM_PATTERN 两条，而 .pat 没有任何
-//   真实样本可回归 —— 按本模块"没有真实样本就不开口"的纪律（规则 1 同理暂缓），
-//   不在这条规则里覆盖 .pat。
+//   落入受检集的 .pat 语句只有 APM_PATTERN / SPM_PATTERN 两条，而这两条的签名本身
+//   带可选方括号、参数表又整体可选，能推导出的边界没有信息量（对 .pln 有效的 229 条
+//   语句签名库里它们本来就被分类器排除）。`.pat` 侧另有一条独立的规则 1
+//   （C3380-PAT-001，向量宽度），不依赖签名库。
 
 // 从 i 处起读一个标识符（i 处必须已是标识符首字符）。
 bool IdentAt(const std::string& s, std::size_t i, std::size_t e,
@@ -624,12 +639,395 @@ void CheckArgumentCount(const std::vector<std::string>& code, std::vector<Diagno
     }
 }
 
+// ---------------------------------------------------------------------------
+// 规则 1（.pat）：HEADER 声明的 pin 个数必须等于向量数据宽度
+//
+// 【取证】
+//   · 培训教材 p45「Pattern档案格式」注意事项第 2 条（原文）：
+//     「宣告由左至右的信号管脚顺序,**必须与向量主体字符宽度数目一一对应**」
+//     —— 这是本规则唯一的**明文**依据；同一页第 1 条正是规则 2（SET_DEC_FILE 不加分号）。
+//   · LM §3.3 HEADER（p40–41）定义 HEADER 是"the order of entry and display of the
+//     actual binary information, on a pin basis"，§3.4.1.2 的 Pattern Symbol List
+//     逐字符给出含义（0/1/L/H/X/Z…）⇒ **一个字符就是一个 pin**。
+//   · LM §3.3.2 示例自洽：16 个 pin ↔ 16 个字符（p41）；§3.4.1.5 示例同为 16↔16。
+//
+// 【为什么 severity 是 Warning 而不是 Error】
+//   按本模块的分档约定，Error 需要手册明文 `An error will occur`（全文只 2 处，都在
+//   .dec 的 pin 规则）或"手册从未定义过这种写法"。本规则的"必须"出自**培训教材**而非
+//   语言手册，且下一条的闸 B 说明手册自身有反例 ⇒ 依据强度不足以判 Error。
+//   若将来拿到 CRAFT 编译器对此情形报错的实证，可提升为 Error。
+//
+// 【三条闸（每条都能独立证伪；这是零误报的全部理由）】
+//   闸 A —— 文件里**恰好一条** HEADER，以 `;` 结束，且每一项都是 `[%]?identifier`。
+//           多于一条 = 歧义；出现 `[`/空格/其它字符 = 我们没看懂这个写法 → 一律不报。
+//           （LM §3.3.1 的 Format 行 `HEADER [%]pin_name, …` 本身就会被闸 A 挡掉。）
+//   闸 B —— **向量行的分组结构必须与 HEADER 的 `%` 分组结构同形**（组数相等）。
+//           LM §3.3.1 原文：`%` 是"A separator, indicating the compiler to use one space
+//           between the previous pin and next pin, in all of the output from the system"，
+//           即 **HEADER 里 `%` 的位置 = 向量数据里空格的位置**。这条对应关系是
+//           独立于"宽度"的第二个观测量：只有两个观测量都指向"我们在比较同一件事"
+//           时才允许判宽度。
+//           ⚠️ 闸 B 是**必需的**，不是保守起见：LM §3.4.1.2 里两个 3360 时代的示例
+//           （`HEADER CTRL1, %CLK, %QQ, %OAH;` 配 18 / 11 字符的向量）按字面就不满足
+//           一一对应（4 项 vs 7 组 / 5 组）。没有闸 B，照手册自己的示例回放就会误报。
+//           把手册全文 32 处 HEADER 全部回放：**所有真实配对的示例都通过闸 B 且宽度
+//           一致（0 命中）**，被判红的只有那两个自相矛盾的示例 —— 它们被闸 B 拦下。
+//   闸 C —— 块内向量行的宽度与 pin 数不等时才报，且**每个模块只报一条**
+//           （锚在第一条不符的向量行）。这是必须的：一个模块可能有上千万条向量行，
+//           逐行上报会把诊断面板和波浪线一起压垮，而"HEADER 写错"这种最常见的情形
+//           本来就该只提示一次。
+//
+// 【为什么锚在向量行而不是 HEADER】
+//   宽度是在向量行上**量**出来的，第一条不符的行就是最直接的证据；消息里带上
+//   HEADER 的行号，两个位置都能找到。锚在 HEADER 上在"HEADER 对、个别向量行写错"
+//   时会指向错误的地方。
+//
+// 【与 pin_group 的关系（已知的规则边界）】
+//   LM §3.3.1 说明 HEADER 的项可以是 pin_group，而 pin_group 在向量里是
+//   **十六进制**表示（一个字符可能代表 4 个 pin），此时宽度与 pin 数本来就不相等。
+//   本模块**无法**从 .pat 单独判断某个名字是 pin 还是 pin_group（那要读 .dec），
+//   所以规则不区分二者 —— 这类写法由闸 B 兜底（十六进制表示的分组结构与 `%` 声明
+//   通常不同形）。这是**有意的保守**：宁可对 pin_group 文件不报，也不误报。
+//
+// 【输出上限】每个模块一条，另设 64 条硬上限防止畸形文件（几十万个空块）把面板刷爆。
+
+struct HeaderDecl {
+    bool             found     = false;
+    bool             ambiguous = false;   // 出现多于一条 HEADER
+    bool             valid     = false;   // 闸 A 通过
+    int              line      = 0;       // HEADER 关键字所在行（0-based）
+    int              pinCount  = 0;
+    std::vector<int> groupSizes;          // 按 `%` 切出的各组 pin 数
+};
+
+// 把 HEADER 的 pin 列表累积起来（可跨行，LM §3.3.2 的示例就跨了两行）。
+// 返回 false = 在合理行数内没有遇到 `;`（未闭合）→ 闸 A 不放行。
+bool AccumulateHeaderBody(const std::vector<std::string>& code, std::size_t line,
+                          std::size_t from, std::string& body) {
+    for (std::size_t k = line; k < code.size() && k < line + 16; ++k) {
+        const std::string& L = code[k];
+        const std::size_t start = (k == line) ? from : 0;
+        const std::size_t semi = L.find(';', start);
+        if (semi != kNone) {
+            body += L.substr(start, semi - start);
+            return true;
+        }
+        body += L.substr(start);
+    }
+    return false;
+}
+
+HeaderDecl FindHeaderDecl(const std::vector<std::string>& code) {
+    HeaderDecl h;
+
+    // 第一遍：数出所有 HEADER 语句。**必须两遍**——一条一条边找边解析时，遇到第一条
+    // 合法 HEADER 就会返回，后面的 HEADER 根本看不到，"多于一条=歧义"永远不成立
+    // （这个 bug 单测 t2 抓到过）。LM 的 .pat 只有一条 HEADER；多条时我们无法判断
+    // 向量该对哪一条 → 整体放弃，宁可漏报。
+    int          count     = 0;
+    int          firstLine = -1;
+    std::size_t  firstFrom = 0;
+    for (std::size_t i = 0; i < code.size(); ++i) {
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(code[i], 0, code[i].size(), col, len)) continue;
+        if (Upper(code[i].substr(col, len)) != "HEADER") continue;
+        ++count;
+        if (firstLine < 0) { firstLine = (int)i; firstFrom = col + len; }
+    }
+    if (count == 0) return h;
+    h.found = true;
+    if (count > 1) { h.ambiguous = true; return h; }
+
+    h.line = firstLine;
+
+    std::string body;
+    if (!AccumulateHeaderBody(code, (std::size_t)firstLine, firstFrom, body)) return h;
+
+    const std::vector<Seg> items = SplitTopIn(body, 0, body.size(), ',');
+    if (items.empty()) return h;
+
+    int cur = 0;
+    for (const Seg& g : items) {
+        std::size_t p = g.b;
+        const bool startsNew = (p < g.e && body[p] == '%');   // `%` 开启新分组
+        if (p < g.e && body[p] == '%') ++p;
+        if (p >= g.e || !IsIdStart((unsigned char)body[p])) return h;
+        std::size_t q = p;
+        while (q < g.e && IsIdChar((unsigned char)body[q])) ++q;
+        if (q != g.e) return h;
+        if (startsNew && cur > 0) { h.groupSizes.push_back(cur); cur = 0; }
+        ++cur;
+    }
+    if (cur > 0) h.groupSizes.push_back(cur);
+    h.pinCount = (int)items.size();
+    h.valid = true;
+    return h;
+}
+
+// 一条向量行的"形状"：数据段按空白切出的组数、非空白字符总数（= 向量宽度），
+// 以及数据段在行内的范围。
+// 只认两种形状：行首（跳过空白）是 `*`，或 `Label::` / `Label:` 前缀后接 `*`。
+// 含 `#`（ape_field，LM §3.4.1.1 的第三种向量形态）的行不参与比较。
+//
+// ⚠️ 这里的写法**不是**随意的，请不要"顺手简化"回逐字符循环：
+//   最初的实现是最自然的"逐字符 range-for，遇到空白就把当前计数 push_back 进
+//   分组数组"。MSVC 14.51（VS 2026，PlatformToolset v145）在 /O2 下把它误编译成
+//   "统计非空白字符总数、只在循环结束后 push 一次"——`00 0 0` 得到 `{4}` 而不是
+//   `{2,1,1}`（/Od 下正确）。后果是闸 B 判定"组数不同形"而静默放行 → 规则 1 漏报，
+//   且**只在 Release 下漏**。
+//   已用约 20 行独立程序复现：同一算法写成 7 种形态，只有"逐字符 range-for（或裸
+//   指针循环）+ `else { ++cur; }`"这一形态出错；换成下标循环、`continue` 风格或
+//   下面的标准库写法都正确。⚠️ 换写法是**可能再次踩中**的：只有这一种形态出错，
+//   不是因为"range-for 不能用于字符串"。改动后必须在 Release 下重跑
+//   tests/test_chromadiag.cpp 的 RunHeaderVectorWidth（Debug 全绿不算数）。
+//   现在的写法把"逐字符分支 + 条件写入"整个拆掉了：宽度交给 std::count_if，分组
+//   边界交给 find_first_of。两段都是标准库调用，没有可供优化器改写的归纳变量。
+//   Release / Debug 输出逐字节一致（已用独立程序对撞验证）。
+bool VectorShape(const std::string& s, int& groups, int& width,
+                 int& dataStart, int& dataLen) {
+    std::size_t i = 0;
+    while (i < s.size() && IsSpace(s[i])) ++i;
+    if (i >= s.size()) return false;
+    if (s[i] != '*') {
+        if (!IsIdStart((unsigned char)s[i])) return false;
+        std::size_t j = i;
+        while (j < s.size() && IsIdChar((unsigned char)s[j])) ++j;
+        if (j >= s.size() || s[j] != ':') return false;
+        ++j;
+        if (j < s.size() && s[j] == ':') ++j;      // `::` 全局标签
+        while (j < s.size() && IsSpace(s[j])) ++j;
+        if (j >= s.size() || s[j] != '*') return false;
+        i = j;
+    }
+    const std::size_t a = i;
+    const std::size_t b = s.rfind('*');
+    if (b <= a) return false;
+    const std::string inner = s.substr(a + 1, b - a - 1);
+    if (inner.find('#') != kNone) return false;
+
+    width = (int)std::count_if(inner.begin(), inner.end(),
+                               [](char c) { return !IsSpace(c); });
+    groups = 0;
+    for (std::size_t p = 0; p < inner.size();) {
+        const std::size_t q = inner.find_first_of(" \t", p);
+        const std::size_t e = (q == kNone) ? inner.size() : q;
+        if (e > p) ++groups;
+        p = (q == kNone) ? inner.size() : q + 1;
+    }
+    if (groups == 0) return false;
+
+    dataStart = (int)(a + 1);
+    dataLen = (int)(b - a - 1);
+    return true;
+}
+
+void CheckHeaderVectorWidth(const std::vector<std::string>& code,
+                            std::vector<Diagnostic>& out) {
+    const HeaderDecl h = FindHeaderDecl(code);
+    if (!h.found || h.ambiguous || !h.valid) return;     // 闸 A
+
+    int emitted = 0;
+    for (std::size_t i = 0; i < code.size(); ++i) {
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(code[i], 0, code[i].size(), col, len)) continue;
+        const std::string tok = Upper(code[i].substr(col, len));
+        if (tok != "SPM_PATTERN" && tok != "APM_PATTERN" && tok != "RPM_PATTERN") continue;
+
+        // 找块开括号（可以在语句的下一行，真实 .pat 就是这种写法）。
+        std::size_t bl = 0, bc = 0;
+        bool opened = false;
+        for (std::size_t k = i; k < code.size() && k < i + 8; ++k) {
+            const std::size_t p = code[k].find('{', k == i ? col + len : 0);
+            if (p != kNone) { bl = k; bc = p; opened = true; break; }
+        }
+        if (!opened) continue;
+        std::size_t el = 0, ec = 0;
+        if (!FindBlockEnd(code, bl, bc, el, ec)) continue;   // 未闭合 → 不报
+
+        int firstLine = -1, firstStart = 0, firstLen = 0, firstWidth = 0;
+        int mismatched = 0;
+        for (std::size_t k = bl; k <= el; ++k) {
+            int groups = 0, w = 0, ds = 0, dl = 0;
+            if (!VectorShape(code[k], groups, w, ds, dl)) continue;
+            if (groups != (int)h.groupSizes.size()) continue;        // 闸 B
+            if (w == h.pinCount) continue;
+            ++mismatched;
+            if (firstLine < 0) {
+                firstLine = (int)k; firstStart = ds; firstLen = dl; firstWidth = w;
+            }
+        }
+        if (firstLine < 0) continue;
+
+        std::string msg = "向量宽度 " + std::to_string(firstWidth) +
+                          " 与 HEADER（第 " + std::to_string(h.line + 1) +
+                          " 行）声明的 " + std::to_string(h.pinCount) + " 个 pin 不一致";
+        if (mismatched > 1) msg += "（本模块共 " + std::to_string(mismatched) + " 行如此）";
+        PushDiag(out, firstLine, (std::size_t)firstStart, (std::size_t)firstLen,
+                 "C3380-PAT-001", 41, std::move(msg), DiagSeverity::Warning);
+
+        if (++emitted >= 64) break;   // 畸形文件保护：正常 .pat 的模块数远小于此
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 规则 4：SPM_PATTERN 的 NORM / DBL 配 K_SET / Z_SET = compiler error（批次 92）
+// ---------------------------------------------------------------------------
+// 取证、severity 分档、为什么**只对 SPM_PATTERN 开** —— 见头文件同节注释。
+// 实现要点：
+//   · 只在**同时**认出"第 2 个实参是三个 mode 之一"且"第 3 个实参是三个 set 之一"
+//     时才判。任一个认不出（变量、拼写变体、手册将来新增的关键字）→ 整体放弃，
+//     宁可漏报。
+//   · 实参个数不是 2 / 3 一律不判：>3 是手册从未定义过的形式，不属本规则的地盘。
+//   · 只认**同一行内闭合**的实参表。跨行的 SPM_PATTERN 头在手册与真实样本里都没
+//     出现过，不猜。
+//   · 高亮锚在**第 3 个实参**上：两种修法（删掉 set，或把 mode 改成 DBL_2X）都落在
+//     那个 token 上。
+bool PatternModeIsIllegal(const std::string& line, std::size_t& col, std::size_t& len,
+                          std::string& mode, std::string& set) {
+    std::size_t ic = 0, il = 0;
+    if (!LeadingIdentIn(line, 0, line.size(), ic, il)) return false;
+    if (!LeadingKeywordIs(line, ic, il, "SPM_PATTERN")) return false;
+
+    const std::size_t p = line.find('(', ic + il);
+    if (p == kNone) return false;
+    std::size_t q = kNone;
+    int depth = 0;
+    for (std::size_t i = p; i < line.size(); ++i) {
+        if (line[i] == '(') {
+            ++depth;
+        } else if (line[i] == ')') {
+            --depth;
+            if (depth == 0) { q = i; break; }
+        }
+    }
+    if (q == kNone) return false;                        // 实参表未闭合 → 不判
+
+    const std::vector<Seg> args = SplitArgsIn(line, p + 1, q);
+    if (args.size() != 2 && args.size() != 3) return false;
+
+    mode = Upper(line.substr(args[1].b, args[1].e - args[1].b));
+    if (mode != "NORM" && mode != "DBL" && mode != "DBL_2X") return false;
+    if (args.size() < 3) return false;                   // 只给 mode → 合法
+
+    set = Upper(line.substr(args[2].b, args[2].e - args[2].b));
+    if (set != "NORM_SET" && set != "K_SET" && set != "Z_SET") return false;
+    if (mode == "DBL_2X" || set == "NORM_SET") return false;   // 手册明文允许的组合
+
+    col = args[2].b;
+    len = args[2].e - args[2].b;
+    return true;
+}
+
+void CheckPatternMode(const std::vector<std::string>& code, std::vector<Diagnostic>& out) {
+    for (std::size_t i = 0; i < code.size(); ++i) {
+        std::size_t col = 0, len = 0;
+        std::string mode, set;
+        if (!PatternModeIsIllegal(code[i], col, len, mode, set)) continue;
+        std::string msg = "SPM_PATTERN 的 " + mode + " 模式不接受 " + set +
+                          "（手册：只有 DBL_2X 允许 K_SET / Z_SET）";
+        PushDiag(out, (int)i, col, len, "C3380-PAT-002", 45, std::move(msg),
+                 DiagSeverity::Error);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 规则 10：RPT 的重复次数必须在 2 .. 16777215（批次 92）
+// ---------------------------------------------------------------------------
+// 取证、severity 分档见头文件同节注释。实现要点：
+//   · 只在模块块内的**向量行**上、且只在**最后一个 `*` 之后**扫描 —— 两个 `*` 之间
+//     是 pattern_data 数据字符，不参与。
+//   · `RPT` 必须**整词**：`RPTN`（寄存器版重复）与 `TS_RPT` 这类都不算。
+//   · 紧跟 `RPT` 的必须是**纯十进制字面量**（中间只许空白，数字后不能再接标识符
+//     字符）。认不出（变量、表达式、别的助记符）→ 不判：RPT 只吃字面量，寄存器版
+//     另有 RPTN。
+//   · 解析做溢出保护：位数 > 8 位直接按"越界"处理，不做整数转换。
+//   · 与规则 1 同样设 64 条硬上限：一个模块可能有上千万条向量行。
+const long long kRptMinValue = 2;
+const long long kRptMaxValue = 16777215;      // 手册：24bit register
+
+// 整词、大小写不敏感地在 [from, to) 里找 word，返回下标；没有则 kNone。
+// 刻意不用 Upper() 造副本：这一层是**逐行**调用的，上千万次分配扛不住。
+std::size_t FindWholeWordIn(const std::string& s, std::size_t from, std::size_t to,
+                            const char* word) {
+    std::size_t wl = 0;
+    while (word[wl]) ++wl;
+    if (wl == 0 || to < wl) return kNone;
+    for (std::size_t i = from; i + wl <= to; ++i) {
+        if (i > 0 && IsIdChar((unsigned char)s[i - 1])) continue;          // `TS_RPT`
+        if (i + wl < to && IsIdChar((unsigned char)s[i + wl])) continue;   // `RPTN`
+        std::size_t k = 0;
+        while (k < wl && std::toupper((unsigned char)s[i + k]) ==
+                             std::toupper((unsigned char)word[k])) ++k;
+        if (k == wl) return i;
+    }
+    return kNone;
+}
+
+// `RPT` 之后（从 from 起）必须紧跟十进制字面量。false = 认不出，不判。
+bool RptValueAfter(const std::string& s, std::size_t from, std::size_t to,
+                   long long& value, std::size_t& numCol, std::size_t& numLen) {
+    std::size_t i = from;
+    while (i < to && IsSpace(s[i])) ++i;
+    if (i >= to || std::isdigit((unsigned char)s[i]) == 0) return false;
+    std::size_t j = i;
+    while (j < to && std::isdigit((unsigned char)s[j]) != 0) ++j;
+    if (j < to && IsIdChar((unsigned char)s[j])) return false;   // `RPT 100x` 认不出
+    numCol = i;
+    numLen = j - i;
+    if (numLen > 8) { value = kRptMaxValue + 1; return true; }   // 溢出保护 → 越界
+    long long v = 0;
+    for (std::size_t k = i; k < j; ++k) v = v * 10 + (s[k] - '0');
+    value = v;
+    return true;
+}
+
+void CheckRptCount(const std::vector<std::string>& code, std::vector<Diagnostic>& out) {
+    int emitted = 0;
+    for (std::size_t i = 0; i < code.size() && emitted < 64; ++i) {
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(code[i], 0, code[i].size(), col, len)) continue;
+        if (!LeadingKeywordIs(code[i], col, len, "SPM_PATTERN") &&
+            !LeadingKeywordIs(code[i], col, len, "APM_PATTERN") &&
+            !LeadingKeywordIs(code[i], col, len, "RPM_PATTERN")) continue;
+
+        std::size_t bl = 0, bc = 0;
+        bool opened = false;
+        for (std::size_t k = i; k < code.size() && k < i + 8; ++k) {
+            const std::size_t p = code[k].find('{', k == i ? col + len : 0);
+            if (p != kNone) { bl = k; bc = p; opened = true; break; }
+        }
+        if (!opened) continue;
+        std::size_t el = 0, ec = 0;
+        if (!FindBlockEnd(code, bl, bc, el, ec)) continue;   // 未闭合 → 不报
+
+        for (std::size_t k = bl; k <= el && emitted < 64; ++k) {
+            const std::string& L = code[k];
+            const std::size_t star = L.rfind('*');
+            if (star == kNone || star + 1 >= L.size()) continue;
+            // 必须**至少两个** `*`（pattern_data 的起止符）。只有一个说明这行残缺，
+            // 那"最后一个 `*` 之后"其实是数据区，扫它等于在向量数据里找 RPT。
+            if (L.find('*') == star) continue;
+            const std::size_t at = FindWholeWordIn(L, star + 1, L.size(), "RPT");
+            if (at == kNone) continue;
+            long long v = 0;
+            std::size_t nc = 0, nl = 0;
+            if (!RptValueAfter(L, at + 3, L.size(), v, nc, nl)) continue;
+            if (v >= kRptMinValue && v <= kRptMaxValue) continue;
+            std::string msg = "RPT 次数 " + L.substr(nc, nl) +
+                              " 超出手册允许的 2 .. 16777215";
+            PushDiag(out, (int)k, nc, nl, "C3380-PAT-003", 44, std::move(msg),
+                     DiagSeverity::Warning);
+            ++emitted;
+        }
+    }
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
 // 规则 3：DEC_MODE APAS → IMATCH 失效（批次 88，跨文件）
 // ---------------------------------------------------------------------------
-// 取证、severity 分档、为什么 .pat 无真实样本也开口 —— 全部见头文件同节注释。
+// 取证、severity 分档、为什么这条跨文件规则能开口 —— 全部见头文件同节注释。
 // 实现只补头文件没写的细节。
 
 namespace {
@@ -814,8 +1212,13 @@ std::vector<Diagnostic> ValidateChromaSource(const std::string& text,
     } else if (kind == ChromaFileKind::Dec) {
         CheckDeviceDefinition(code, out);
     }
-    // 规则 8 只对 .pln 开：受检的 .pat 语句只有两条，而 .pat 没有真实样本可回归
-    // （见 CheckArgumentCount 上方的说明）。
+    if (kind == ChromaFileKind::Pattern) {
+        CheckHeaderVectorWidth(code, out);       // 规则 1：HEADER pin 数 == 向量宽度
+        CheckPatternMode(code, out);             // 规则 4：SPM_PATTERN 模式 / 设置组合
+        CheckRptCount(code, out);                // 规则 10：RPT 重复次数区间
+    }
+    // 规则 8 只对 .pln 开：受检的 .pat 语句只有两条，且规则 8 的签名库按 .pln 语句
+    // 建立（见 CheckArgumentCount 上方的说明）。.pat 侧的规则 1 已单独实现。
     if (kind == ChromaFileKind::Plan) {
         CheckArgumentCount(code, out);
     }

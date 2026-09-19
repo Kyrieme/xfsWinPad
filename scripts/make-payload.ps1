@@ -19,19 +19,54 @@ foreach ($f in 'xfsWinPad.exe','xfsWinPadPluginHost.exe','Scintilla.dll','Lexill
     Copy-Item "$bin\$f" $pay -Force
 }
 
-# --- VC runtime (locate VS via vswhere; do NOT probe drive letters --
-# Get-ChildItem -Path on a nonexistent drive breaks FileSystem provider
-# dynamic-parameter binding, so -Directory "cannot be found" there) ---
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $vswhere)) { throw 'vswhere not found' }
+# --- VC runtime ---
+# Locate the x64 Microsoft.VC*.CRT redist directory, two ways in order:
+#   1) vswhere  -- the documented lookup; this is the path CI takes.
+#   2) a fallback scan of the conventional "<drive>\Program Files\Microsoft
+#      Visual Studio" roots.
+# The fallback exists because vswhere can come back *empty* with the toolset
+# fully installed: observed with vswhere 3.1.7 against VS 18 2026, where
+# `-latest -products * -property installationPath` (and even `-help`) prints
+# nothing, so step 1 alone aborts the whole payload step.
+#
+# Drive enumeration goes through Get-PSDrive (existing drives only) instead of
+# probing letters directly: Get-ChildItem -Path on a nonexistent drive breaks
+# FileSystem provider dynamic-parameter binding, so -Directory "cannot be
+# found" there.
+#
+# ProgramFiles(x86) is guarded for emptiness -- if it is unset the naive
+# "${env:ProgramFiles(x86)}\..." collapses to "\Microsoft Visual Studio\...".
 $redistDir = $null
-foreach ($vs in (& $vswhere -latest -products * -property installationPath)) {
-    $glob = Join-Path $vs 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT'
-    $cand = Get-ChildItem -Path $glob -Directory -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1
-    if ($cand) { $redistDir = $cand; break }
+
+$vswhere = $null
+foreach ($pf in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+    if (-not $pf) { continue }
+    $cand = Join-Path $pf 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path $cand) { $vswhere = $cand; break }
 }
-if (-not $redistDir) { throw 'VC redist (Microsoft.VC*.CRT) not found via vswhere' }
+if ($vswhere) {
+    foreach ($vs in (& $vswhere -latest -products * -property installationPath)) {
+        $glob = Join-Path $vs 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT'
+        $cand = Get-ChildItem -Path $glob -Directory -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($cand) { $redistDir = $cand; break }
+    }
+}
+
+if (-not $redistDir) {
+    # Layout is <root>\Microsoft Visual Studio\<version>\<edition>\VC\Redist\...
+    # so descend two levels (version, then edition) before globbing.
+    $roots = @(Get-PSDrive -PSProvider FileSystem |
+        ForEach-Object { Join-Path $_.Root 'Program Files\Microsoft Visual Studio' })
+    $installs = Get-ChildItem -Path $roots -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue }
+    $redistDir = $installs |
+        ForEach-Object { Join-Path $_.FullName 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' } |
+        ForEach-Object { Get-ChildItem -Path $_ -Directory -ErrorAction SilentlyContinue } |
+        Sort-Object FullName -Descending | Select-Object -First 1
+}
+
+if (-not $redistDir) { throw 'VC redist (Microsoft.VC*.CRT) not found (vswhere + Program Files scan)' }
 foreach ($f in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
     Copy-Item (Join-Path $redistDir.FullName $f) $pay -Force
 }

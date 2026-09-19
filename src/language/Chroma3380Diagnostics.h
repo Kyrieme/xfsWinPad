@@ -2,7 +2,9 @@
 // xfsWinPad - Chroma 3380 静态校验内核（批次 80 起，方向 C）
 //
 // 【当前进度】批次 80 = 规则 2/5/6（.dec 侧）；批次 86 = 规则 8（.pln 侧参数个数）；
-//   批次 87 = 诊断 UI 接线；批次 88 = 规则 3（跨文件 DEC_MODE APAS → IMATCH 失效）。
+//   批次 87 = 诊断 UI 接线；批次 88 = 规则 3（跨文件 DEC_MODE APAS → IMATCH 失效）；
+//   批次 91 = 规则 1（.pat 侧 HEADER pin 数 == 向量宽度，靠闸 B 做到零误报）；
+//   批次 92 = 规则 4/10（.pat 侧 SPM_PATTERN 模式组合、RPT 次数区间）。
 //   内核是纯函数，产出的诊断列表由调用方决定怎么展示；跨文件规则需要宿主先把
 //   被引用的 .dec 读出来传进来（内核零 IO）。
 //
@@ -81,6 +83,9 @@ struct Diagnostic {
 //   C3380-DEC-004  PIN_GROUP：同一个 pin_group 名定义了多次          p27 §2.4.2
 //   C3380-PLN-010  实参个数多于手册签名的上限                       各语句 Format 块（Error）
 //   C3380-PLN-011  实参个数少于手册签名的必填项                     各语句 Format 块 + `No entry: illegal`（Warning）
+//   C3380-PAT-001  向量数据宽度 != HEADER 声明的 pin 个数            培训教材 p45 注意事项 2 + LM §3.3/§3.4.1.2（Warning）
+//   C3380-PAT-002  SPM_PATTERN 用 NORM/DBL 配 K_SET/Z_SET             LM p45 §3.4.1.4（Error）
+//   C3380-PAT-003  RPT 的重复次数不在 2 .. 16777215                   LM p44 §3.4.1.3（Warning）
 //   C3380-XFILE-001 引用的 .dec 声明 DEC_MODE APAS 时使用 IMATCH    LM p44 §3.4.1.3 + p62 注意 4 + 培训教材 p43（Warning）
 //
 // 取证原文（§2.3.2）：
@@ -99,8 +104,57 @@ struct Diagnostic {
 // 【PLN-010 / PLN-011 的覆盖面】
 //   只对 `.pln` 开。判定只用在"签名无歧义 + 推导上限 == paramCount"的语句上
 //   （实测 309 条里 229 条可用），另有 10 条因**手册自己的示例与 Format 矛盾**
-//   而被排除 —— 排除了就不报，宁可漏报。`.pat` 不覆盖：能落进受检集的只有两条，
-//   而 `.pat` 没有真实样本可回归（与规则 1 暂缓同理）。
+//   而被排除 —— 排除了就不报，宁可漏报。`.pat` 不覆盖这两条：能落进受检集的
+//   只有 `APM_PATTERN` / `SPM_PATTERN` 两条，而它们的参数表本身带可选方括号，
+//   边际价值为零；`.pat` 侧另有一条独立规则 C3380-PAT-001（规则 1，向量宽度）。
+//
+// 【规则 1 为什么能在"没有 .dec"的前提下开口】
+//   它不需要符号表：只比较"HEADER 里逗号分隔的项数"与"向量行两个 `*` 之间的
+//   非空白字符数"。判定被三条闸夹住（见 .cpp 的 CheckHeaderVectorWidth 注释），
+//   其中闸 B（`%` 分组结构与向量空格结构同形）是必须的 —— 少了它，手册
+//   §3.4.1.2 自己那两个 3360 示例、以及 scripts/chroma-e2e.ps1 的 P11 fixture
+//   都会被判错。
+//   ⚠️ 实现里 VectorShape 的"按空白分组"刻意用标准库（count_if + find_first_of）
+//   而不是逐字符循环：MSVC 14.51（v145）的 /O2 会把逐字符版本误编译成"只数
+//   非空白字符"，Release 下静默漏报。动手改那段之前先读 .cpp 的函数注释。】
+//
+// 【规则 4 为什么能开口（.pat 侧，Error 档）】
+//   手册 §3.4.1.4（p45）用**正误对照**直接给了结论 —— 这是全手册少见的"明文点名
+//   compiler error"的地方：
+//     SPM_PATTERN ( func_pat , NORM , K_SET | Z_SET )     compiler error
+//     SPM_PATTERN ( func_pat , DBL , K_SET | Z_SET )      compiler error
+//     SPM_PATTERN ( func_pat , DBL_2X , K_SET | Z_SET )   compiler correct
+//   格式块（§3.4.1.1，p42）给出取值域：第 2 实参 ∈ {NORM, DBL, DBL_2X}，
+//   第 3 实参 ∈ {NORM_SET, K_SET, Z_SET}；同页默认值表又写
+//   "DBL_2X pattern setting has K_SET / Z_SET: no-entry --> NORM_SET"。
+//   于是合法组合只有两类：DBL_2X 配任意 set、以及任意 mode 配 NORM_SET。
+//   其余（NORM/DBL × K_SET/Z_SET）正是手册点名的那两种 → Error 档。
+//
+//   【为什么**只对 SPM_PATTERN** 开】同族的 APM_PATTERN / RPM_PATTERN 签名是
+//   `( module_name [, NORM | DBL ] )` —— **根本没有第 3 个 set 实参**，这三行
+//   对照对它们不成立。照搬过去就是凭空造规则。
+//
+//   【为什么认不出就不报】第 2/3 实参只要有一个不在那六个关键字里（写成了变量、
+//   将来手册新增的取值、拼写变体），整体放弃。实参个数不是 2/3 也不判 ——
+//   `SPM_PATTERN (os_pat)` 这种只给模块名的写法手册自己就在用（§3.4.1.5 示例）。
+//   跨行的实参表同样不判：手册与真实样本里都没出现过跨行的 SPM_PATTERN 头。
+//   高亮锚在**第 3 个实参**上，因为两种修法（删掉 set、或把 mode 改成 DBL_2X）
+//   都落在那一个 token 上。
+//
+// 【规则 10 为什么是 Warning（而不是 Error）】
+//   手册 §3.4.1.3（p44）微指令表与 §3.4.3（p53）两处都写
+//   `RPT times 2 <= N <= 16777215 (24bit register)`。上界来自 24bit 寄存器，
+//   是**硬件容量**而非语法约束；手册没有"越界即 compiler error"的明文，越界更
+//   可能是运行时被截断 / 行为未定义。故取 Warning。
+//   【只认十进制字面量】十六进制写法（`0x10` / `20H` / `FF`）里的字母会撞上
+//   "数字后面还跟着标识符字符"的判定 → 认不出 → 不报。这是刻意的宁漏不误：
+//   同一串纯数字按十六进制解释**只会比十进制更大**，所以"十进制已越界"的结论
+//   在两种进制下都成立（不误报）；被漏掉的只是十六进制越界，可接受。
+//   【只在最后一个 `*` 之后扫】`*` 之间是 pattern_data 数据区，不参与。
+//   且要求该行**至少两个 `*`** —— 只有一个说明这行残缺，那时"最后一个 `*` 之后"
+//   其实是数据区，扫它等于在向量数据里找 RPT。
+//   【RPT 必须整词】`RPTN`（寄存器版重复，§3.4.1.3 里另一条微指令）与 `TS_RPT`
+//   这类都不算；`RPT` 之后必须紧跟十进制字面量（`RPT 100x` 认不出 → 不报）。
 //
 // 【为什么不实现「同一 pin 不得属于两个 group」（§2.4.2 原话）
 //  "The same pin cannot be assigned to more than one group."】
@@ -134,9 +188,8 @@ std::vector<Diagnostic> ValidateChromaSource(const std::string& text,
 //   pin 规则）；失效是**运行时行为**（IMATCH 永不命中，测试静默出错）而不是语法
 //   错误；且需要跨文件才能确认。
 //
-// 【.pat 没有真实样本，为什么这条开口（与规则 1 暂缓的差别）】
-//   规则 1 要解析向量语法、误报面大；本规则只做三件事的**合取**，每一步都可
-//   独立证伪：
+// 【为什么这条开口（跨文件，误报面曾经被高估）】
+//   本规则只做三件事的**合取**，每一步都可独立证伪：
 //     1) 引用的 .dec **真的在磁盘上找到并读出**（宿主负责；找不到 = 静默跳过）；
 //     2) 该 .dec 里解析出**无歧义的** `DEC_MODE APAS`（抹平注释/字符串后行首
 //        标识符 DEC_MODE + 整词 APAS；同时出现 NORM 声明视为歧义，不报）；

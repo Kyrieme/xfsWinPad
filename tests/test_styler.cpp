@@ -49,28 +49,78 @@ int main() {
         CHECK(light->editorBg == RGB(0xFF, 0xFF, 0xFF));
         CHECK(wcscmp(theme::Find(L"不存在的主题")->name, L"light") == 0);  // 兜底
 
-        // 位置初始化护栏。Theme.cpp 的两套内建主题是按字段顺序填的，漏写一项
-        // **不会编译报错**（缺失项按 0 补），而是让后面所有字段整体错位——
-        // 本批真实事故：light 漏了一行 dim，dim 拿到 tabActiveBg 的白色，
-        // tab* 七个配色全体前移、tabEdge 退化成 0，视觉上很难一眼看出。
-        // 钉死首/中/尾三类字段，任何错位都会在这里当场失败。
-        CHECK(light->caret        == RGB(0x00, 0x00, 0x00));   // 首段
-        CHECK(light->dim          == RGB(0x8C, 0x8C, 0x8C));   // 中段（本批新增）
-        CHECK(light->tabActiveBg  == RGB(0xFF, 0xFF, 0xFF));   // 尾段
-        CHECK(light->tabEdge      == RGB(0xC8, 0xC8, 0xC8));   // 末项
-        CHECK(dark->caret         == RGB(0xF0, 0xF0, 0xF0));
-        CHECK(dark->dim           == RGB(0x80, 0x80, 0x80));
-        CHECK(dark->tabEdge       == RGB(0x3F, 0x3F, 0x46));   // 末项
-        // 批次 73 在 dim 之后插了 4 个向量语义色（vector/expect/both/ctrl），
-        // 位置正好在 dim 与 tab* 之间——**最容易整段错位的一段**，逐个钉死。
-        CHECK(light->vector       == RGB(0x6A, 0x1B, 0x9A));
-        CHECK(light->expect       == RGB(0xE6, 0x51, 0x00));
-        CHECK(light->both         == RGB(0xC2, 0x18, 0x5B));
-        CHECK(light->ctrl         == RGB(0x00, 0x6C, 0x7A));
-        CHECK(dark->vector        == RGB(0xC7, 0x92, 0xEA));
-        CHECK(dark->expect        == RGB(0xFF, 0xB7, 0x4D));
-        CHECK(dark->both          == RGB(0xF0, 0x62, 0x92));
-        CHECK(dark->ctrl          == RGB(0x4D, 0xD0, 0xE1));
+        // 内建主题护栏（批次 90 起升级为**全字段钉值**）。Theme.cpp 已改用
+        // C++20 指定初始化（.field = …）：写错顺序/重复字段 = 编译错误，
+        // 但**漏写字段仍按 0 静默补齐**——所以把全部 32 个颜色字段逐个钉死，
+        // 任何缺漏/改值都会在这里当场失败。历史事故（位置初始化时代）：
+        // light 漏了一行 dim，dim 拿到 tabActiveBg 的白色、tab* 七个配色
+        // 全体前移、tabEdge 退化成 0。
+        // light（32 字段逐一核对）
+        CHECK(light->editorBg        == RGB(0xFF, 0xFF, 0xFF));
+        CHECK(light->editorFg        == RGB(0x1E, 0x1E, 0x1E));
+        CHECK(light->caret           == RGB(0x00, 0x00, 0x00));
+        CHECK(light->currentLineBack == RGB(0xF2, 0xF6, 0xFC));
+        CHECK(light->selectionBack   == RGB(0xB4, 0xD7, 0xFF));
+        CHECK(light->lineNumFg       == RGB(0x6E, 0x76, 0x81));
+        CHECK(light->lineNumBack     == RGB(0xF0, 0xF0, 0xF0));
+        CHECK(light->foldArrow       == RGB(0x60, 0x60, 0x60));
+        CHECK(light->bookmark        == RGB(0x00, 0x66, 0xCC));
+        CHECK(light->keyword         == RGB(0x04, 0x51, 0xA5));
+        CHECK(light->keyword2        == RGB(0x79, 0x5E, 0x26));
+        CHECK(light->comment         == RGB(0x00, 0x80, 0x00));
+        CHECK(light->str             == RGB(0xA3, 0x15, 0x15));
+        CHECK(light->number          == RGB(0x09, 0x86, 0x58));
+        CHECK(light->op              == RGB(0x1E, 0x1E, 0x1E));
+        CHECK(light->cls             == RGB(0x26, 0x7F, 0x99));
+        CHECK(light->preproc         == RGB(0x81, 0x00, 0x00));
+        CHECK(light->special         == RGB(0x81, 0x1F, 0x3F));
+        CHECK(light->pass            == RGB(0x0B, 0x6E, 0x3B));
+        CHECK(light->fail            == RGB(0xC3, 0x1B, 0x1B));
+        CHECK(light->dim             == RGB(0x8C, 0x8C, 0x8C));
+        CHECK(light->vector          == RGB(0x6A, 0x1B, 0x9A));
+        CHECK(light->expect          == RGB(0xE6, 0x51, 0x00));
+        CHECK(light->both            == RGB(0xC2, 0x18, 0x5B));
+        CHECK(light->ctrl            == RGB(0x00, 0x6C, 0x7A));
+        CHECK(light->tabActiveBg     == RGB(0xFF, 0xFF, 0xFF));
+        CHECK(light->tabInactiveBg   == RGB(0xDE, 0xE1, 0xE6));
+        CHECK(light->tabActiveText   == RGB(0x1B, 0x1B, 0x1B));
+        CHECK(light->tabInactiveText == RGB(0x44, 0x47, 0x4A));
+        CHECK(light->tabAccent       == RGB(0x00, 0x78, 0xD4));
+        CHECK(light->tabCloseGlyph   == RGB(0x60, 0x60, 0x60));
+        CHECK(light->tabEdge         == RGB(0xC8, 0xC8, 0xC8));
+        // dark（32 字段逐一核对）
+        CHECK(dark->editorBg         == RGB(0x1E, 0x1E, 0x1E));
+        CHECK(dark->editorFg         == RGB(0xD4, 0xD4, 0xD4));
+        CHECK(dark->caret            == RGB(0xF0, 0xF0, 0xF0));
+        CHECK(dark->currentLineBack  == RGB(0x28, 0x28, 0x28));
+        CHECK(dark->selectionBack    == RGB(0x26, 0x4F, 0x78));
+        CHECK(dark->lineNumFg        == RGB(0x85, 0x85, 0x85));
+        CHECK(dark->lineNumBack      == RGB(0x1E, 0x1E, 0x1E));
+        CHECK(dark->foldArrow        == RGB(0x90, 0x90, 0x90));
+        CHECK(dark->bookmark         == RGB(0x4D, 0xA6, 0xFF));
+        CHECK(dark->keyword          == RGB(0x56, 0x9C, 0xD6));
+        CHECK(dark->keyword2         == RGB(0xD7, 0xBA, 0x7D));
+        CHECK(dark->comment          == RGB(0x6A, 0x99, 0x55));
+        CHECK(dark->str              == RGB(0xCE, 0x91, 0x78));
+        CHECK(dark->number           == RGB(0xB5, 0xCE, 0xA8));
+        CHECK(dark->op               == RGB(0xD4, 0xD4, 0xD4));
+        CHECK(dark->cls              == RGB(0x4E, 0xC9, 0xB0));
+        CHECK(dark->preproc          == RGB(0xC5, 0x86, 0xC0));
+        CHECK(dark->special          == RGB(0xD7, 0xBA, 0x7D));
+        CHECK(dark->pass             == RGB(0x6A, 0xC9, 0x7A));
+        CHECK(dark->fail             == RGB(0xF2, 0x7A, 0x7A));
+        CHECK(dark->dim              == RGB(0x80, 0x80, 0x80));
+        CHECK(dark->vector           == RGB(0xC7, 0x92, 0xEA));
+        CHECK(dark->expect           == RGB(0xFF, 0xB7, 0x4D));
+        CHECK(dark->both             == RGB(0xF0, 0x62, 0x92));
+        CHECK(dark->ctrl             == RGB(0x4D, 0xD0, 0xE1));
+        CHECK(dark->tabActiveBg      == RGB(0x1E, 0x1E, 0x1E));
+        CHECK(dark->tabInactiveBg    == RGB(0x2D, 0x2D, 0x30));
+        CHECK(dark->tabActiveText    == RGB(0xD4, 0xD4, 0xD4));
+        CHECK(dark->tabInactiveText  == RGB(0x96, 0x96, 0x96));
+        CHECK(dark->tabAccent        == RGB(0x00, 0x78, 0xD4));
+        CHECK(dark->tabCloseGlyph    == RGB(0xA0, 0xA0, 0xA0));
+        CHECK(dark->tabEdge          == RGB(0x3F, 0x3F, 0x46));
         // 字段表（Style Configurator 按索引读写、JSON 按名读写）必须覆盖全部字段，
         // 否则新加的字段存不进主题 JSON。
         CHECK(theme::ThemeFieldCount() == 32);

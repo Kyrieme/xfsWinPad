@@ -580,6 +580,428 @@ static void RunCrossKind() {
     CHECK(ValidateChromaSource("/*\nSET_DEC_FILE \"a.dec\" ;\n", ChromaFileKind::Plan).empty());
 }
 
+// ===========================================================================
+// 规则 1（.pat）：HEADER pin 数 == 向量数据宽度   —— C3380-PAT-001
+//
+// 【本组用例的重点：把手册自己的 .pat 示例全部回放，一条都不许判红】
+//   规则 1 的明文依据只在培训教材 p45，而语言手册 §3.4.1.2 里有两个 3360 时代的
+//   示例按字面不满足一一对应。所以"闸 B（`%` 分组结构同形）"不是保守起见，
+//   是**必需**的：下面 kManualPatternSymbolExample 两条就是钉它的绊线。
+// ===========================================================================
+static void RunHeaderVectorWidth() {
+    // ---- 手册 §3.3.2 示例原文（16 pin ↔ 16 字符；HEADER 跨两行）→ 必须 0 诊断
+    static const char* kManualHeaderExample = R"PAT(SET_DEC_FILE "./ls299_16sites_pin.dec" 
+HEADER   CLR,%SEL0,SEL1,%G1,G2,%CLK,%SL,SR,%QA,QB,QC, 
+          QD,QE,QF,QG,QH;  
+SPM_PATTERN  (os_pat) {  
+os_st::    *0 00 00 0 00 00000000 *TS15; 
+               *0 00 00 0 00 00000000 *; 
+               *0 00 00 0 00 00000000 * RPT 100; 
+               *Z 00 00 0 00 00000000 *; 
+} 
+)PAT";
+    CHECK(CountCode(ValidateChromaSource(kManualHeaderExample, ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 0);
+
+    // ---- ⚠️ 绊线：手册 §3.4.1.2 的两个 3360 示例 —— 4 项 vs 7 组 / 5 组
+    //      按"一一对应"字面读会判红，闸 B 必须把它们拦住（组数不等）。
+    //      谁把闸 B 删了，这里立刻红。
+    static const char* kManualPatternSymbolExample = R"PAT(SET_DEC_FILE "./3360_ls299_pin.dec" 
+HEADER  CTRL1, %CLK, %QQ, %OAH;  
+SPM_PATTERN(func_pat) { 
+ sfr_st:   *1  01  00  1  X1  HLLLLLLL  HL*TS1; 
+         *1  01  00  1  X1  HHLLLLLL  HL*; 
+} 
+)PAT";
+    CHECK(CountCode(ValidateChromaSource(kManualPatternSymbolExample,
+                                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 0);
+    static const char* kManualHexExample = R"PAT(HEADER  CTRL1, %CLK, %QQ, %OAH;  
+SPM_PATTERN(func_pat) { 
+ sfr_st:   *dA0  1  X1  c80  c8*TS1; 
+         *dA0  1  X1  cC0  c8*; 
+} 
+)PAT";
+    CHECK(CountCode(ValidateChromaSource(kManualHexExample, ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 0);
+
+    // ---- 无 `%` 的 HEADER + 无空格的向量（真实 .pat 的形态）→ 0 诊断
+    {
+        std::string t = "SET_DEC_FILE \"./x.dec\"\nHEADER ";
+        for (int i = 0; i < 34; ++i) t += (i ? "," : "") + std::string("P") + std::to_string(i);
+        t += ";\nSPM_PATTERN(m)\n{\n  *";
+        t += std::string(34, '0');
+        t += "*;\n  *";
+        t += std::string(34, 'X');
+        t += "*;\n}\n";
+        CHECK(ValidateChromaSource(t, ChromaFileKind::Pattern).empty());
+    }
+
+    // ---- 正例：宽度不符 → 恰好 1 条，锚在**第一条**不符的向量行，范围=数据段
+    {
+        static const char* kBad = R"PAT(SET_DEC_FILE "./x.dec"
+HEADER A,B,C,D;
+SPM_PATTERN(m)
+{
+  *0101*;
+  *010*;
+  *011*;
+}
+)PAT";
+        const std::vector<Diagnostic> d =
+            ValidateChromaSource(kBad, ChromaFileKind::Pattern);
+        CHECK(d.size() == 1);
+        if (d.size() == 1) {
+            CHECK(std::string(d[0].code) == "C3380-PAT-001");
+            CHECK(d[0].line == 5);                 // 0-based：第一条不符的向量行
+            CHECK(d[0].start == 3);                // `  *010*;` 里数据段首字符
+            CHECK(d[0].length == 3);
+            CHECK(d[0].severity == DiagSeverity::Warning);
+            CHECK(d[0].manualPage == 41);
+            CHECK(d[0].message.find("HEADER") != std::string::npos);
+        }
+    }
+
+    // ---- 每个模块只报一条：5000 条不符的向量行 → 仍只有 1 条诊断
+    {
+        std::string t = "HEADER A,B,C,D;\nSPM_PATTERN(m)\n{\n";
+        for (int i = 0; i < 5000; ++i) t += "  *010*;\n";
+        t += "}\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(t, ChromaFileKind::Pattern);
+        CHECK(d.size() == 1);
+        if (d.size() == 1) CHECK(d[0].line == 3);
+    }
+
+    // ---- 两个模块各自不符 → 2 条（按模块分别提示）
+    {
+        static const char* kTwo = R"PAT(HEADER A,B,C;
+SPM_PATTERN(m1) {
+  *01*;
+}
+SPM_PATTERN(m2) {
+  *0101*;
+}
+)PAT";
+        const std::vector<Diagnostic> d = ValidateChromaSource(kTwo, ChromaFileKind::Pattern);
+        CHECK(d.size() == 2);
+        if (d.size() == 2) {
+            CHECK(d[0].line == 2);
+            CHECK(d[1].line == 5);
+        }
+    }
+
+    // ---- 闸 A：歧义 / 未闭合 / 非标识符项 → 一律不报
+    CHECK(ValidateChromaSource("HEADER A,B;\nHEADER C,D;\nSPM_PATTERN(m) {\n *0*;\n}\n",
+                               ChromaFileKind::Pattern).empty());          // 两条 HEADER
+    CHECK(ValidateChromaSource("HEADER A,B\nSPM_PATTERN(m) {\n *0*;\n}\n",
+                               ChromaFileKind::Pattern).empty());          // 缺分号
+    CHECK(ValidateChromaSource("HEADER [%]pin_name, x;\nSPM_PATTERN(m) {\n *0*;\n}\n",
+                               ChromaFileKind::Pattern).empty());          // Format 行
+    CHECK(ValidateChromaSource("HEADER A,B C;\nSPM_PATTERN(m) {\n *0*;\n}\n",
+                               ChromaFileKind::Pattern).empty());          // 条目含空格
+    CHECK(ValidateChromaSource("HEADER A,,B;\nSPM_PATTERN(m) {\n *0*;\n}\n",
+                               ChromaFileKind::Pattern).empty());          // 空条目
+    CHECK(ValidateChromaSource("HEADER A,B;\n", ChromaFileKind::Pattern).empty()); // 无块
+    CHECK(ValidateChromaSource("HEADER A,B;\nSPM_PATTERN(m) {\n *0*;\n",
+                               ChromaFileKind::Pattern).empty());          // 块未闭合
+
+    // ---- 闸 B：向量有空格但 HEADER 无 `%` → 结构不同形，不比较（宁可漏报）
+    CHECK(ValidateChromaSource("HEADER A,B,C;\nSPM_PATTERN(m) {\n *0 00*;\n}\n",
+                               ChromaFileKind::Pattern).empty());
+    // 反向：HEADER 有 `%` 而向量无空格 → 同样拦下
+    CHECK(ValidateChromaSource("HEADER A,%B,C;\nSPM_PATTERN(m) {\n *000*;\n}\n",
+                               ChromaFileKind::Pattern).empty());
+    // 组数相同但分布不同、总宽不符 → 报（这是真实的映射错位）
+    // ⚠️ 这条同时是**编译器哨兵**：`*00 0 0*` 的"3 组"是唯一能区分"正确按空白分组"
+    //    与"只数了非空白字符总数"的输入 —— 后者会得到 1 组，被闸 B 拦掉 → 0 诊断。
+    //    MSVC 14.51（v145）在 /O2 下曾把 VectorShape 的前身误编译成后者，正是这条
+    //    抓住的。若这条**只在 Release 下**变红，先怀疑编译器，别改期望值。
+    CHECK(CountCode(ValidateChromaSource(
+                        "HEADER A,%B,%C;\nSPM_PATTERN(m) {\n *00 0 0*;\n}\n",
+                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 1);
+
+    // ---- 分组结构同形 + 宽度一致 → 不报（§3.3.1 的 `%` 语义正例）
+    CHECK(ValidateChromaSource(
+              "HEADER A,%B,C,%D,E;\nSPM_PATTERN(m) {\n *0 00 0 00*TS1;\n}\n",
+              ChromaFileKind::Pattern).empty());
+
+    // ---- `#`（ape_field）行不参与比较
+    CHECK(ValidateChromaSource("HEADER A,B,C,D;\nSPM_PATTERN(m) {\n *01 # P1 *;\n}\n",
+                               ChromaFileKind::Pattern).empty());
+
+    // ---- 标签前缀 `Label::` / `Label:` 都能认出来
+    CHECK(CountCode(ValidateChromaSource(
+                        "HEADER A,B,C;\nSPM_PATTERN(m) {\n  g1:: *0101*;\n}\n",
+                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 1);
+    CHECK(CountCode(ValidateChromaSource(
+                        "HEADER A,B,C;\nSPM_PATTERN(m) {\n  l1: *0101*;\n}\n",
+                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 1);
+
+    // ---- APM_PATTERN / RPM_PATTERN 同样覆盖（培训教材 p45 三者并列）
+    CHECK(CountCode(ValidateChromaSource(
+                        "HEADER A,B;\nAPM_PATTERN(m) {\n *010*;\n}\n",
+                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 1);
+    CHECK(CountCode(ValidateChromaSource(
+                        "HEADER A,B;\nRPM_PATTERN(m) {\n *010*;\n}\n",
+                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 1);
+    // 带可选参数（NORM/DBL）的模块头也要认
+    CHECK(CountCode(ValidateChromaSource(
+                        "HEADER A,B;\nSPM_PATTERN(m, DBL, K_SET) {\n *010*;\n}\n",
+                        ChromaFileKind::Pattern),
+                    "C3380-PAT-001") == 1);
+
+    // ---- 只对 .pat 开：同样的文本按 .pln / .dec 走不得出这条规则
+    CHECK(CountCode(ValidateChromaSource("HEADER A,B;\nSPM_PATTERN(m) {\n *010*;\n}\n",
+                                         ChromaFileKind::Plan),
+                    "C3380-PAT-001") == 0);
+    CHECK(CountCode(ValidateChromaSource("HEADER A,B;\nSPM_PATTERN(m) {\n *010*;\n}\n",
+                                         ChromaFileKind::Dec),
+                    "C3380-PAT-001") == 0);
+
+    // ---- 注释与字符串里的 `*` / HEADER 不参与（抹平层）
+    CHECK(ValidateChromaSource("HEADER A,B,C,D;\nSPM_PATTERN(m) {\n // *010*;\n"
+                               " /* *010*; */\n  *0101*;\n}\n",
+                               ChromaFileKind::Pattern).empty());
+    CHECK(ValidateChromaSource("# HEADER A,B;\nSPM_PATTERN(m) {\n *0*;\n}\n",
+                               ChromaFileKind::Pattern).empty());
+
+    // ---- 畸形文件保护：模块数超上限时输出被截断（不刷爆面板）
+    //      注意必须只有**一条** HEADER，否则闸 A 会整体放弃（见上面的歧义用例）。
+    {
+        std::string t = "HEADER A,B;\n";
+        for (int i = 0; i < 70; ++i) t += "SPM_PATTERN(m) {\n *010*;\n}\n";
+        const std::vector<Diagnostic> d = ValidateChromaSource(t, ChromaFileKind::Pattern);
+        CHECK(d.size() == 64);
+    }
+
+    // ---- CRLF 与 LF 结果一致（真实 .pat 是 CRLF）
+    {
+        const std::string lf = "HEADER A,B,C,D;\nSPM_PATTERN(m)\n{\n  *010*;\n}\n";
+        std::string crlf = lf;
+        for (std::size_t p = crlf.find('\n'); p != std::string::npos;
+             p = crlf.find('\n', p + 2)) {
+            crlf.insert(p, 1, '\r');
+        }
+        const std::vector<Diagnostic> a = ValidateChromaSource(lf, ChromaFileKind::Pattern);
+        const std::vector<Diagnostic> b = ValidateChromaSource(crlf, ChromaFileKind::Pattern);
+        CHECK(a.size() == 1);
+        CHECK(a.size() == b.size());
+        if (a.size() == b.size() && a.size() == 1) {
+            CHECK(a[0].line == b[0].line);
+            CHECK(a[0].start == b[0].start);
+            CHECK(a[0].length == b[0].length);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 批次 92 规则 4：SPM_PATTERN 的 NORM / DBL 配 K_SET / Z_SET = compiler error
+// ---------------------------------------------------------------------------
+static void RunPatternMode() {
+    const ChromaFileKind P = ChromaFileKind::Pattern;
+
+    // ---- 手册 §3.4.1.4（p45）正误对照的**原文行**：NORM 配 K_SET → compiler error
+    {
+        const std::string s = "SPM_PATTERN ( func_pat , NORM , K_SET )";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, P);
+        CHECK(d.size() == 1);
+        if (d.size() == 1) {
+            CHECK(std::string(d[0].code) == "C3380-PAT-002");
+            CHECK(d[0].line == 0);
+            CHECK(d[0].start == (int)s.find("K_SET"));   // 锚在**第 3 个实参**
+            CHECK(d[0].length == 5);
+            CHECK(d[0].severity == DiagSeverity::Error); // 手册明文 compiler error
+            CHECK(d[0].manualPage == 45);
+            CHECK(d[0].message.find("NORM") != std::string::npos);
+            CHECK(!d[0].message.empty());
+        }
+    }
+    {
+        const std::string s = "SPM_PATTERN ( func_pat , DBL , Z_SET )";
+        const std::vector<Diagnostic> d = ValidateChromaSource(s, P);
+        CHECK(d.size() == 1);
+        if (d.size() == 1) CHECK(d[0].start == (int)s.find("Z_SET"));
+    }
+
+    // ---- 非法组合全覆盖：{NORM,DBL} × {K_SET,Z_SET}，大小写不敏感
+    for (const char* mode : {"NORM", "DBL", "norm", "dbl"}) {
+        for (const char* set : {"K_SET", "Z_SET", "k_set", "z_set"}) {
+            const std::string s = std::string("SPM_PATTERN(m,") + mode + "," + set + ")";
+            CHECK(CountCode(ValidateChromaSource(s, P), "C3380-PAT-002") == 1);
+        }
+    }
+
+    // ---- 手册明文 correct / 默认值 / 手册自己的示例 → 必须 0 诊断
+    for (const char* s : {
+             "SPM_PATTERN ( func_pat , DBL_2X , K_SET | Z_SET )",  // 原文 compiler correct
+             "SPM_PATTERN ( func_pat , DBL_2X , K_SET )",
+             "SPM_PATTERN ( func_pat , DBL_2X , Z_SET )",
+             "SPM_PATTERN ( func_pat , NORM , NORM_SET )",         // 手册允许的默认值
+             "SPM_PATTERN ( func_pat , DBL , NORM_SET )",
+             "SPM_PATTERN ( func_pat , NORM )",                    // 只给 mode
+             "SPM_PATTERN ( func_pat )",                           // 只给模块名
+             "SPM_PATTERN (os_pat)",                               // §3.4.1.5 示例原文
+             "SPM_PATTERN (DBL_2X_K_SET,  DBL_2X, K_SET)",         // §3.4.3 示例原文
+             "SPM_PATTERN(m, NORM, NORM_SET, X)",                  // 4 个实参：手册没定义过
+             "APM_PATTERN(m, NORM)",                               // 同族但**没有 set 实参**
+             "RPM_PATTERN(m, DBL)",
+         }) {
+        CHECK(CountCode(ValidateChromaSource(s, P), "C3380-PAT-002") == 0);
+    }
+
+    // ---- 认不出就不报：实参不是关键字 / 不在行首 / 跨行 / 注释里
+    for (const char* s : {
+             "SPM_PATTERN(m, MODE_VAR, K_SET)",     // 第 2 实参不是关键字
+             "SPM_PATTERN(m, NORM, SET_VAR)",       // 第 3 实参不是关键字
+             "SPM_PATTERN(m, DBL_2X_SET, K_SET)",   // 拼写变体：整体放弃
+             "FOO SPM_PATTERN (m , NORM , K_SET)",  // 不在行首 → 不认
+             "// SPM_PATTERN ( func_pat , NORM , K_SET )",
+             "/* SPM_PATTERN ( func_pat , NORM , K_SET ) */",
+             "SPM_PATTERN ( func_pat ,\n             NORM , K_SET )",  // 跨行实参表
+         }) {
+        CHECK(CountCode(ValidateChromaSource(s, P), "C3380-PAT-002") == 0);
+    }
+
+    // ---- 真实模块形态：一条非法头 → 恰好 1 条（不随块内向量行数重复）
+    {
+        const std::string t =
+            "SPM_PATTERN ( func_pat , NORM , K_SET ) {\n"
+            "  *00000000*;\n"
+            "  *00000000*;\n"
+            "}\n";
+        CHECK(CountCode(ValidateChromaSource(t, P), "C3380-PAT-002") == 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 批次 92 规则 10：RPT 的重复次数必须在 2 .. 16777215
+// ---------------------------------------------------------------------------
+static void RunRptCount() {
+    const ChromaFileKind P = ChromaFileKind::Pattern;
+
+    // 不带 HEADER → 规则 1 静默；`SPM_PATTERN(m)` 只有 1 个实参 → 规则 4 也静默。
+    // 于是 d.size() 就是规则 10 的条数，可以整表断言。
+    auto mod = [](const std::vector<std::string>& vecs) {
+        std::string t = "SPM_PATTERN(m) {\n";
+        for (const std::string& v : vecs) t += "  " + v + "\n";
+        return t + "}\n";
+    };
+    auto one = [&](const std::string& vec) {
+        return ValidateChromaSource(mod({vec}), P);
+    };
+
+    // ---- 手册 §3.4.3（p53）官方示例原文（含 RPT 7 / RPT 6 / RPT 7）→ 0 诊断。
+    //      这是最值钱的一条：手册自己的示例必须干净。
+    {
+        const std::vector<Diagnostic> d = ValidateChromaSource(
+            R"PAT(SPM_PATTERN (rpt_pat) {//RPT from 2 to 16777215
+  rpt_st::         *0 X0 00 X XX LLLLLLLL LL*TS1;
+                  *1 01 00 1 X1 XXXXXXXX HL*RPT 7;
+                  *1 01 00 1 X1 HHHHHHHH HH* ;
+                 *1 01 00 1 X0 LHHHHHHH LH*;
+                  *1 01 00 1 X1 XXXXXXXX HH*RPT 6;
+                  *1 01 00 1 X1 HHHHHHHL HL*;
+                  *1 01 00 1 X1 HHHHHHHH HH*;
+                  *1 01 00 1 X0 XXXXXXXX LH*RPT 7;
+                  *1 01 00 1 X0 LLLLLLLL LL*;
+}
+)PAT",
+            P);
+        CHECK(d.empty());
+    }
+
+    // ---- 边界：2 与 16777215 合法（闭区间）；0 / 1 / 16777216 起越界
+    for (const char* v : {"2", "3", "16777214", "16777215"}) {
+        CHECK(one(std::string("*00000000* RPT ") + v + ";").empty());
+    }
+    for (const char* v : {"0", "1", "16777216", "16777217", "99999999"}) {
+        const std::vector<Diagnostic> d = one(std::string("*00000000* RPT ") + v + ";");
+        CHECK(d.size() == 1);
+        if (d.size() == 1) {
+            CHECK(std::string(d[0].code) == "C3380-PAT-003");
+            CHECK(d[0].severity == DiagSeverity::Warning);   // 硬件容量，非语法错误
+            CHECK(d[0].manualPage == 44);
+            CHECK(d[0].length == (int)std::string(v).size()); // 高亮覆盖整个数字
+            CHECK(d[0].message.find(v) != std::string::npos);
+        }
+    }
+
+    // ---- 位置：锚在数字本身（模块头是第 0 行，向量是第 1 行）
+    {
+        const std::string vec = "*00000000* RPT 1;";
+        const std::vector<Diagnostic> d = one(vec);
+        CHECK(d.size() == 1);
+        if (d.size() == 1) {
+            CHECK(d[0].line == 1);
+            CHECK(d[0].length == 1);
+            // 直接断言"被高亮的字节就是那个数字"，不硬编列号
+            const std::string line = "  " + vec;   // mod() 缩进两格
+            CHECK(line.substr((std::size_t)d[0].start, (std::size_t)d[0].length) == "1");
+        }
+    }
+
+    // ---- 位数 > 8 直接按越界处理（不做整数转换，防溢出）
+    CHECK(CountCode(one("*00000000* RPT 100000000;"), "C3380-PAT-003") == 1);
+    CHECK(CountCode(one("*00000000* RPT 999999999999999999999;"), "C3380-PAT-003") == 1);
+
+    // ---- 认不出就不报：整词 / 进制 / 非字面量
+    for (const char* tail : {
+             "*00000000* RPTN 1;",       // 寄存器版重复，是**另一条**微指令
+             "*00000000* TS_RPT 1;",     // 不是独立 token
+             "*00000000* RPT 0x1;",      // 十六进制 → 认不出（宁漏不误）
+             "*00000000* RPT 1H;",
+             "*00000000* RPT 1FF;",
+             "*00000000* RPT X0;",       // 寄存器索引，不是字面量
+             "*00000000* RPT 100x;",     // 数字后面还接标识符字符
+             "*00000000* RPT;",          // 根本没给次数
+         }) {
+        CHECK(one(tail).empty());
+    }
+
+    // ---- 绊线：只有一个 `*` 的残缺行 —— "最后一个 `*` 之后"其实是**数据区**，
+    //      扫它等于在向量数据里找 RPT。必须有 ≥2 个 `*` 才扫。
+    CHECK(one("*00000000 RPT 1;").empty());
+
+    // ---- 注释已抹平：注释里的 RPT 不参与
+    CHECK(one("*00000000*; // RPT 1").empty());
+    CHECK(one("*00000000*; /* RPT 1 */").empty());
+
+    // ---- 模块外（没有 SPM/APM/RPM_PATTERN 块）→ 不看
+    CHECK(CountCode(ValidateChromaSource("*00000000* RPT 1;\n", P), "C3380-PAT-003") == 0);
+
+    // ---- 一行只报第一条 RPT（宁少不多）：同一行两个越界 RPT → 1 条
+    CHECK(CountCode(one("*00000000* RPT 1; RPT 0;"), "C3380-PAT-003") == 1);
+
+    // ---- 畸形文件保护：100 条越界 → 只报 64 条
+    {
+        std::vector<std::string> v;
+        for (int i = 0; i < 100; ++i) v.push_back("*00000000* RPT 1;");
+        CHECK(ValidateChromaSource(mod(v), P).size() == 64);
+    }
+
+    // ---- CRLF 与 LF 必须同判
+    {
+        const std::string lf = mod({"*00000000* RPT 1;"});
+        std::string crlf = lf;
+        for (std::size_t i = 0; i < crlf.size(); ++i) {
+            if (crlf[i] == '\n') { crlf.insert(i, "\r"); ++i; }
+        }
+        const std::vector<Diagnostic> a = ValidateChromaSource(lf, P);
+        const std::vector<Diagnostic> b = ValidateChromaSource(crlf, P);
+        CHECK(a.size() == 1 && b.size() == 1);
+        if (a.size() == 1 && b.size() == 1) {
+            CHECK(a[0].line == b[0].line);
+            CHECK(a[0].start == b[0].start);
+            CHECK(a[0].length == b[0].length);
+        }
+    }
+}
+
 // 可选入口：`test_chromadiag <文件> [--dec <dec文件>]…` —— 把任意工程文件当
 // .pln/.dec/.pat 扫一遍；`--dec` 可多次给出"已被宿主读出的被引用 .dec"，让规则 3
 // 也能对真实文件对回归。
@@ -634,6 +1056,9 @@ int main(int argc, char** argv) {
     RunPinList();
     RunPinGroup();
     RunArgumentCount();
+    RunHeaderVectorWidth();
+    RunPatternMode();
+    RunRptCount();
     RunCrossFileApas();
     RunExtractDecSymbols();
     RunCrossKind();
