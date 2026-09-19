@@ -55,10 +55,10 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.12.0 · 2026-09-19 · Windows 10/11 x64</span>
+  <span class="ver">v0.13.0 · 2026-09-19 · Windows 10/11 x64</span>
   <div class="downloads">
-    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.1 MB）</a>
-    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.3 MB）</a>
+    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.2 MB）</a>
+    <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
   </div>
   <p class="dl-note">便携版解压即用，不写注册表；两个版本功能完全一致。</p>
 </header>
@@ -94,13 +94,41 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">802B5711D306F079E8BBBA040528FF6768611B736F95C6CA6E9B7255321B2392</p>
+    <p class="hash">5826C8FCF12EA5D390EBCA5DB20FB1356C48A768CAC8C7E151D182C46928A25D</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">7EF73DCDCDB10D728E032DB5CB503008B25E59963D0AD3B08D99B2371FE92A9D</p>
+    <p class="hash">DE2146864792E7D71C1981F8C1CC8754573498BE3B23DA92CD3781D3D13D1D39</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.13.0</b>（2026-09-19）</p>
+    <ul>
+      <li><b>CRAFT 编译集成（新增顶级「工具」菜单）</b>：在编辑器里直接编译 Chroma 测试程序工程 ——
+        <b>编译工程</b>、<b>编译输出</b>面板（步骤 / 位置 / 级别 / 输出，与静态检查面板刻意分开）、
+        <b>清除编译输出</b>、<b>指定 CRAFT 工具目录…</b>。工具链自动探测
+        （设置 → <code>CRAFT_HOME</code> → <code>PATH</code>）；<b>没装 CRAFT 时功能自动灰掉并说明原因</b>，
+        不是弹错误框。编译在后台线程跑，<b>失败即停</b>，超时会把整棵子进程树一起结束
+        （编译器会自己再调 C++ 编译器，只杀父进程会留下孤儿占着文件句柄）。
+        输出里认不出位置的行走纯文本展示，<b>不假装能跳转</b></li>
+      <li><b>修掉「编译成功却挂一条警告」</b>：厂商编译器在<b>编译成功</b>时也会打印一行
+        <code>Errors : 0&nbsp;&nbsp;&nbsp;Warning : 0</code> 统计，此前被当成一条真实警告显示在
+        编译输出面板上（橙色的、看着像有问题）。现在<b>先识别统计行、再判级别</b>，
+        统计行保留原文但不计级别、不进计数；判据刻意从严，逐条诊断行不会被误吞</li>
+      <li><b>修掉跨文件自动补全的时序竞态</b>：打开 <code>.pln</code> 后<b>立刻</b>敲引脚名前缀时，
+        被引用 <code>.dec</code> 里的符号还没进词汇表 ⇒ 候选为空、不弹下拉（等半秒再看其实已经好了，
+        但补全早过去了）。现在换文档时<b>同步</b>刷新词源，不再等防抖；
+        并且<b>关闭静态检查不再影响补全</b>（此前关掉静态检查的人会完全失去跨文件补全，
+        而代码注释写的是「与开关无关」—— 注释是意图，行为才是用户拿到的东西）</li>
+      <li><b>日 / 韩 / 繁中界面补齐</b>：这三个语言文件此前各缺 18 个界面键
+        （诊断面板整块显示英文），现已与简中 / 英文完全对齐。新增两道自动守卫
+        （语言文件之间键集合 + 占位符一致、代码里引用的键必须存在），防止以后再漏</li>
+      <li><b>器件定义（<code>.dec</code>）静态检查收窄</b>：「引脚名重复」类规则改为
+        <b>按引脚资源域</b>判定（普通引脚 / <code>UR</code> / <code>TMU</code> 等各自独立成域，
+        域划分取自手册自己的默认引脚组）—— 在厂商真实工程语料上消掉 <b>22 条误报</b>，
+        且不影响正确路径</li>
+      <li>另修：命令 ID 分配守卫（防止「区间撞单点」这类点 A 触发 B 的静默 bug）、
+        若干脚本里的硬编码盘符（换机器 / 虚拟机里跑不再起不来）</li>
+    </ul>
     <p><b>v0.12.0</b>（2026-09-19）</p>
     <ul>
       <li><b>向量文件（<code>.pat</code>）静态检查新增三条规则</b>，逐条取自 Chroma 3380
