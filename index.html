@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.11.0 · 2026-09-18 · Windows 10/11 x64</span>
+  <span class="ver">v0.12.0 · 2026-09-19 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.1 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.3 MB）</a>
@@ -94,14 +94,31 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">D904D356D516CCFCEC2D86C8BD4FF9CAFE9A5073927A98F9D942BF4D271AF7F8</p>
+    <p class="hash">802B5711D306F079E8BBBA040528FF6768611B736F95C6CA6E9B7255321B2392</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">D29F8637ED121390E253EA5BA757FCD0972D568F53B6672C09090AFF79D1D2B3</p>
+    <p class="hash">7EF73DCDCDB10D728E032DB5CB503008B25E59963D0AD3B08D99B2371FE92A9D</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.11.0</b>（2026-09-18）</p>
+    <p><b>v0.12.0</b>（2026-09-19）</p>
+    <ul>
+      <li><b>向量文件（<code>.pat</code>）静态检查新增三条规则</b>，逐条取自 Chroma 3380
+        语言手册，并在手册全部示例 + 真实工程向量文件上回归，<b>零误报</b>：
+        <code>HEADER</code> 声明的 pin 数与向量实际宽度不符（橙色警告）、
+        <code>SPM_PATTERN</code> 用 <code>NORM</code> / <code>DBL</code> 搭配
+        <code>K_SET</code> / <code>Z_SET</code>（<b>红色错误</b>，手册明文标注
+        <code>compiler error</code>）、<code>RPT</code> 重复次数超出
+        <code>2 .. 16777215</code>（橙色警告）。取舍一律「宁漏不误」——
+        认不出的写法（如十六进制次数、残缺向量行）不报，宁可不报也不误报</li>
+      <li><b>主题配色定义加固</b>：两套内建主题的 32 个颜色字段改为显式点名赋值 ——
+        此前按位置赋值，漏写或顺序写错会静默错位（曾导致浅色主题标签配色整体偏移）；
+        现在写错顺序 / 重复字段直接编译报错，并加了全字段 × 双主题的护栏测试</li>
+      <li>打包脚本的 VC 运行库查找增加兜底路径，新版 Visual Studio 下不再找不到依赖</li>
+    </ul>
+    <p class="muted" style="margin-top:8px">提示仍标注「xfsWinPad 静态检查，非 CRAFT 编译结果」——
+    静态检查用于提前发现问题，不替代厂商编译器。</p>
+    <p style="margin-top:14px"><b>v0.11.0</b>（2026-09-18）</p>
     <ul>
       <li><b>跨文件静态检查</b>：新增规则 —— <code>.pln</code> / <code>.pat</code> 引用的
         <code>.dec</code> 里声明了 <code>DEC_MODE APAS</code> 时，本文件中的
