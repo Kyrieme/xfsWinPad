@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.13.1 · 2026-09-20 · Windows 10/11 x64</span>
+  <span class="ver">v0.13.2 · 2026-09-20 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.2 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,26 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">58A40AF947250CD75C0A7E7EF24525D5734E552A2D7B473AD8B9E6FC0E5B2AA9</p>
+    <p class="hash">16361F2ED7016E34B243973D54A54139641AA728F5BA4A59EB43565E8FFB89C6</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">23CF00BCE7ADDB8D70440D386BCBAE2E39E9A886AE160D5E6F7E424853C4F9A0</p>
+    <p class="hash">7DB3DA9FE1803F7DA25AB96C48EAF0F4E06D683AE6D3FE4D9C32027F0D07F95E</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.13.2</b>（2026-09-20）</p>
+    <ul>
+      <li><b>编译输出面板：两类此前"点不动"的诊断现在能正确定位</b>。厂商编译器在检查
+        <b>声明文件</b>（<code>.dec</code>）时，报错格式与 <code>.pat</code> 完全不同
+        （<code>&lt;&lt; File:[…] Line:[N] Last_Token:[…] &gt;&gt;</code>），此前完全不认这种写法，
+        这类错误<b>没有任何跳转目标</b>；现在能认，并把位置正确挂到紧随其后的那条消息上</li>
+      <li><b>链接阶段的报错不再跳到中间文件</b>：编译器在链接时给的位置指向 <code>.pdt</code>
+        中间文件，此前点过去会打开一个中间产物；现在还原成真正的 <code>.pat</code> 源码
+        （行号沿用 —— <code>.pdt</code> 本来就是从 <code>.pat</code> 换扩展名生成的）</li>
+      <li>其余解析行为不变：厂商编译器<b>编译成功</b>时也会打印的
+        <code>Errors : 0&nbsp;&nbsp;&nbsp;Warning : 0</code> 统计行仍只作原文展示，
+        不计级别、不进计数</li>
+    </ul>
     <p><b>v0.13.1</b>（2026-09-20）</p>
     <ul>
       <li><b>修掉编译输出面板的两个定位错误</b>：编译器给的路径<b>可以含空格</b>
