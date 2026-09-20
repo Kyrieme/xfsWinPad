@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.13.2 · 2026-09-20 · Windows 10/11 x64</span>
+  <span class="ver">v0.13.3 · 2026-09-20 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.2 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,28 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">16361F2ED7016E34B243973D54A54139641AA728F5BA4A59EB43565E8FFB89C6</p>
+    <p class="hash">790A2C4B0F2E322CB43A12DD4321F02B6AE2B80E0085AC86457D654E9D29AAD8</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">7DB3DA9FE1803F7DA25AB96C48EAF0F4E06D683AE6D3FE4D9C32027F0D07F95E</p>
+    <p class="hash">F77918507EB0F85F784DB24DC479108DA50B2868E9EF3BF417BD98B5EB1E2046</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.13.3</b>（2026-09-20）</p>
+    <ul>
+      <li><b>本版没有功能改动</b>，是「把已经发布的行为钉死」的一版。编译输出面板里
+        「<b>双击一条诊断 → 编辑器跳到对应源码行</b>」这个动作此前只有人工点验，
+        没有自动化把关；现在补上了端到端测试：用一套<b>假工具链</b>跑完
+        「执行编译 → 收输出 → 解析诊断 → 双击 → 定位」的完整链路，<b>20 项断言</b>全部通过</li>
+      <li><b>修好一个早已失效的测试</b>：查找结果列表的双击跳转用例此前发送的是
+        <b>合成鼠标消息</b>，在本机宿主上被控件直接忽略 —— 也就是说它<b>一直是"绿"的，
+        实际却什么都没测</b>。现在改用系统级真实输入，并加了前置断言
+        （结果列表为空时直接判失败，而不是静默通过）</li>
+      <li><b>新增一道脚本编码守卫</b>：脚本里写中文注释时，如果文件不带 UTF-8 BOM，
+        PowerShell 5.1 会按系统 GB2312 代码页解码，<b>可能吞掉一个换行</b>，
+        从而报出一个与真实位置完全无关的「幽灵语法错误」。该守卫已挂进 CI，
+        并给 5 个受影响的脚本补上了 BOM</li>
+    </ul>
     <p><b>v0.13.2</b>（2026-09-20）</p>
     <ul>
       <li><b>编译输出面板：两类此前"点不动"的诊断现在能正确定位</b>。厂商编译器在检查
