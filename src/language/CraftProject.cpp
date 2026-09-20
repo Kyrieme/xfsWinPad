@@ -649,33 +649,69 @@ bool LooksLikeSourcePath(const std::wstring& s) {
     return false;
 }
 
-// `file(line)` / `file(line,col)` —— 从右往左找最后一对括号
-bool TryParen(const std::wstring& line, std::wstring& file, int& ln, int& col) {
-    const std::size_t close = line.find_last_of(L')');
-    if (close == std::wstring::npos) return false;
-    const std::size_t open = line.rfind(L'(', close);
-    if (open == std::wstring::npos || open + 1 >= close) return false;
-    const std::wstring inner = line.substr(open + 1, close - open - 1);
-    // inner 必须是 `N` 或 `N,M`
-    const std::vector<std::wstring> nums = TokenizeWide([&] {
-        std::wstring t = inner;
-        for (wchar_t& c : t) if (c == L',') c = L' ';
-        return t;
-    }());
-    if (nums.empty() || nums.size() > 2) return false;
-    for (const std::wstring& n : nums) {
-        if (n.empty()) return false;
-        for (wchar_t c : n) if (c < L'0' || c > L'9') return false;
+// 整串都是十进制数字（空串不算）。ParseDigits 对非数字返回 0，分不出"就是 0"与
+// "根本不是数字"，所以判定要单独用一个谓词。
+bool AllDigitsW(const std::wstring& s) {
+    if (s.empty()) return false;
+    for (wchar_t c : s) {
+        if (c < L'0' || c > L'9') return false;
     }
-    // 文件名 = 括号前那一串非空白
-    std::size_t b = open;
-    while (b > 0 && line[b - 1] != L' ' && line[b - 1] != L'\t') --b;
-    const std::wstring f = line.substr(b, open - b);
-    if (!LooksLikeSourcePath(f)) return false;
-    file = f;
-    ln = ParseDigits(nums[0]);
-    col = (nums.size() == 2) ? ParseDigits(nums[1]) : 0;
     return true;
+}
+
+// `file(line)` / `file(line,col)` —— MSVC 的形态。真机失败输出（见 test_craftproj 里
+// 逐字节抄下来的样本）给出四种真实写法：
+//   C:\Program Files (x86)\...\VC\INCLUDE\xlocale(337) : warning C4530: ...
+//   open_short.pln(659) : error C2601: "LOADPIN": 本地函数定义是非法的
+//   open_short.pln(663) : fatal error C1075: 与左侧的 大括号"{"(位于"x.pln(623)")匹配…
+//           open_short.pln(623):  此行有一个"{"没有匹配项      ← 不带级别的附注行
+//
+// 三条"必须是"，缺一不认：
+//   ① 括号里只能是 `N` 或 `N,M`；
+//   ② 括号后（可带空白）**必须是冒号**。这条不是保险，是必需的：C1075 那条的正文里
+//      就含 `(位于"x.pln(623)")`，括号里同样是数字 —— 只按①判就会把位置认到正文里
+//      去。行尾的 `... Exit Code(2)` 也被这一条挡掉。
+//   ③ 括号**前**那一段必须像源码路径。
+//
+// 前缀从**行首**取，不是"最后一个空白之后"：MSVC 的路径可以含空格，按空白切会把
+// `C:\Program Files (x86)\...\xlocale` 腰斩成 `12.0\VC\INCLUDE\xlocale` —— 真机输出
+// 里那条 xlocale 警告就是被这样切错的。行首取不到（不像路径）就放弃，不退回按空白
+// 切：**认不出（不跳）比认到半截路径上（跳错）好**。
+//
+// 从左往右取**第一个**同时满足三条的括号：C1075 那条若从右往左找，先撞上的是正文里
+// 的 `(623)`，会把位置认到正文里去。
+bool TryParen(const std::wstring& line, std::wstring& file, int& ln, int& col) {
+    for (std::size_t open = line.find(L'('); open != std::wstring::npos;
+         open = line.find(L'(', open + 1)) {
+        const std::size_t close = line.find(L')', open + 1);
+        if (close == std::wstring::npos) return false;   // 括号不闭合 → 整行不认
+
+        const std::wstring inner = line.substr(open + 1, close - open - 1);
+        const std::size_t comma = inner.find(L',');
+        if (comma != std::wstring::npos &&
+            inner.find(L',', comma + 1) != std::wstring::npos) {
+            continue;                                    // 多于一个逗号 → 不是位置
+        }
+        const std::wstring a = (comma == std::wstring::npos) ? inner
+                                                             : inner.substr(0, comma);
+        const std::wstring b = (comma == std::wstring::npos) ? std::wstring()
+                                                             : inner.substr(comma + 1);
+        if (!AllDigitsW(a)) continue;
+        if (comma != std::wstring::npos && !AllDigitsW(b)) continue;
+
+        std::size_t k = close + 1;                       // ② 后面必须是冒号
+        while (k < line.size() && (line[k] == L' ' || line[k] == L'\t')) ++k;
+        if (k >= line.size() || line[k] != L':') continue;
+
+        const std::wstring f = TrimWide(line.substr(0, open));   // ③ 前缀必须像路径
+        if (!LooksLikeSourcePath(f)) continue;
+
+        file = f;
+        ln = ParseDigits(a);
+        col = (comma == std::wstring::npos) ? 0 : ParseDigits(b);
+        return true;
+    }
+    return false;
 }
 
 // `file:line` / `file:line:col`
@@ -752,16 +788,38 @@ bool HasCountField(const std::wstring& lower, const wchar_t* word) {
 // 判定：同一行里 `errors : N` 与 `warning : M` **两个计数域都在**才算统计行。
 // 这样逐条诊断行（`demo.pat(3) : error: ...`，只有 error 一个词）不会被误吞。
 //
-// 【为什么不去读那两个数字】没有失败样本（目前只拿到过成功编译的输出），
-// 所以不知道 CRAFT 出错时是否**另有**逐条错误行。既然不知道，就不猜：
-// 统计行一律原样保留、不判级别、不进计数；"这一步失败了"由退出码决定
-// （BuildResult.allOk），那才是可靠信号。等拿到失败输出再补这一块。
+// 【为什么不去读那两个数字】到批次 97 为止，**仍然没有拿到 N > 0 的统计行**：
+//   · 成功编译的统计行是 `Errors : 0  Warning : 0`（多次实测）；
+//   · 批次 97 拿到了**第一份失败输出**，但那是 plncmp 在 step 0 就挂了
+//     （MSVC 报 C2601/C1075），整条链没走到 patcmp，所以报告里根本没有统计行；
+//   · 为逼出 patcmp 失败而做的第二份注入副本（`SPM_PATTERN(func_pat, NORM, K_SET)`，
+//     手册 §3.4.1.4 明文说是 compiler error）**反而编译通过了** —— 手册那条断言
+//     被实测推翻，详见 Chroma3380Diagnostics.h 规则 4 的取证注释。
+// 所以"CRAFT 出错时统计行长什么样、是否另有逐条错误行"依然**没有样本**。既然不知道
+// 就不猜：统计行一律原样保留、不判级别、不进计数；"这一步失败了"由退出码决定
+// （BuildResult.allOk），那才是可靠信号。等拿到 N > 0 的统计行再补这一块。
 bool IsCraftSummaryLine(const std::wstring& lower) {
     return HasCountField(lower, L"errors") && HasCountField(lower, L"warning");
 }
 
 } // namespace
 
+// 【这份输出的真实形态，批次 97 实测】
+//
+// 1) 编码：CRAFT 与它调起来的 cl.exe 都按**系统 ANSI 代码页**输出，中文 Windows 上
+//    就是 **GBK**（实测字节：`用于` = D3 C3 D3 DA，不是 UTF-8 的 E7 94 A8…）。
+//    Widen 是**逐字节升位**（见其定义处的说明），所以 GBK 字节会变成 0x80..0xFF 区间
+//    的单个 wchar，界面上的中文是乱码 —— 这是**已知且刻意**的：内核不碰代码页，
+//    显示层的转码是另一个问题（当前批次不做）。
+//    对解析本身无影响：判级只认 ASCII 整词，取位置只认 ASCII 的括号/冒号/数字，
+//    而 GBK 的**尾字节**（0x40..0xFE）虽可落在 ASCII 区间，却不会落在
+//    `(` `)` `:` 与数字上（它们都 < 0x40）—— 实测这份样本里 0 个尾字节落在 ASCII 区间。
+//
+// 2) 行尾：**同一份输出里两种行尾混用**。CRAFT 自己打的行走 `\r\n`；它中继 cl.exe 的
+//    那一段（从 `----[Current Compiler ...]----` 开始）走 `\r\r\n` —— 因为 cl.exe 输出
+//    本就带 `\r\n`，再经一次文本模式写出时 `\n` 又被展开成 `\r\n`。
+//    SplitLinesAscii 只剥一个 `\r`、TrimWide 再剥掉剩下的空白，所以这里不需要
+//    "先归一化行尾"这类动作。测试样本刻意保留了这个混用形态，用来钉住这一点。
 CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& projectRoot) {
     CompileOutput r;
     for (const std::string& rawLine : SplitLinesAscii(out)) {
@@ -801,7 +859,12 @@ CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& pr
         r.issues.push_back(std::move(it));
     }
     r.parsed = (r.locatedCount > 0);
-    (void)projectRoot;   // 目前只做原样记录，不做相对/绝对路径归一（没有样本可验证）
+    // projectRoot 仍然只用来占位，**不做**路径归一 —— 现在有样本了，样本说不需要：
+    // 实测出现的两种形态是"光秃秃的相对文件名"（`open_short.pln`，连目录都没有）与
+    // "绝对路径"（`C:\Program Files (x86)\...\xlocale`）。前者由 JumpToCompileLocation
+    // 拼到工程根上、后者直接打开，两边都已经处理好了；在这里再归一化一遍反而会把
+    // "相对/绝对"这个区别抹掉，让那一层没法按形态分流。
+    (void)projectRoot;
     return r;
 }
 

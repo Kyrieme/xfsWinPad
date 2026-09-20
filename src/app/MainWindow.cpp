@@ -4130,7 +4130,9 @@ void MainWindow::OnCompileActivate(int row) {
 bool MainWindow::JumpToCompileLocation(const CompileRow& r) {
     if (!workspace_ || r.file.empty() || r.line <= 0) return false;
 
-    // 编译器给的路径形态我们**零实证**（只有编译成功的工程，没有失败输出），
+    // 编译器给的路径形态，批次 97 有实证了（真机失败输出）：只出现过两种 ——
+    //   · 光秃秃的相对文件名，**连目录都没有**（`open_short.pln(659) : error …`）；
+    //   · 绝对路径（`C:\Program Files (x86)\…\xlocale(337) : warning …`）。
     // 所以三级依次尝试，**绝不猜**：猜错会跳到毫无关系的位置上，比不跳更糟。
     std::wstring full = r.file;
 

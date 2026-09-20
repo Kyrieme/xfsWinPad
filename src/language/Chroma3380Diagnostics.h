@@ -158,28 +158,22 @@ struct Diagnostic {
 //   而不是逐字符循环：MSVC 14.51（v145）的 /O2 会把逐字符版本误编译成"只数
 //   非空白字符"，Release 下静默漏报。动手改那段之前先读 .cpp 的函数注释。】
 //
-// 【规则 4 为什么能开口（.pat 侧，Error 档）】
-//   手册 §3.4.1.4（p45）用**正误对照**直接给了结论 —— 这是全手册少见的"明文点名
-//   compiler error"的地方：
+// 【规则 4 为什么**不**开口（2026-09-20 实测推翻）】
+//   批次 92 曾照手册 §3.4.1.4（p45）实现 `C3380-PAT-002`（Error 档）—— 立规理由是
+//   该节用**正误对照**明文点名 `compiler error`，是全手册少见的"明说会报错"之处：
 //     SPM_PATTERN ( func_pat , NORM , K_SET | Z_SET )     compiler error
 //     SPM_PATTERN ( func_pat , DBL , K_SET | Z_SET )      compiler error
 //     SPM_PATTERN ( func_pat , DBL_2X , K_SET | Z_SET )   compiler correct
-//   格式块（§3.4.1.1，p42）给出取值域：第 2 实参 ∈ {NORM, DBL, DBL_2X}，
-//   第 3 实参 ∈ {NORM_SET, K_SET, Z_SET}；同页默认值表又写
-//   "DBL_2X pattern setting has K_SET / Z_SET: no-entry --> NORM_SET"。
-//   于是合法组合只有两类：DBL_2X 配任意 set、以及任意 mode 配 NORM_SET。
-//   其余（NORM/DBL × K_SET/Z_SET）正是手册点名的那两种 → Error 档。
-//
-//   【为什么**只对 SPM_PATTERN** 开】同族的 APM_PATTERN / RPM_PATTERN 签名是
-//   `( module_name [, NORM | DBL ] )` —— **根本没有第 3 个 set 实参**，这三行
-//   对照对它们不成立。照搬过去就是凭空造规则。
-//
-//   【为什么认不出就不报】第 2/3 实参只要有一个不在那六个关键字里（写成了变量、
-//   将来手册新增的取值、拼写变体），整体放弃。实参个数不是 2/3 也不判 ——
-//   `SPM_PATTERN (os_pat)` 这种只给模块名的写法手册自己就在用（§3.4.1.5 示例）。
-//   跨行的实参表同样不判：手册与真实样本里都没出现过跨行的 SPM_PATTERN 头。
-//   高亮锚在**第 3 个实参**上，因为两种修法（删掉 set、或把 mode 改成 DBL_2X）
-//   都落在那一个 token 上。
+//   **但实测该断言不成立**：取一个厂商范例工程（`.pln` 与全部 `.pat` 都是原始字节），
+//   只把某个 `SPM_PATTERN (func_pat) {` 改成手册点名的那一行
+//   `SPM_PATTERN (func_pat, NORM, K_SET) {`，再跑工程自己的 makefile 构建 ——
+//   4 个步骤全部 exit=0、patcmp 打印 `Errors : 0   Warning : 0`、生成的 `.pdt` 与
+//   未改动时**逐字节相同**、整构建 `allOk: yes`。
+//   ⇒ 手册这句话在 CRAFT 2.50 的 `patcmp` 上不执行。照它报错就是在**编译器接受的
+//   代码**上标红，正是"零误报 > 多报"要禁止的。故**不实现**（也不降级为 Warning：
+//   被否掉的是断言本身，不是作用域）。取证全文在 .cpp 同节。
+//   ⚠️ 本次只测了 {NORM} × {K_SET} 一种；另外三种点名组合未测。将来要重新开口，
+//   必须先拿到**编译器真的报错**的样本，别凭手册散文恢复。
 //
 // 【规则 10 为什么是 Warning（而不是 Error）】
 //   手册 §3.4.1.3（p44）微指令表与 §3.4.3（p53）两处都写

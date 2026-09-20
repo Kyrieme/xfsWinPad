@@ -915,65 +915,32 @@ void CheckHeaderVectorWidth(const std::vector<std::string>& code,
 }
 
 // ---------------------------------------------------------------------------
-// 规则 4：SPM_PATTERN 的 NORM / DBL 配 K_SET / Z_SET = compiler error（批次 92）
+// 规则 4（`SPM_PATTERN` 的 NORM / DBL 配 K_SET / Z_SET）—— **已实测推翻，不实现**
 // ---------------------------------------------------------------------------
-// 取证、severity 分档、为什么**只对 SPM_PATTERN 开** —— 见头文件同节注释。
-// 实现要点：
-//   · 只在**同时**认出"第 2 个实参是三个 mode 之一"且"第 3 个实参是三个 set 之一"
-//     时才判。任一个认不出（变量、拼写变体、手册将来新增的关键字）→ 整体放弃，
-//     宁可漏报。
-//   · 实参个数不是 2 / 3 一律不判：>3 是手册从未定义过的形式，不属本规则的地盘。
-//   · 只认**同一行内闭合**的实参表。跨行的 SPM_PATTERN 头在手册与真实样本里都没
-//     出现过，不猜。
-//   · 高亮锚在**第 3 个实参**上：两种修法（删掉 set，或把 mode 改成 DBL_2X）都落在
-//     那个 token 上。
-bool PatternModeIsIllegal(const std::string& line, std::size_t& col, std::size_t& len,
-                          std::string& mode, std::string& set) {
-    std::size_t ic = 0, il = 0;
-    if (!LeadingIdentIn(line, 0, line.size(), ic, il)) return false;
-    if (!LeadingKeywordIs(line, ic, il, "SPM_PATTERN")) return false;
-
-    const std::size_t p = line.find('(', ic + il);
-    if (p == kNone) return false;
-    std::size_t q = kNone;
-    int depth = 0;
-    for (std::size_t i = p; i < line.size(); ++i) {
-        if (line[i] == '(') {
-            ++depth;
-        } else if (line[i] == ')') {
-            --depth;
-            if (depth == 0) { q = i; break; }
-        }
-    }
-    if (q == kNone) return false;                        // 实参表未闭合 → 不判
-
-    const std::vector<Seg> args = SplitArgsIn(line, p + 1, q);
-    if (args.size() != 2 && args.size() != 3) return false;
-
-    mode = Upper(line.substr(args[1].b, args[1].e - args[1].b));
-    if (mode != "NORM" && mode != "DBL" && mode != "DBL_2X") return false;
-    if (args.size() < 3) return false;                   // 只给 mode → 合法
-
-    set = Upper(line.substr(args[2].b, args[2].e - args[2].b));
-    if (set != "NORM_SET" && set != "K_SET" && set != "Z_SET") return false;
-    if (mode == "DBL_2X" || set == "NORM_SET") return false;   // 手册明文允许的组合
-
-    col = args[2].b;
-    len = args[2].e - args[2].b;
-    return true;
-}
-
-void CheckPatternMode(const std::vector<std::string>& code, std::vector<Diagnostic>& out) {
-    for (std::size_t i = 0; i < code.size(); ++i) {
-        std::size_t col = 0, len = 0;
-        std::string mode, set;
-        if (!PatternModeIsIllegal(code[i], col, len, mode, set)) continue;
-        std::string msg = "SPM_PATTERN 的 " + mode + " 模式不接受 " + set +
-                          "（手册：只有 DBL_2X 允许 K_SET / Z_SET）";
-        PushDiag(out, (int)i, col, len, "C3380-PAT-002", 45, std::move(msg),
-                 DiagSeverity::Error);
-    }
-}
+// 批次 92 曾照手册 §3.4.1.4 实现为 `C3380-PAT-002`（Error 档），立规理由是该节用
+// 正误对照**明文点名** `compiler error`。2026-09-20 在装有厂商工具链的机器上做了
+// 一次对照实验，结论是**编译器根本不执行这条检查**：
+//
+//   取一个厂商范例工程（`.pln` 与全部 `.pat` 都是原始字节），只改一处 ——
+//   把某个 `SPM_PATTERN (func_pat) {` 写成 `SPM_PATTERN (func_pat, NORM, K_SET) {`，
+//   即手册点名的那一行。然后跑该工程自己的 makefile 构建（plncmp + patcmp）。
+//
+//   结果：4 个步骤全部 exit=0；patcmp 对该 `.pat` 打印 `Errors : 0   Warning : 0`；
+//   生成的 `.pdt` 与**未改动**时的编译结果**逐字节相同**（780 B，同 SHA256）；
+//   整个构建 `allOk: yes`。
+//
+// ⇒ 手册的这句话在 CRAFT 2.50 的 `patcmp` 上**不成立**。照它报错，就是在**编译器
+//   接受的代码**上标红色错误 —— 正是本项目"零误报 > 多报"铁律要禁止的东西。
+//
+// 为什么是"不实现"而不是"降级为 Warning"：手册给的是**编译错误**断言，实测否掉了
+// 这个断言本身（不是作用域没找对）。级别降一档仍然是拿一个被否掉的断言去打扰用户。
+// 这与「同一 pin 不得属于两个 group」（手册自己的示例就违反它）是同一类处理。
+//
+// 【若将来要重新开口】需要先拿到**编译器真的报错**的样本。本次只测了
+// {NORM} × {K_SET} 一种组合；手册点名的另外三种（NORM×Z_SET、DBL×K_SET、
+// DBL×Z_SET）以及"`DBL_2X` 配 K_SET"（手册说 correct）都还没测。在拿到反例之前
+// 一律不报。取证装置留在本地（一个"`.pln` 完好、只坏 `.pat`"的工程副本，
+// 专为打 patcmp 的诊断输出而造）。
 
 // ---------------------------------------------------------------------------
 // 规则 10：RPT 的重复次数必须在 2 .. 16777215（批次 92）
@@ -1259,7 +1226,8 @@ std::vector<Diagnostic> ValidateChromaSource(const std::string& text,
     }
     if (kind == ChromaFileKind::Pattern) {
         CheckHeaderVectorWidth(code, out);       // 规则 1：HEADER pin 数 == 向量宽度
-        CheckPatternMode(code, out);             // 规则 4：SPM_PATTERN 模式 / 设置组合
+        // 规则 4（SPM_PATTERN 模式/设置组合）**不在此处调用**：2026-09-20 实测推翻，
+        // 见文件上方该节的取证记录。
         CheckRptCount(code, out);                // 规则 10：RPT 重复次数区间
     }
     // 规则 8 只对 .pln 开：受检的 .pat 语句只有两条，且规则 8 的签名库按 .pln 语句

@@ -559,6 +559,53 @@ static void RunPlanBuild() {
 // 六、编译输出解析（保守）
 // ---------------------------------------------------------------------------
 
+// plncmp 编译**失败**的真机输出：在装有 CRAFT 的机器上实跑一个"末尾 `}` 被删掉"
+// 的厂商范例工程副本得到的，报告自报 1414 字节，这里逐字节抄录。
+//
+// 【为什么非 ASCII 写成 \xNN】那些字节是 **GBK**（CRAFT 与 cl.exe 都按系统 ANSI
+// 代码页输出）。源码里直接写中文会得到 UTF-8 字节 —— 那就不是"逐字节真实"了，而这份
+// 样本的全部价值正在于格式是真的。每行右侧注释是该行的可读文本。
+//
+// 【刻意保留的两处真实形态】
+//   · 第 18 行起是 cl.exe 区段，行尾是 `\r\r\n`；前面 CRAFT 自己打的行是 `\r\n` ——
+//     **同一份输出里行尾混用**，这不是抄错，是真机就这样（cl.exe 的输出被 CRAFT
+//     中继时又经了一次文本模式展开）。
+//   · 第 20 行是个空行：SplitLinesAscii 会跳过它，所以它不进 issues —— 下面按
+//     "25 条 = 26 行 - 1 空行"核对，就是在钉这一点。
+static const char kRealPlncmpFailure[] =
+    "Test Plan file compiler for CRAFT_3380_2.50 Copyright (c) 2010 CHROMA\r\n"
+    "default linked library : ws2_32.lib \r\n"
+    "Parse Plan open_short.pln : \r\n"
+    "Make Declaration File ...Success!!\r\n"
+    "Parse Plan open_short.pln : ........................................\r\n"
+    "TIP : RESULT_PIN can be replaced by RESULT_PIN_MS for multiple sites.\r\n"
+    ".\r\n"
+    "TIP : JUDGE_VARIABLE can be replaced by JUDGE_VARIABLE_MS for multiple sites.\r\n"
+    "........................The brace is not match in the test item CLK_TO_QA_DELAY_test()\r\n"
+    ".Finished\r\n"
+    "Start Creating Label Library Routine ...\r\n"
+    "Create SPECDEFVARI Library Success!!\r\n"
+    "Start Creating Category Library Routine ...\r\n"
+    "Create Category Library Success!!\r\n"
+    "Start Creating Global Library Routine ...\r\n"
+    "Global Library Create Success!!\r\n"
+    // 17：CRAFT 自己的"这一步失败了"—— 判 Error，但没有位置
+    "Create open_short Body Library ...Compile Failed !! Exit Code(2)\r\n"
+    "----[Current Compiler VISUAL STUDIO 2013]---- \r\r\n"
+    // 19：cl.exe 版本横幅（GBK）。里面有 `(R)` `(C)` 两对括号，都不是数字 → 不许当位置
+    "\xd3\xc3\xd3\xda x86 \xb5\xc4 Microsoft (R) C/C++ \xd3\xc5\xbb\xaf\xb1\xe0\xd2\xeb\xc6\xf7 18.00.40629 \xb0\xe6\xb0\xe6\xc8\xa8\xcb\xf9\xd3\xd0(C) Microsoft Corporation\xa1\xa3  \xb1\xa3\xc1\xf4\xcb\xf9\xd3\xd0\xc8\xa8\xc0\xfb\xa1\xa3\r\r\n"
+    "\r\r\n"
+    "open_short_body.cpp\r\r\n"
+    // 22：MSVC 自带头文件的警告 —— 路径**含空格**，是"前缀必须从行首取"的实证
+    "C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\INCLUDE\\xlocale(337) : warning C4530: \xca\xb9\xd3\xc3\xc1\xcb C++ \xd2\xec\xb3\xa3\xb4\xa6\xc0\xed\xb3\xcc\xd0\xf2\xa3\xac\xb5\xab\xce\xb4\xc6\xf4\xd3\xc3\xd5\xb9\xbf\xaa\xd3\xef\xd2\xe5\xa1\xa3\xc7\xeb\xd6\xb8\xb6\xa8 /EHsc\r\r\n"
+    // 23：真正的错误，位置 659
+    "open_short.pln(659) : error C2601: \xa1\xb0LOADPIN\xa1\xb1: \xb1\xbe\xb5\xd8\xba\xaf\xca\xfd\xb6\xa8\xd2\xe5\xca\xc7\xb7\xc7\xb7\xa8\xb5\xc4\r\r\n"
+    // 24：不带级别的附注行（有位置、无 error/warning 字样）→ Plain 但可跳
+    "        open_short.pln(623):  \xb4\xcb\xd0\xd0\xd3\xd0\xd2\xbb\xb8\xf6\xa1\xb0{\xa1\xb1\xc3\xbb\xd3\xd0\xc6\xa5\xc5\xe4\xcf\xee\r\r\n"
+    // 25：**正文里也有一对数字括号** `(位于"…(623)")` —— 这是"括号后必须是冒号"的实证
+    "open_short.pln(663) : fatal error C1075: \xd3\xeb\xd7\xf3\xb2\xe0\xb5\xc4 \xb4\xf3\xc0\xa8\xba\xc5\xa1\xb0{\xa1\xb1(\xce\xbb\xd3\xda\xa1\xb0open_short.pln(623)\xa1\xb1)\xc6\xa5\xc5\xe4\xd6\xae\xc7\xb0\xd3\xf6\xb5\xbd\xce\xc4\xbc\xfe\xbd\xe1\xca\xf8\r\r\n"
+    "Error : Can't make plan object file\r\n";
+
 static void RunParseCompilerOutput() {
     std::printf("-- RunParseCompilerOutput --\n");
 
@@ -707,6 +754,69 @@ static void RunParseCompilerOutput() {
         CHECK(r.errorCount == 0);
         CHECK(r.warnCount == 0);
         CHECK(!r.parsed);
+    }
+
+    // ---- 真机失败输出（plncmp 挂了）------------------------------------------
+    // 这份样本是**唯一**能检验"出错时解析成什么样"的实证。抄录的字节数必须等于探针
+    // 报告自报的 1414 —— 这是防手抄走样的自检，改字面量时它会立刻红。
+    {
+        CHECK(sizeof(kRealPlncmpFailure) - 1 == 1414u);
+
+        const CompileOutput r = ParseCompilerOutput(kRealPlncmpFailure, L"D:\\proj");
+        CHECK(r.issues.size() == 25);   // 26 行 - 1 个空行
+        CHECK(r.parsed);
+        CHECK(r.sawAnyError);
+        CHECK(r.errorCount == 4);       // 第 17/23/25/26 行
+        CHECK(r.warnCount == 1);        // 第 22 行（MSVC 自带头文件）
+        CHECK(r.locatedCount == 4);     // 第 22/23/24/25 行
+
+        // 第 17 行：CRAFT 自己的"这一步失败了"。判 Error（它确实是个错误结论），
+        // 但**没有位置** —— `Exit Code(2)` 后面没有冒号，不许当成可跳转的行。
+        CHECK(r.issues[16].kind == IssueKind::Error);
+        CHECK(r.issues[16].line == 0);
+
+        // 第 18 行：分节线（`----[Current Compiler ...]----`）—— 一个 `(` 都没有
+        CHECK(r.issues[17].kind == IssueKind::Plain);
+        CHECK(r.issues[17].line == 0);
+
+        // 第 19 行：cl.exe 版本横幅。含 `(R)` `(C)` 两对括号，都不是数字 → 不许当位置
+        CHECK(r.issues[18].kind == IssueKind::Plain);
+        CHECK(r.issues[18].line == 0);
+
+        // 第 22 行：MSVC 自带头文件的警告。★ 路径含空格，**必须取全**。
+        // （批次 97 之前按"最后一个空白之后"取，会腰斩成 `12.0\VC\INCLUDE\xlocale`。）
+        CHECK(r.issues[20].kind == IssueKind::Warning);
+        CHECK(r.issues[20].line == 337);
+        CHECK(r.issues[20].file ==
+              L"C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\INCLUDE\\xlocale");
+
+        // 第 23 行：真正的错误，位置 659
+        CHECK(r.issues[21].kind == IssueKind::Error);
+        CHECK(r.issues[21].file == L"open_short.pln");
+        CHECK(r.issues[21].line == 659);
+        CHECK(r.issues[21].column == 0);
+
+        // 第 24 行：**不带级别**的附注行（有位置、没有 error/warning 字样）→ Plain，
+        // 但位置要认出来（用户还是想点过去看看那个 `{`）。
+        CHECK(r.issues[22].kind == IssueKind::Plain);
+        CHECK(r.issues[22].file == L"open_short.pln");
+        CHECK(r.issues[22].line == 623);
+
+        // 第 25 行：★ C1075 的**正文里也有一对数字括号** `(位于"…(623)")`。
+        // 必须认到行首那个 `(663)`，不能认到正文里去。
+        // （批次 97 之前从右往左找最后一对括号，会撞上正文里的 `(623)` 而整行认不出。）
+        CHECK(r.issues[23].kind == IssueKind::Error);
+        CHECK(r.issues[23].file == L"open_short.pln");
+        CHECK(r.issues[23].line == 663);
+
+        // 第 26 行：CRAFT 的收尾错误，没有位置
+        CHECK(r.issues[24].kind == IssueKind::Error);
+        CHECK(r.issues[24].line == 0);
+
+        // 原文永不丢：每条 text 都是该行去掉首尾空白后的原文
+        CHECK(!r.issues[16].text.empty());
+        CHECK(r.issues[16].text == L"Create open_short Body Library ...Compile Failed !! Exit Code(2)");
+        CHECK(r.issues[24].text == L"Error : Can't make plan object file");
     }
 }
 

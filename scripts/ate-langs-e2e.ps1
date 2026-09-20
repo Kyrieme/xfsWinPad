@@ -110,10 +110,20 @@ $g_p  = $null
 $g_ed = [IntPtr]::Zero
 
 function Cleanup {
-  Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force
+  # 【为什么每一步都包 try】与 chroma-e2e.ps1 的 Cleanup 同一个坑（那里记在批次 78）：
+  # Cleanup 是在主体那个 try 块里被调用的，而本沙箱的 safe-delete 钩子会让
+  # `Remove-Item -Recurse -Force` **直接抛异常**（异常消息就是钩子那段 JSON）。
+  # 于是：抛异常 → 外层 catch → 打印 E2E-FAIL + exit 1 —— **所有断言都过、
+  # 判定行也打了，退出码却是 1**，而且那行失败文本和真失败长得一模一样。
+  # chroma-e2e.ps1 早就按这个口径加固过，ate-langs-e2e.ps1 当时漏了（批次 97 撞上）。
+  # 规矩：收尾不许改判定 —— 单步失败就地吞掉，改成事后**核对事实**再报告。
+  try { Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force } catch { }
   Start-Sleep -Milliseconds 400
-  if (Test-Path $bak) { Copy-Item $bak $sess -Force; Remove-Item $bak -Force }
-  Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+  # 先 Copy 再 Remove：即使 Remove 被钩子拦下，session.json 也已经还原了。
+  try { if (Test-Path $bak) { Copy-Item $bak $sess -Force; Remove-Item $bak -Force } } catch { }
+  try { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue } catch { }
+  if (-not (Test-Path $sess)) { Write-Output "CLEANUP-WARN: session.json missing after cleanup" }
+  if (Test-Path $bak) { Write-Output "CLEANUP-WARN: leftover backup (sandbox blocked its removal): $bak" }
 }
 function Fail($m) {
   Write-Output "E2E-FAIL: $m"

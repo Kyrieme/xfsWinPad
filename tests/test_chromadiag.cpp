@@ -877,81 +877,51 @@ SPM_PATTERN(m2) {
 }
 
 // ---------------------------------------------------------------------------
-// 批次 92 规则 4：SPM_PATTERN 的 NORM / DBL 配 K_SET / Z_SET = compiler error
+// 规则 4（SPM_PATTERN 的 NORM / DBL 配 K_SET / Z_SET）—— **绊线：必须恒为 0**
 // ---------------------------------------------------------------------------
-static void RunPatternMode() {
+// 批次 92 曾按手册 §3.4.1.4（p45）的"正误对照"实现为 `C3380-PAT-002`（Error 档）。
+// 2026-09-20 在装有厂商工具链的机器上实测**推翻了那条断言**：把厂商范例工程里某个
+// `SPM_PATTERN (func_pat) {` 改成手册点名的那一行
+// `SPM_PATTERN (func_pat, NORM, K_SET) {` 之后，工程自己的 makefile 构建 4 步全
+// exit=0，patcmp 打印 `Errors : 0   Warning : 0`，生成的 `.pdt` 与**未改动时逐字节
+// 相同**，整构建成功。⇒ 编译器不执行这条检查；照它报错就是在编译器接受的代码上
+// 标红。故规则**不实现**（也不降级为 Warning —— 被否掉的是断言本身，不是作用域）。
+//
+// 本函数是**绊线**（同「同一 pin 不得属于两个 group」的 DEC-005 先例）：把手册点名
+// 的那几行钉死在"0 诊断"上。谁把规则加回来，这里会红 ——
+// **红的时候先回去读 .cpp 里该节的取证记录，别直接改断言。**
+//
+// ⚠️ 绊线必须有区分力：最后一段**同时**塞了一条仍然生效的规则（`RPT` 次数越界 →
+// `C3380-PAT-003`），用来证明"校验器真的跑了"。否则 `== 0` 在"规则被删掉"与
+// "规则正确地沉默"两种情况下输出一模一样，那种 0 没有信息量。
+static void RunPatternModeTripwire() {
     const ChromaFileKind P = ChromaFileKind::Pattern;
 
-    // ---- 手册 §3.4.1.4（p45）正误对照的**原文行**：NORM 配 K_SET → compiler error
-    {
-        const std::string s = "SPM_PATTERN ( func_pat , NORM , K_SET )";
-        const std::vector<Diagnostic> d = ValidateChromaSource(s, P);
-        CHECK(d.size() == 1);
-        if (d.size() == 1) {
-            CHECK(std::string(d[0].code) == "C3380-PAT-002");
-            CHECK(d[0].line == 0);
-            CHECK(d[0].start == (int)s.find("K_SET"));   // 锚在**第 3 个实参**
-            CHECK(d[0].length == 5);
-            CHECK(d[0].severity == DiagSeverity::Error); // 手册明文 compiler error
-            CHECK(d[0].manualPage == 45);
-            CHECK(d[0].message.find("NORM") != std::string::npos);
-            CHECK(!d[0].message.empty());
-        }
-    }
-    {
-        const std::string s = "SPM_PATTERN ( func_pat , DBL , Z_SET )";
-        const std::vector<Diagnostic> d = ValidateChromaSource(s, P);
-        CHECK(d.size() == 1);
-        if (d.size() == 1) CHECK(d[0].start == (int)s.find("Z_SET"));
-    }
-
-    // ---- 非法组合全覆盖：{NORM,DBL} × {K_SET,Z_SET}，大小写不敏感
-    for (const char* mode : {"NORM", "DBL", "norm", "dbl"}) {
-        for (const char* set : {"K_SET", "Z_SET", "k_set", "z_set"}) {
-            const std::string s = std::string("SPM_PATTERN(m,") + mode + "," + set + ")";
-            CHECK(CountCode(ValidateChromaSource(s, P), "C3380-PAT-002") == 1);
-        }
-    }
-
-    // ---- 手册明文 correct / 默认值 / 手册自己的示例 → 必须 0 诊断
+    // ---- 手册 §3.4.1.4 点名 error 的两行 + 点名 correct 的一行：全部 0 诊断
+    //      （第一行是**实测**被编译器接受的；另两行同属那张已被推翻的表）
     for (const char* s : {
-             "SPM_PATTERN ( func_pat , DBL_2X , K_SET | Z_SET )",  // 原文 compiler correct
-             "SPM_PATTERN ( func_pat , DBL_2X , K_SET )",
-             "SPM_PATTERN ( func_pat , DBL_2X , Z_SET )",
-             "SPM_PATTERN ( func_pat , NORM , NORM_SET )",         // 手册允许的默认值
-             "SPM_PATTERN ( func_pat , DBL , NORM_SET )",
+             "SPM_PATTERN ( func_pat , NORM , K_SET )",            // 手册：error（实测：接受）
+             "SPM_PATTERN ( func_pat , DBL , Z_SET )",             // 手册：error
+             "SPM_PATTERN ( func_pat , DBL_2X , K_SET | Z_SET )",  // 手册：correct
+             "SPM_PATTERN ( func_pat , NORM , NORM_SET )",         // 手册默认值
              "SPM_PATTERN ( func_pat , NORM )",                    // 只给 mode
              "SPM_PATTERN ( func_pat )",                           // 只给模块名
              "SPM_PATTERN (os_pat)",                               // §3.4.1.5 示例原文
-             "SPM_PATTERN (DBL_2X_K_SET,  DBL_2X, K_SET)",         // §3.4.3 示例原文
-             "SPM_PATTERN(m, NORM, NORM_SET, X)",                  // 4 个实参：手册没定义过
-             "APM_PATTERN(m, NORM)",                               // 同族但**没有 set 实参**
-             "RPM_PATTERN(m, DBL)",
          }) {
         CHECK(CountCode(ValidateChromaSource(s, P), "C3380-PAT-002") == 0);
     }
 
-    // ---- 认不出就不报：实参不是关键字 / 不在行首 / 跨行 / 注释里
-    for (const char* s : {
-             "SPM_PATTERN(m, MODE_VAR, K_SET)",     // 第 2 实参不是关键字
-             "SPM_PATTERN(m, NORM, SET_VAR)",       // 第 3 实参不是关键字
-             "SPM_PATTERN(m, DBL_2X_SET, K_SET)",   // 拼写变体：整体放弃
-             "FOO SPM_PATTERN (m , NORM , K_SET)",  // 不在行首 → 不认
-             "// SPM_PATTERN ( func_pat , NORM , K_SET )",
-             "/* SPM_PATTERN ( func_pat , NORM , K_SET ) */",
-             "SPM_PATTERN ( func_pat ,\n             NORM , K_SET )",  // 跨行实参表
-         }) {
-        CHECK(CountCode(ValidateChromaSource(s, P), "C3380-PAT-002") == 0);
-    }
-
-    // ---- 真实模块形态：一条非法头 → 恰好 1 条（不随块内向量行数重复）
+    // ---- 真实模块形态（手册点名的那一行 + 块体）：规则 4 沉默，
+    //      但同一段里的 RPT 越界必须仍然报出来 —— 证明校验器确实跑了
     {
         const std::string t =
             "SPM_PATTERN ( func_pat , NORM , K_SET ) {\n"
-            "  *00000000*;\n"
+            "  *00000000*RPT 1;\n"
             "  *00000000*;\n"
             "}\n";
-        CHECK(CountCode(ValidateChromaSource(t, P), "C3380-PAT-002") == 1);
+        const std::vector<Diagnostic> d = ValidateChromaSource(t, P);
+        CHECK(CountCode(d, "C3380-PAT-002") == 0);   // 规则 4 沉默（编译器也接受）
+        CHECK(CountCode(d, "C3380-PAT-003") == 1);   // 正控：规则 10 仍然开火
     }
 }
 
@@ -1134,7 +1104,7 @@ int main(int argc, char** argv) {
     RunPinGroup();
     RunArgumentCount();
     RunHeaderVectorWidth();
-    RunPatternMode();
+    RunPatternModeTripwire();
     RunRptCount();
     RunCrossFileApas();
     RunExtractDecSymbols();
