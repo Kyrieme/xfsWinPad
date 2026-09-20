@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.13.0 · 2026-09-19 · Windows 10/11 x64</span>
+  <span class="ver">v0.13.1 · 2026-09-20 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.2 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,28 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">5826C8FCF12EA5D390EBCA5DB20FB1356C48A768CAC8C7E151D182C46928A25D</p>
+    <p class="hash">58A40AF947250CD75C0A7E7EF24525D5734E552A2D7B473AD8B9E6FC0E5B2AA9</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">DE2146864792E7D71C1981F8C1CC8754573498BE3B23DA92CD3781D3D13D1D39</p>
+    <p class="hash">23CF00BCE7ADDB8D70440D386BCBAE2E39E9A886AE160D5E6F7E424853C4F9A0</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.13.1</b>（2026-09-20）</p>
+    <ul>
+      <li><b>修掉编译输出面板的两个定位错误</b>：编译器给的路径<b>可以含空格</b>
+        （例如 <code>C:\Program Files (x86)\…\xlocale(337)</code>），此前按"最后一个空白之后"
+        取文件名，会把路径截成半截 —— 而半截串照样"看着像路径"，所以<b>不报错、只是静默指错</b>。
+        现在从<b>行首</b>取。另外错误正文里也可能出现数字括号（如 <code>(位于"…(623)")</code>），
+        此前会把位置认到正文里去、导致那一行<b>点不动</b>；现在只认「括号里是数字」
+        且「括号后紧跟冒号」的那个括号</li>
+      <li><b>停报一条误报</b>：此前依据厂商手册的明文说明，把
+        <code>SPM_PATTERN(…, NORM, K_SET)</code> 判成错误（<code>C3380-PAT-002</code>）。
+        真机实测发现<b>编译器接受它</b>（编译通过、产物逐字节相同）⇒ 属误报，
+        已按「宁可不报、不可误报」停报</li>
+      <li><b>修一条端到端脚本的收尾缺陷</b>：语言包脚本在清理阶段可能抛异常，
+        导致<b>所有断言都通过、结论行也打印了、退出码却是 1</b></li>
+    </ul>
     <p><b>v0.13.0</b>（2026-09-19）</p>
     <ul>
       <li><b>CRAFT 编译集成（新增顶级「工具」菜单）</b>：在编辑器里直接编译 Chroma 测试程序工程 ——
