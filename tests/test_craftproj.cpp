@@ -606,6 +606,131 @@ static const char kRealPlncmpFailure[] =
     "open_short.pln(663) : fatal error C1075: \xd3\xeb\xd7\xf3\xb2\xe0\xb5\xc4 \xb4\xf3\xc0\xa8\xba\xc5\xa1\xb0{\xa1\xb1(\xce\xbb\xd3\xda\xa1\xb0open_short.pln(623)\xa1\xb1)\xc6\xa5\xc5\xe4\xd6\xae\xc7\xb0\xd3\xf6\xb5\xbd\xce\xc4\xbc\xfe\xbd\xe1\xca\xf8\r\r\n"
     "Error : Can't make plan object file\r\n";
 
+// ---- 真机**失败**输出（patcmp / 声明文件编译器）------------------------------
+//
+// 批次 99 拿到的六份样本。做法：在虚拟机里复制六份厂商范例工程，每份只往一个
+// 源文件里注入一处缺陷，再用 test_craftrunner 探针把工具链真跑一遍，把每一步的
+// 输出抄回来。**这一步的意义**：批次 97 之前一直**没有** patcmp 失败的样本，
+// 所以"出错时输出长什么样"全是猜的；这六份把三套消息语法一次钉死了。
+//
+// 行尾是厂商原样：CRAFT 自己打的行是 `\r\n`，**它中继子进程输出的那一段是
+// `\r\r\n`**（cl.exe 那段如此，声明文件编译器那段也如此 —— 中继这个动作才是
+// 原因，跟是哪个子进程无关）。SplitLinesAscii 只剥一个 `\r`、TrimWide 再剥剩下的，
+// 所以两种混在一份输出里也不需要额外归一化。
+//
+// 字节数用 static_assert 钉住（比运行时 CHECK 更早发现问题）：这些数是探针报告里
+// `output : N bytes` 自报的，改字面量时对不上就编译不过。
+// 六份原始输出非 ASCII 字节数为 0，所以这里全是可读的 ASCII 转义，没有 GBK 乱码。
+static const char kPlncmpOk[] =
+    "Test Plan file compiler for CRAFT_3380_2.50 Copyright (c) 2010 CHROMA\r\n"
+    "default linked library : ws2_32.lib \r\n"
+    "Parse Plan open_short.pln : \r\n"
+    "Make Declaration File ...Success!!\r\n"
+    "Parse Plan open_short.pln : ........................................\r\n"
+    "TIP : RESULT_PIN can be replaced by RESULT_PIN_MS for multiple sites.\r\n"
+    ".\r\n"
+    "TIP : JUDGE_VARIABLE can be replaced by JUDGE_VARIABLE_MS for multiple sites.\r\n"
+    ".........................Finished\r\n"
+    "Start Creating Label Library Routine ...\r\n"
+    "Create SPECDEFVARI Library Success!!\r\n"
+    "Start Creating Category Library Routine ...\r\n"
+    "Create Category Library Success!!\r\n"
+    "Start Creating Global Library Routine ...\r\n"
+    "Global Library Create Success!!\r\n"
+    "Create open_short Body Library ...Linking ...Success!!\r\n"
+    "\r\n"
+    "Pln File compile successful .....\r\n"
+    "\r\n";
+static_assert(sizeof(kPlncmpOk) - 1 == 764u, "样本字节数必须是探针自报的 764");
+
+// patcmp 编译 .pat 失败：**一条文件里四个缺陷，四条都报出来**。
+// 这是"patcmp 不在第一个错误上停"的实证 —— 行号 17/17/22/35 一次列全。
+static const char kPatcmpMultiErr[] =
+    "Compile .\\PAT\\ls299_func.pat   ...\r\n"
+    "Make declaration file ... OK\r\n"
+    ".\\PAT\\ls299_func.pat(17): error C1000: pin:[DQA] Message:[There is no symbol data for IO pin ! ]\r\n"
+    ".\\PAT\\ls299_func.pat(17): error C1000: pin:[DQH] Message:[There is no symbol data for IO pin ! ]\r\n"
+    ".\\PAT\\ls299_func.pat(22): error C1000: symbol:[BOGUS_MICRO] Message:[The word cat't be recognized ! ]\r\n"
+    ".\\PAT\\ls299_func.pat(35): error C1000: symbol:[TS16] Message:[The word cat't be recognized ! ]\r\n"
+    "          Errors :  4                    Warning : 0\r\n";
+static_assert(sizeof(kPatcmpMultiErr) - 1 == 515u, "样本字节数必须是探针自报的 515");
+
+// patcmp 编译 .pat 失败：HEADER 里写了个 PIN LIST 里没有的 pin。
+// ★ 这份**没有统计行** —— 报完那一行就结束了。所以"统计行在不在"不能当成败信号。
+static const char kPatcmpHeaderErr[] =
+    "Compile .\\PAT\\ls299_func.pat   ...\r\n"
+    "Make declaration file ... OK\r\n"
+    ".\\PAT\\ls299_func.pat(3): error C1000: pin:[ZZZ] Message:[The header pin is not declared in PIN LIST or PIN GROUP]\r\n";
+static_assert(sizeof(kPatcmpHeaderErr) - 1 == 181u, "样本字节数必须是探针自报的 181");
+
+// patcmp 编译 .pat 失败：少一个大括号。★ 位置报在**文件末尾**（152），不是被删的
+// 第 149 行 —— "块没闭合"这类错的定位是**症状位置**，不是病因位置。UI 别过度相信行号。
+static const char kPatcmpBraceErr[] =
+    "Compile .\\PAT\\ls299_func.pat   ...\r\n"
+    "Make declaration file ... OK\r\n"
+    ".\\PAT\\ls299_func.pat(152): error C1000: Message:['SPM_PATTERN' unmatch]\r\n"
+    "          Errors :  1                    Warning : 0\r\n";
+static_assert(sizeof(kPatcmpBraceErr) - 1 == 193u, "样本字节数必须是探针自报的 193");
+
+// patcmp **链接**阶段失败：跳转到一个不存在的 label。
+// ★ 关键：编译那一步是**过**的（Errors : 0），错误到链接才冒出来；而且报的位置是
+//   **.pdt 中间文件**（绝对路径），不是用户写的 .pat。解析器要把它还原成 .pat。
+static const char kPatcmpLinkLabelErr[] =
+    "Start time of compilation : Sun Sep 20 05:24:14 2026\r\n"
+    "\r\n"
+    "Link .\\PAT\\ls299_func.pdt   ...\r\n"
+    "Link .\\PAT\\ls299_TMU.pdt   ...\r\n"
+    "Z:\\AI_Work\\codex\\xfsPad\\temp\\_vmcheck\\badpat_label\\PAT\\ls299_func.pdt(49): error C1000: label:[no_such_label] Message:[Used label is not defined ! ]\r\n"
+    "          Errors :  1                    Warning : 0\r\n"
+    "\r\n"
+    "End  time  of compilation : Sun Sep 20 05:24:14 2026\r\n"
+    "\r\n"
+    "Time used :  0  seconds\r\n";
+static_assert(sizeof(kPatcmpLinkLabelErr) - 1 == 408u, "样本字节数必须是探针自报的 408");
+
+// patcmp 编译 .pat **成功**（同一份工程里另一支向量）。用来对照：同一批里
+// 失败的那支报 1 个错，成功的那支报 0 个 —— 统计行的数字确实是"这一步的"。
+static const char kPatcmpOkFunc[] =
+    "Compile .\\PAT\\ls299_func.pat   ...\r\n"
+    "Make declaration file ... OK\r\n"
+    "          Errors :  0                    Warning : 0\r\n";
+static_assert(sizeof(kPatcmpOkFunc) - 1 == 120u, "样本字节数必须是探针自报的 120");
+
+static const char kPatcmpOkTmu[] =
+    "Compile .\\PAT\\ls299_TMU.pat   ...\r\n"
+    "Make declaration file ... OK\r\n"
+    "          Errors :  0                    Warning : 0\r\n";
+static_assert(sizeof(kPatcmpOkTmu) - 1 == 119u, "样本字节数必须是探针自报的 119");
+
+// plncmp 的**声明文件编译器**挂了：.dec 里 pin 名重复（手册 §2.3.2 明文说会报错）。
+// ★ 这是**第三套**消息语法：位置写成 `<< File:[…] Line:[N] Last_Token:[…] >>`，
+//   级别在**下一行**的 `Message:[…]` 里。既不是 `file(line)`，也不是 `file:line`。
+static const char kPlncmpDecDupName[] =
+    "Test Plan file compiler for CRAFT_3380_2.50 Copyright (c) 2010 CHROMA\r\n"
+    "default linked library : ws2_32.lib \r\n"
+    "Parse Plan open_short.pln : \r\n"
+    "Make Declaration File ...Compile Failed !! Exit Code(59)\r\n"
+    "Delaration file compiler for CRAFT_3380_2.50 Copyright (c) 2011 CHROMA\r\r\n"
+    "\r\r\n"
+    "<< File:[.\\PAT\\ls299_pin.dec] Line:[24] Last_Token:[;] >>\r\r\n"
+    "    Message:[Error : Duplicate Declare Pin \"QA\"]\r\r\n"
+    "\r\r\n";
+static_assert(sizeof(kPlncmpDecDupName) - 1 == 387u, "样本字节数必须是探针自报的 387");
+
+// 同上，但缺陷是**通道号重复**（把 QE 的 S0 通道改成另一个 pin 已占的 37）。
+// 这一条把工程自己的 C3380-DEC-002 规则拿到了厂商编译器的背书。
+static const char kPlncmpDecDupChan[] =
+    "Test Plan file compiler for CRAFT_3380_2.50 Copyright (c) 2010 CHROMA\r\n"
+    "default linked library : ws2_32.lib \r\n"
+    "Parse Plan open_short.pln : \r\n"
+    "Make Declaration File ...Compile Failed !! Exit Code(59)\r\n"
+    "Delaration file compiler for CRAFT_3380_2.50 Copyright (c) 2011 CHROMA\r\r\n"
+    "\r\r\n"
+    "<< File:[.\\PAT\\ls299_pin.dec] Line:[9] Last_Token:[;] >>\r\r\n"
+    "    Message:[Error(1) : PINLIST=0 PINNAME=QE Channel duplicate define!!]\r\r\n"
+    "\r\r\n";
+static_assert(sizeof(kPlncmpDecDupChan) - 1 == 410u, "样本字节数必须是探针自报的 410");
+
 static void RunParseCompilerOutput() {
     std::printf("-- RunParseCompilerOutput --\n");
 
@@ -821,6 +946,159 @@ static void RunParseCompilerOutput() {
 }
 
 // ---------------------------------------------------------------------------
+// 六之二、真机**失败**输出 —— 批次 99 的六份样本
+//
+// 批次 97 留了三个问题没答案，因为它们全都要"patcmp 真的失败一次"才能回答：
+//   ① patcmp 是停在第一个错误，还是接着数完？
+//   ② 逐条错误行长什么样、带不带可跳转的位置？
+//   ③ `Errors : N`（N > 0）到底存不存在，能不能拿它当失败信号？
+// 六份样本一次把三个都回答了（结论写在 CraftProject.cpp 里 IsCraftSummaryLine
+// 上方的注释里，这里只钉行为）。
+// ---------------------------------------------------------------------------
+static void RunRealFailureSamples() {
+    std::printf("-- RunRealFailureSamples --\n");
+    const std::wstring kRoot = L"Z:\\AI_Work\\codex\\xfsPad\\temp\\_vmcheck\\badpat_label";
+
+    {
+        // ① patcmp **不在第一个错上停**：一份文件四个缺陷，四条全列出来。
+        // ③ 统计行 `Errors : 4` 与逐条数出来的 4 完全相等。
+        const CompileOutput r = ParseCompilerOutput(kPatcmpMultiErr, kRoot);
+        CHECK(r.issues.size() == 7);      // 7 行，没有一个空行
+        CHECK(r.errorCount == 4);
+        CHECK(r.warnCount == 0);
+        CHECK(r.locatedCount == 4);
+        CHECK(r.sawAnyError);
+        CHECK(r.parsed);
+
+        // 四条诊断的位置：17 / 17 / 22 / 35（同一条 pin 错误在一行上报了两遍）
+        CHECK(r.issues[2].file == L".\\PAT\\ls299_func.pat");
+        CHECK(r.issues[2].kind == IssueKind::Error);
+        CHECK(r.issues[2].line == 17);
+        CHECK(r.issues[3].line == 17);
+        CHECK(r.issues[4].line == 22);
+        CHECK(r.issues[5].line == 35);
+
+        // 统计行原样保留，但**不带级别**（带了就会多出一条假警告）
+        CHECK(r.issues[6].kind == IssueKind::Plain);
+        CHECK(r.issues[6].line == 0);
+    }
+    {
+        // ③ 的反例，也是"不读统计行那两个数字"的真正依据：
+        // 致命错误（HEADER 里有个 PIN LIST 没声明的 pin）**整份输出里没有统计行**。
+        // 所以"有没有统计行"不能当失败信号，反过来"统计行写 0"也不能当成功信号。
+        const CompileOutput r = ParseCompilerOutput(kPatcmpHeaderErr, kRoot);
+        CHECK(r.issues.size() == 3);      // 只有 3 行 —— 第 3 行之后就没有了
+        CHECK(r.errorCount == 1);
+        CHECK(r.locatedCount == 1);
+        CHECK(r.parsed);
+        CHECK(r.issues[2].file == L".\\PAT\\ls299_func.pat");
+        CHECK(r.issues[2].line == 3);
+        CHECK(r.issues[2].kind == IssueKind::Error);
+        // 最后一行是诊断本身，不是统计行
+        CHECK(r.issues[2].text.find(L"Errors") == std::wstring::npos);
+    }
+    {
+        // ② 一条诊断可以**没有** `pin:[…]` / `symbol:[…]` 字段，只有 Message。
+        // 所以判级只看 error 整词，不去要求那个字段存在。
+        // 另外：少一个大括号，位置报在**文件末尾 152**，不是被删的第 149 行 ——
+        // "块没闭合"这类错给的是**症状位置**，UI 别过度相信这个行号。
+        const CompileOutput r = ParseCompilerOutput(kPatcmpBraceErr, kRoot);
+        CHECK(r.issues.size() == 4);
+        CHECK(r.errorCount == 1);
+        CHECK(r.locatedCount == 1);
+        CHECK(r.issues[2].file == L".\\PAT\\ls299_func.pat");
+        CHECK(r.issues[2].line == 152);
+        CHECK(r.issues[2].kind == IssueKind::Error);
+        CHECK(r.issues[2].text ==
+              L".\\PAT\\ls299_func.pat(152): error C1000: Message:['SPM_PATTERN' unmatch]");
+        CHECK(r.issues[3].kind == IssueKind::Plain);   // 统计行
+    }
+    {
+        // ② + ★ .pdt → .pat：链接阶段失败。编译那一步是**过**的（Errors : 0），
+        // 错误到链接才冒出来，而且位置指向的是 **.pdt 中间文件**（绝对路径）。
+        // 不还原成 .pat 的话，跳转要么落到二进制上、要么整个跳不成。
+        const CompileOutput r = ParseCompilerOutput(kPatcmpLinkLabelErr, kRoot);
+        CHECK(r.issues.size() == 7);      // 10 行里 3 个空行
+        CHECK(r.errorCount == 1);
+        CHECK(r.locatedCount == 1);
+        CHECK(r.parsed);
+        CHECK(r.issues[3].kind == IssueKind::Error);
+        CHECK(r.issues[3].file ==
+              L"Z:\\AI_Work\\codex\\xfsPad\\temp\\_vmcheck\\badpat_label\\PAT\\ls299_func.pat");
+        CHECK(r.issues[3].line == 49);
+        CHECK(r.issues[3].text.find(L".pdt(49)") != std::wstring::npos);   // 原文不丢
+
+        // 时间戳那两行里也有 `:` 和数字（`05:24:14`、`Time used :  0`），
+        // 但前缀既没有路径分隔符、也不以源码扩展名结尾 → 不许当成位置
+        CHECK(r.issues[0].line == 0);
+        CHECK(r.issues[0].kind == IssueKind::Plain);
+        CHECK(r.issues[6].line == 0);
+        CHECK(r.issues[6].kind == IssueKind::Plain);
+    }
+    {
+        // 同一批里的成功输出。顺带钉住 `Copyright (c) 2010 CHROMA` 里那对
+        // 字母括号 —— 括号里不是数字，不许当位置。
+        const CompileOutput r = ParseCompilerOutput(kPlncmpOk, kRoot);
+        CHECK(r.issues.size() == 17);
+        CHECK(r.errorCount == 0);
+        CHECK(r.warnCount == 0);
+        CHECK(!r.sawAnyError);
+        CHECK(!r.parsed);
+        CHECK(r.locatedCount == 0);
+    }
+    {
+        // 对照：同一批里另一支向量编译**成功**，统计行写 0，一条错都不报
+        const CompileOutput rf = ParseCompilerOutput(kPatcmpOkFunc, kRoot);
+        CHECK(rf.issues.size() == 3);
+        CHECK(rf.errorCount == 0);
+        CHECK(rf.warnCount == 0);
+        CHECK(!rf.parsed);
+        const CompileOutput rt = ParseCompilerOutput(kPatcmpOkTmu, kRoot);
+        CHECK(rt.issues.size() == 3);
+        CHECK(rt.errorCount == 0);
+        CHECK(!rt.parsed);
+    }
+    {
+        // ★ 第三套消息语法：位置在记录头 `<< File:[…] Line:[N] … >>`，
+        // 级别在**下一行**的 `Message:[…]`。
+        // 位置必须挂到带 Error 的那一行（用户会去点它），不是记录头那一行。
+        const CompileOutput r = ParseCompilerOutput(kPlncmpDecDupName, kRoot);
+        CHECK(r.issues.size() == 7);      // 9 行里 2 个空行
+        CHECK(r.errorCount == 2);         // `Compile Failed !!` 与 `Message:[Error …]`
+        CHECK(r.locatedCount == 1);
+        CHECK(r.parsed);
+
+        // 记录头那一行：认得出是记录头，但自己**不带**位置
+        CHECK(r.issues[5].kind == IssueKind::Plain);
+        CHECK(r.issues[5].line == 0);
+        CHECK(r.issues[5].text ==
+              L"<< File:[.\\PAT\\ls299_pin.dec] Line:[24] Last_Token:[;] >>");
+
+        // 紧接的下一行接住位置
+        CHECK(r.issues[6].kind == IssueKind::Error);
+        CHECK(r.issues[6].file == L".\\PAT\\ls299_pin.dec");
+        CHECK(r.issues[6].line == 24);
+    }
+    {
+        // 同上，缺陷换成"通道号重复"。工程自己的 C3380-DEC-002 规则由厂商
+        // 编译器亲自背书：`Channel duplicate define!!`。
+        // 注意 `Error(1)` —— 整词判定要认它（`(` 不是标识符字符），
+        // 但 `Error(1) :` 那对括号里是数字、后面又跟着冒号，仍然不许当位置：
+        // 括号前的 `Message:[Error` 既没有分隔符、也不以源码扩展名结尾。
+        const CompileOutput r = ParseCompilerOutput(kPlncmpDecDupChan, kRoot);
+        CHECK(r.issues.size() == 7);
+        CHECK(r.errorCount == 2);
+        CHECK(r.locatedCount == 1);
+        CHECK(r.parsed);
+        CHECK(r.issues[5].kind == IssueKind::Plain);
+        CHECK(r.issues[5].line == 0);
+        CHECK(r.issues[6].kind == IssueKind::Error);
+        CHECK(r.issues[6].file == L".\\PAT\\ls299_pin.dec");
+        CHECK(r.issues[6].line == 9);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 七、真实工程探针（回归入口）
 //
 // `test_craftproj <任意工程文件>` —— 把真实工程读成模型并打印出来。
@@ -942,6 +1220,7 @@ int wmain(int argc, wchar_t** argv) {
     RunParseArtifacts();
     RunPlanBuild();
     RunParseCompilerOutput();
+    RunRealFailureSamples();
     if (g_fail) {
         std::printf("FAILED: %d check(s)\n", g_fail);
         return 1;

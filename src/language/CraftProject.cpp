@@ -742,6 +742,48 @@ bool TryColon(const std::wstring& line, std::wstring& file, int& ln, int& col) {
     return false;
 }
 
+// `<< File:[<路径>] Line:[<N>] Last_Token:[<记号>] >>` —— CRAFT **声明文件编译器**
+// （吃 .dec 的那个子编译器）的诊断记录头。批次 99 的真机样本：
+//
+//   Make Declaration File ...Compile Failed !! Exit Code(59)
+//   Delaration file compiler for CRAFT_3380_2.50 Copyright (c) 2011 CHROMA
+//
+//   << File:[.\PAT\ls299_pin.dec] Line:[24] Last_Token:[;] >>
+//       Message:[Error : Duplicate Declare Pin "QA"]
+//
+// 这是**第三种**位置形态，和前面两种都不一样：路径与行号各自被 `[]` 包住，
+// 行号在 `Line:` 之后，行首是 `<<`。既不满足 `TryParen`（没有括号），
+// 也不满足 `TryColon`（`:` 后面跟的是 `[` 不是数字）—— 所以**不认它，
+// `.dec` 报错就没有任何跳转目标**，用户只能看着报错手动去找行。
+//
+// 形状很死（前两个标签名固定、值被 `[]` 包住、数字必须是纯数字），所以直接按
+// 形状匹配，不做"从右往左找数字"那种猜测。**认不出不跳，好过跳错**（硬约束 ③）。
+bool TryCraftDeclRecord(const std::wstring& line, std::wstring& file, int& ln) {
+    const std::size_t head = line.find(L"<<");
+    if (head == std::wstring::npos) return false;
+
+    const std::size_t fk = line.find(L"File:[", head);
+    if (fk == std::wstring::npos) return false;
+    const std::size_t fv = fk + 6;                       // 跳过 `File:[`
+    const std::size_t fe = line.find(L']', fv);
+    if (fe == std::wstring::npos) return false;
+
+    const std::size_t lk = line.find(L"Line:[", fe);     // 必须在 File 之后
+    if (lk == std::wstring::npos) return false;
+    const std::size_t lv = lk + 6;                       // 跳过 `Line:[`
+    const std::size_t le = line.find(L']', lv);
+    if (le == std::wstring::npos) return false;
+
+    const std::wstring f = TrimWide(line.substr(fv, fe - fv));
+    const std::wstring n = line.substr(lv, le - lv);
+    if (!AllDigitsW(n)) return false;
+    if (!LooksLikeSourcePath(f)) return false;
+
+    file = f;
+    ln = ParseDigits(n);
+    return true;
+}
+
 bool HasWord(const std::wstring& lower, const wchar_t* word) {
     const std::wstring w = LowerWide(word);
     std::size_t p = lower.find(w);
@@ -788,18 +830,48 @@ bool HasCountField(const std::wstring& lower, const wchar_t* word) {
 // 判定：同一行里 `errors : N` 与 `warning : M` **两个计数域都在**才算统计行。
 // 这样逐条诊断行（`demo.pat(3) : error: ...`，只有 error 一个词）不会被误吞。
 //
-// 【为什么不去读那两个数字】到批次 97 为止，**仍然没有拿到 N > 0 的统计行**：
-//   · 成功编译的统计行是 `Errors : 0  Warning : 0`（多次实测）；
-//   · 批次 97 拿到了**第一份失败输出**，但那是 plncmp 在 step 0 就挂了
-//     （MSVC 报 C2601/C1075），整条链没走到 patcmp，所以报告里根本没有统计行；
-//   · 为逼出 patcmp 失败而做的第二份注入副本（`SPM_PATTERN(func_pat, NORM, K_SET)`，
-//     手册 §3.4.1.4 明文说是 compiler error）**反而编译通过了** —— 手册那条断言
-//     被实测推翻，详见 Chroma3380Diagnostics.h 规则 4 的取证注释。
-// 所以"CRAFT 出错时统计行长什么样、是否另有逐条错误行"依然**没有样本**。既然不知道
-// 就不猜：统计行一律原样保留、不判级别、不进计数；"这一步失败了"由退出码决定
-// （BuildResult.allOk），那才是可靠信号。等拿到 N > 0 的统计行再补这一块。
+// 【为什么不去读那两个数字】批次 99 拿到了 N > 0 的统计行，样本长这样：
+//   `          Errors :  4                    Warning : 0`
+// 结论仍然是**不读**，但理由从"没有样本所以不猜"变成了三条实测依据：
+//
+//   ① 统计行**不是每次都打**。同一批六份失败副本里，`badpat_header`（HEADER 里
+//      写了个 PIN LIST 里没有的 pin）只有一行
+//      `…(3): error C1000: pin:[ZZZ] …`，后面**直接没有统计行**就结束了 ——
+//      那是一条"致命错误、立刻中止"的路径，压根走不到汇总那一步。
+//      所以"统计行存在"不能当失败信号，反过来"统计行不存在"也不能当成功信号。
+//      唯一可靠的信号还是退出码（BuildResult.allOk）。
+//   ② 逐条行自己数出来的个数**与统计行完全一致**：`badpat_multi` 一个 step 里
+//      4 条 `error C1000`，统计行就写 `Errors : 4`；`badpat_brace` / `badpat_label`
+//      各 1 条，统计行就写 `Errors : 1`。既然逐条数得出的数与厂商自报的数相等，
+//      再去解析统计行就是**同一个数的第二个来源**，多一份解析多一份出错的机会。
+//   ③ 统计行里那两个数**分不出是哪一步的**：`patcmp -c` 编译一步、`-o` 链接一步，
+//      各自打各自的统计行，而行文里没有 step 号。按行累加会重复计数。
+//
+// 所以统计行一律原样保留、不判级别、不进计数（r.issues 里仍有它，只是 kind=Plain）。
+// 这一条从"没样本所以不猜"升级成了"有样本，样本说不该读"。
+//
+// 【批次 99 顺带拿到的另外两条】
+//   · patcmp **不在第一个错误上停**：`badpat_multi` 一份文件里报了 4 条，行号
+//     17/17/22/35 全都列了出来，是一次跑完的。
+//   · 一条诊断行里 `pin:[…]` / `symbol:[…]` / `label:[…]` 这个字段**可以没有**：
+//     `'SPM_PATTERN' unmatch` 那条就只有 `Message:[…]`。所以判级只看 error 整词，
+//     不要去要求这个字段存在。
 bool IsCraftSummaryLine(const std::wstring& lower) {
     return HasCountField(lower, L"errors") && HasCountField(lower, L"warning");
+}
+
+// 链接阶段报出来的位置指向的是 **.pdt**，不是用户写的 .pat（批次 99 真机样本）：
+//   `Z:\…\badpat_label\PAT\ls299_func.pdt(49): error C1000: label:[no_such_label] …`
+// 而 .pdt 正是本文件上半部分 `MakePdtListFile` 把 .pat **换扩展名**生成出来的，
+// 所以这里就是把项目自己做过的那次改名**反过来**。不还原的话，跳转要么落在二进制
+// 中间产物上（编辑器里一屏乱码），要么因为文件不存在而整个跳不成 —— 两种都没用。
+//
+// **只改扩展名，不动行号**：样本里源文件第 49 行、报的就是 `.pdt(49)`，编号是保留的。
+// 退一步说，就算某个版本不再保留行号，这样跳到的仍然是**正确的文件**、只是行可能偏，
+// 比跳到二进制上、或者干脆不跳，都强。
+void MapPdtToPat(std::wstring& file) {
+    if (!EndsWithNoCase(file, L".pdt")) return;
+    file.replace(file.size() - 4, 4, L".pat");
 }
 
 } // namespace
@@ -822,6 +894,16 @@ bool IsCraftSummaryLine(const std::wstring& lower) {
 //    "先归一化行尾"这类动作。测试样本刻意保留了这个混用形态，用来钉住这一点。
 CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& projectRoot) {
     CompileOutput r;
+
+    // 声明文件编译器的诊断是**两行一条**（批次 99 真机样本）：
+    //     << File:[.\PAT\ls299_pin.dec] Line:[24] Last_Token:[;] >>   ← 有位置，没级别
+    //         Message:[Error : Duplicate Declare Pin "QA"]            ← 有级别，没位置
+    // 用户会去点带 Error 的那一行，所以位置得挂到它身上：记录头先把位置存起来，
+    // 交给**紧接着的那一行**。只对紧接着的一行有效 —— 用没用掉都清空，
+    // 免得一个孤立的记录头把位置漂到很远的地方去。
+    std::wstring pendFile;
+    int pendLine = 0;
+
     for (const std::string& rawLine : SplitLinesAscii(out)) {
         const std::wstring trimmed = TrimWide(Widen(rawLine));
         if (trimmed.empty()) continue;   // 空行没有信息量，不算"丢内容"
@@ -834,6 +916,8 @@ CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& pr
         // 按下面那条路走会给成功的编译挂一条假警告（见 IsCraftSummaryLine）。
         if (IsCraftSummaryLine(lower)) {
             r.issues.push_back(std::move(it));   // 原文不丢，级别保持 Plain
+            pendFile.clear();
+            pendLine = 0;
             continue;
         }
 
@@ -846,11 +930,30 @@ CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& pr
 
         std::wstring file;
         int ln = 0, col = 0;
-        if (TryParen(trimmed, file, ln, col) || TryColon(trimmed, file, ln, col)) {
+        const bool direct = TryParen(trimmed, file, ln, col) ||
+                            TryColon(trimmed, file, ln, col);
+        const bool header = !direct && TryCraftDeclRecord(trimmed, file, ln);
+
+        if (direct) {
+            MapPdtToPat(file);
             it.file = file;
             it.line = ln;
             it.column = col;
             ++r.locatedCount;
+        } else if (!header && !pendFile.empty()) {
+            it.file = pendFile;          // 接住上一条记录头的位置
+            it.line = pendLine;
+            ++r.locatedCount;
+        }
+
+        // 记录头的位置只对**紧接着的一行**有效：本行不管用没用掉都重设一次。
+        // 孤立的记录头（后面跟空行、或紧跟另一条记录头）不会把位置漂出去。
+        if (header) {
+            pendFile = file;
+            pendLine = ln;
+        } else {
+            pendFile.clear();
+            pendLine = 0;
         }
 
         if (it.kind == IssueKind::Error) { ++r.errorCount; r.sawAnyError = true; }
@@ -860,10 +963,12 @@ CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& pr
     }
     r.parsed = (r.locatedCount > 0);
     // projectRoot 仍然只用来占位，**不做**路径归一 —— 现在有样本了，样本说不需要：
-    // 实测出现的两种形态是"光秃秃的相对文件名"（`open_short.pln`，连目录都没有）与
-    // "绝对路径"（`C:\Program Files (x86)\...\xlocale`）。前者由 JumpToCompileLocation
-    // 拼到工程根上、后者直接打开，两边都已经处理好了；在这里再归一化一遍反而会把
-    // "相对/绝对"这个区别抹掉，让那一层没法按形态分流。
+    // 实测出现的形态是"光秃秃的相对文件名"（`open_short.pln`，连目录都没有）、
+    // "相对路径"（`.\PAT\ls299_func.pat`）、"绝对路径"
+    // （`C:\Program Files (x86)\...\xlocale`、`Z:\...\PAT\ls299_func.pdt`）。
+    // 前两种由 JumpToCompileLocation 拼到工程根上、绝对路径直接打开，那一层都已经
+    // 处理好了；在这里再归一化一遍反而会把"相对/绝对"这个区别抹掉，让它没法按形态分流。
+    // （批次 99 补测了"相对路径"这一种，`.\PAT\…` 就是它 —— 之前的样本里没有。）
     (void)projectRoot;
     return r;
 }
