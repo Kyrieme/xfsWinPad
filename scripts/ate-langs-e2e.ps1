@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+﻿param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 # ate-langs-e2e.ps1 - the self-built ATE ILexer5 lexers must really attach to the
 # live editor and produce the designed styles.
 #

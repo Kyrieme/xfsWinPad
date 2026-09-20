@@ -255,6 +255,16 @@ endif()
 
 add_test(NAME craftrunner COMMAND test_craftrunner)
 
+# 批次 101：CRAFT 工具链桩 —— 给 scripts/craft-e2e.ps1 当"装出来的 plncmp/patcmp"。
+# **不入 add_test**：它自己没有任何断言，被测的是 craft-e2e.ps1 那条 GUI 链路
+# （与下面 dump_nppexec 同理）。样本与退出码由脚本写到桩旁边，见 craft_stub.cpp 文件头。
+add_executable(craft_stub craft_stub.cpp)
+
+target_compile_definitions(craft_stub PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(craft_stub PRIVATE /utf-8 /W3)
+endif()
+
 add_executable(test_shortcut test_shortcut.cpp
     ../src/shortcut/ShortcutTable.cpp
     ../src/core/Util.cpp)

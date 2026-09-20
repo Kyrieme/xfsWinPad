@@ -1,4 +1,4 @@
-param([string]$Exe = "")
+﻿param([string]$Exe = "")
 # chroma-e2e.ps1 - Batch 73 end-to-end: the Chroma 3380 language pack and the
 # signature hint, against a REAL xfsWinPad.exe.
 #

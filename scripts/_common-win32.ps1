@@ -23,6 +23,7 @@ public static class WIN {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r);
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
     [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);

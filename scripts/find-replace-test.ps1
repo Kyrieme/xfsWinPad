@@ -1,4 +1,4 @@
-# find-replace-test.ps1 - functional verification of the NP++-style search suite:
+﻿# find-replace-test.ps1 - functional verification of the NP++-style search suite:
 # tabbed Find/Replace dialog, find-next, find-all-in-open-files results panel,
 # double-click locate path, and replace-all-in-open-files.
 param([Parameter(Mandatory=$true)][string]$ExePath)

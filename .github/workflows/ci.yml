@@ -65,6 +65,23 @@ jobs:
           python scripts/check-command-ids.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # PowerShell 5.1 decodes a .ps1 that has no BOM using the *system ANSI
+      # code page*, not UTF-8. A UTF-8 comment can then shift byte parity and
+      # swallow the line's newline, merging the next line into the comment -
+      # which surfaces as a phantom syntax error reported on a line that does
+      # not contain the offending token (batch 101: "unexpected }" on a line
+      # with no brace, fixed only by making the comments ASCII again).
+      # Rule enforced: a script with any non-ASCII byte must start with a
+      # UTF-8 BOM (or be pure ASCII).
+      - name: Script encoding guard
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/check-script-encoding.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # The sensitive word list is deliberately NOT stored in this repo, so the
       # scan materialises it from a repository secret for this step only.
       # Without the secret it skips itself (never fails the build).

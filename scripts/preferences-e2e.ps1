@@ -1,4 +1,4 @@
-# preferences-e2e.ps1 - end-to-end smoke for the Preferences dialog (stage 1).
+﻿# preferences-e2e.ps1 - end-to-end smoke for the Preferences dialog (stage 1).
 #
 # 1) launch app, 2) WM_COMMAND(Cmd::Preferences=880) to open 首选项,
 # 3) assert the dialog window exists, 4) WM_COMMAND(IDC_CANCEL=3203) to close,

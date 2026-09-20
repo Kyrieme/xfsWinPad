@@ -1,4 +1,4 @@
-# live-inspect.ps1 - capture and analyze the RUNNING user instance's dialog.
+﻿# live-inspect.ps1 - capture and analyze the RUNNING user instance's dialog.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type @"

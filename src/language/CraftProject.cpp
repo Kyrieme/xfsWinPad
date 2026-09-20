@@ -887,9 +887,11 @@ void MapPdtToPat(std::wstring& file) {
 //    而 GBK 的**尾字节**（0x40..0xFE）虽可落在 ASCII 区间，却不会落在
 //    `(` `)` `:` 与数字上（它们都 < 0x40）—— 实测这份样本里 0 个尾字节落在 ASCII 区间。
 //
-// 2) 行尾：**同一份输出里两种行尾混用**。CRAFT 自己打的行走 `\r\n`；它中继 cl.exe 的
-//    那一段（从 `----[Current Compiler ...]----` 开始）走 `\r\r\n` —— 因为 cl.exe 输出
-//    本就带 `\r\n`，再经一次文本模式写出时 `\n` 又被展开成 `\r\n`。
+// 2) 行尾：**同一份输出里两种行尾混用**。CRAFT 自己打的行走 `\r\n`；凡是被它**中继**
+//    的子进程输出都走 `\r\r\n` —— 因为子进程输出本就带 `\r\n`，再经一次文本模式写出时
+//    `\n` 又被展开成 `\r\n`。触发条件是"中继"这个动作，**跟是哪个子进程无关**：
+//    批次 97 的样本里是 cl.exe（从 `----[Current Compiler ...]----` 起），批次 99 的
+//    `kPlncmpDecDupName` 里是**声明文件编译器**，而那份样本里根本没有那行分节线。
 //    SplitLinesAscii 只剥一个 `\r`、TrimWide 再剥掉剩下的空白，所以这里不需要
 //    "先归一化行尾"这类动作。测试样本刻意保留了这个混用形态，用来钉住这一点。
 CompileOutput ParseCompilerOutput(const std::string& out, const std::wstring& projectRoot) {
