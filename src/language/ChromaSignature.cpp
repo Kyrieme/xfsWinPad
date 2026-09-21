@@ -203,5 +203,57 @@ bool SignatureArgRange(const std::string& sig, int index, int& start, int& end) 
     return false;
 }
 
+// ---- 批次 103：悬停气泡文案 -------------------------------------------------
+//
+// 【它和签名气泡的分工】
+//   签名气泡（SCI_CALLTIPSHOW）是**打字时**的提示：告诉你「现在在第几个参数」，
+//   并高亮它。悬停气泡是**读代码时**的提示：告诉你「这条语句整体是干什么的」。
+//   两者都读 kStatements 的同一份手册原文，但触发时机与信息层级不同，因此不共用
+//   同一个窗口——打字时弹一个「语句整体说明」会把参数提示挤掉。
+//
+// 【「有哪个显示哪个」，不是「没签名就不显示」】
+//   实测 309 条语句里有 51 条**没有签名**（CRAFT 宏、`SET_DEC_FILE`、`GLOBAL`、
+//   RF_Initialize …），而它们**全部都有说明**。早期版本写的是「没签名 → 不出
+//   气泡」，那会让悬停在这 51 条上时什么都不弹 —— 用户看不出这是「手册没写语法」
+//   还是「编辑器不认识这个词」，功能等于悄悄少了一块。所以四种组合都要给出文案：
+//     签名 + 说明 → `签名;//说明`   （用户点名的形态）
+//     只有签名    → `签名`
+//     只有说明    → `说明`
+//     两者皆无    → false（全库 0 条，留着是为了将来手册改版时不出空气泡）
+bool BuildHoverTip(const char* name, std::size_t len, std::string& out) {
+    const StatementDef* st = FindStatement(name, len);
+    if (!st) return false;
+
+    const char* sig = st->signature ? st->signature : "";
+    const char* desc = st->desc ? st->desc : "";
+    if (!*sig && !*desc) return false;
+
+    // 手册把分号排成 `... wait_time) ;`（分号前带一个空格）。目标形态是
+    // `... wait_time);//说明`，所以先摘掉行尾空白与那**一个**分号，再统一拼 `;//`。
+    // 只摘一个：块语句签名形如 `SOCKET_INC [...] {`，本就没有分号。
+    std::string s(sig);
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    const bool hadSemi = !s.empty() && s.back() == ';';
+    if (hadSemi) {
+        s.pop_back();
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    }
+
+    // 签名里带 `//` → 它**不是**一行语法，而是把手册 Format 块连同参数注释一起
+    // 抽了进来（手册在该处印着 `//0: load board 1:remote board`）。照抄给用户只是
+    // 噪声（实测 FORCE_VOLT 的签名有 1367 字符），所以丢掉签名只留说明。
+    // 全库只有 2 条命中，且这两条的 kStmtPositional 本来就没置位——用的是既有信号，
+    // 不是新加的一条长度阈值。
+    if (s.find("//") != std::string::npos) s.clear();
+
+    out.assign(s);
+    if (*desc) {
+        // 只有说明时不要以分隔符开头（`;//说明` 会很怪）
+        if (!out.empty()) out += hadSemi ? ";//" : "//";
+        out += desc;
+    }
+    return !out.empty();
+}
+
 } // namespace chroma3380
 } // namespace xfs

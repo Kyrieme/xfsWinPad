@@ -174,6 +174,20 @@ std::wstring IncompatReasonText(const std::wstring& token,
     if (token == L"export") return Tr(L"plugadmin.incompat.export");
     if (token == L"ansi")  return Tr(L"plugadmin.incompat.ansi");
     if (token == L"fatal") return Tr(L"plugadmin.incompat.fatal");
+    // ---- 进程外隔离（**加载成功**，只是换到代理进程跑）----
+    if (token == L"oop-forced") return Tr(L"plugadmin.incompat.oop-forced");
+    if (token == L"oop-auto")   return Tr(L"plugadmin.incompat.oop-auto");
+    // ---- 代理侧失败 ----
+    // 这些令牌此前一律落到通用「加载失败」，用户看不出问题出在代理进程上。
+    if (token == L"oop-host")        return Tr(L"plugadmin.incompat.oop-host");
+    if (token == L"oop-spawn")       return Tr(L"plugadmin.incompat.oop-spawn");
+    if (token == L"oop-load")        return Tr(L"plugadmin.incompat.oop-load");
+    if (token == L"oop-ansi")        return Tr(L"plugadmin.incompat.oop-ansi");
+    if (token == L"oop-export")      return Tr(L"plugadmin.incompat.oop-export");
+    if (token == L"oop-fault")       return Tr(L"plugadmin.incompat.oop-fault");
+    if (token == L"oop-reject")      return Tr(L"plugadmin.incompat.oop-reject");
+    if (token == L"oop-died")        return Tr(L"plugadmin.incompat.oop-died");
+    if (token == L"oop-unavailable") return Tr(L"plugadmin.incompat.oop-unavailable");
     return Tr(L"plugadmin.incompat.load");
 }
 
@@ -227,6 +241,17 @@ void BuildRows(State& st) {
                 r.name = std::filesystem::path(f.path).filename().wstring();
                 r.versionText = IncompatReasonText(f.reason, f.path);
                 r.desc = f.path;
+                st.rows.push_back(std::move(r));
+            }
+            // 进程外隔离成功的插件追加在后：它们**不是失败**（加载成功，只是
+            // 换到代理进程跑），但用户需要看得见——否则「第一次打不开、第二次
+            // 莫名其妙好了」就成了无解释的玄学。原因列区分自动/指定两种。
+            for (const auto& s : st.mgr->IsolatedPlugins()) {
+                Row r;
+                r.folder = s.path;
+                r.name = std::filesystem::path(s.path).filename().wstring();
+                r.versionText = IncompatReasonText(s.reason, s.path);
+                r.desc = s.path;
                 st.rows.push_back(std::move(r));
             }
             break;
@@ -403,9 +428,20 @@ void SwitchPage(State& st, int page) {
     ::EnableWindow(st.hMain, !incompatible);
     ::ShowWindow(st.hList, SW_SHOW);   // 不兼容页也显示列表（可能为空）
     BuildRows(st); RefillList(st);
-    if (incompatible)
-        SetStatus(st, st.rows.empty() ? Tr(L"plugadmin.incompat.empty")
-                                      : Tr(L"plugadmin.incompat.note"));
+    if (incompatible) {
+        // 本页现在承载两类行：加载被拒 + 已隔离到独立进程运行。状态行要同时
+        // 说清两者数量，否则「第一次打不开、第二次自己好了」依旧无解释。
+        const size_t nFail = st.mgr ? st.mgr->LoadFailures().size() : 0;
+        const size_t nIso  = st.mgr ? st.mgr->IsolatedPlugins().size() : 0;
+        if (nFail == 0 && nIso == 0) {
+            SetStatus(st, Tr(L"plugadmin.incompat.empty"));
+        } else if (nIso == 0) {
+            SetStatus(st, Tr(L"plugadmin.incompat.note"));
+        } else {
+            SetStatus(st, I18n::Instance().Fmt(L"plugadmin.incompat.note.isolated",
+                       { std::to_wstring(nFail), std::to_wstring(nIso) }));
+        }
+    }
     else
         SetStatus(st, L"");
 }

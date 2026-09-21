@@ -2,6 +2,7 @@
 //                     批次 77：追加语句名补全的候选生成（顺序/范围/位置判定）。
 //                     批次 78：追加"接受语句名后要不要补 `(`"的书写形态判定。
 //                     批次 79：签名抽取取页窗口/标题前瞻修好后，翻面 RELAY_ON 等绊线。
+//                     批次 103：追加悬停气泡文案（手册签名 + 手册说明）的断言。
 //
 // 【为什么这段逻辑值得单独钉测试】
 //   它最容易出的是**静默错**：少算一个逗号，下拉框就会把 A 参数的档位表挂到 B
@@ -47,6 +48,25 @@ static std::string EnumOf(const ParamDef* p) {
         out += kValues[p->valStart + i];
     }
     return out;
+}
+
+// ---- 安全的前缀 / 后缀比较（批次 103）----------------------------------------
+//
+// 【为什么不用 std::string::compare 直接比】
+//   它越界会抛 std::out_of_range。在测试里这比断言失败**糟糕得多**：进程直接
+//   终止，连前面已经 printf 出来的 FAIL 都因为缓冲区没刷新而看不到，只留下一个
+//   空的输出和一个莫名其妙的退出码（批次 103 实际踩过：一个越界的 compare 把
+//   "16 个断言失败" 变成了"什么都没有"）。
+//   测试里的比较器必须"永不抛"，只回答 true/false。
+static bool HasPrefixAt(const std::string& s, std::size_t pos,
+                        const std::string& what) {
+    if (pos > s.size() || s.size() - pos < what.size()) return false;
+    return s.compare(pos, what.size(), what) == 0;
+}
+
+static bool HasSuffix(const std::string& s, const std::string& what) {
+    return s.size() >= what.size() &&
+           s.compare(s.size() - what.size(), what.size(), what) == 0;
 }
 
 // ---- 1) 手册里那两个参数的真实候选值（用户点名要的功能）---------------------
@@ -603,6 +623,144 @@ static void RunFamilyRanges() {
     }
 }
 
+// ---- 批次 103：悬停气泡文案 --------------------------------------------------
+//
+// 【为什么期望值是一整句，而不是「非空」】
+//   气泡文案是**直接给用户看的手册原文**。抽错的表现不是崩溃，而是让人读到
+//   半句话、或者读到页眉页码——只断言"非空"这两种错都照样通过。
+static void RunHoverTip() {
+    std::string out;
+
+    // 用户点名的例子（手册 4.10.1 FORCE_V_PPMU）。
+    // 手册签名印的是 `... wait_time) ;`，分号前那个空格被摘掉，好让 `;//` 连成
+    // 一串——这正是用户给的形态。
+    CHECK(BuildHoverTip("FORCE_V_PPMU", 12, out));
+    CHECK(out ==
+          "FORCE_V_PPMU(pin_name, f_volt, v_range, I_range, I_clamp, wait_time)"
+          ";//This statement sets the Per-pin PMU in voltage force mode, and "
+          "programs the Voltage conditions.");
+
+    // 大小写不敏感（FindStatement 的口径：用户在代码里大小写写错也要能提示）
+    std::string lower;
+    CHECK(BuildHoverTip("force_v_ppmu", 12, lower));
+    CHECK(lower == out);
+
+    // 未收录 / 空串 → 不出气泡，且 out **不被改动**：调用方只看返回值决定显示
+    // 与否，顺手清空 out 会让上一次的文案在别处复活。
+    std::string keep = "SENTINEL";
+    CHECK(!BuildHoverTip("NOT_A_REAL_STATEMENT", 20, keep));
+    CHECK(keep == "SENTINEL");
+    CHECK(!BuildHoverTip("", 0, keep));
+    CHECK(keep == "SENTINEL");
+
+    // 悬停在半个词上不算命中：多一个字符、少一个字符都必须落空。
+    // （取词本身用 Scintilla 的词边界，这里守的是「按长度严格比对」这一半）
+    CHECK(!BuildHoverTip("FORCE_V_PPM", 11, keep));
+    CHECK(!BuildHoverTip("FORCE_V_PPMUX", 13, keep));
+    CHECK(keep == "SENTINEL");
+
+    // 只有说明、没有签名的语句（实测 51 条：CRAFT 宏 / SET_DEC_FILE / RF_* …）。
+    // 不能以分隔符开头，也不能什么都不弹——那会让用户分不清「手册没写语法」
+    // 还是「编辑器不认识这个词」。
+    std::string noSig;
+    CHECK(BuildHoverTip("RF_Initialize", 13, noSig));
+    CHECK(noSig.find(";//") == std::string::npos);
+    // 逐字节比：这句里带弯引号（U+201C/U+201D），顺带守住「非 ASCII 从手册
+    // 一路活到 C++ 字面量」这条链（生成器转义 + /utf-8 编译）。
+    CHECK(noSig ==
+          "The statement, RF_Initialize will initial the RF Subsystem. "
+          "It is recommended put in “START_UP” sub-function.");
+
+    std::string macro;
+    CHECK(BuildHoverTip("TEST_LOT_ID", 11, macro));
+    CHECK(macro.find(";//") == std::string::npos);
+    CHECK(macro.find("LOD_ID") != std::string::npos);   // 手册原文的拼写，照抄
+
+    // 有签名、手册没写说明的 2 条：只给签名，不留悬空的 `;//`
+    std::string sigOnly;
+    CHECK(BuildHoverTip("CRAFT_c_get_brd_type", 20, sigOnly));
+    CHECK(sigOnly == "CRAFT_c_get_brd_type(int &io_brd_type)");
+    CHECK(sigOnly.find(";//") == std::string::npos);
+
+    // 签名里带手册的**参数注释**（`//`）→ 它不是一个语法行，丢掉签名只留说明。
+    // 规则存在的理由：FORCE_VOLT 的签名有 1367 字符，里面全是 `//0: load board`
+    // 这类注释，照抄给用户是一堵墙。
+    const StatementDef* fv = FindStatement("FORCE_VOLT", 10);
+    CHECK(fv != nullptr);
+    std::string polluted;
+    CHECK(BuildHoverTip("FORCE_VOLT", 10, polluted));
+    CHECK(fv && fv->desc && *fv->desc);
+    if (fv && fv->desc) CHECK(polluted == fv->desc);
+    CHECK(polluted.find("//") == std::string::npos);
+
+    // ---- 全库自洽 ------------------------------------------------------------
+    // 防的是**整体性失效**：抽取脚本哪天把说明全抽空、或生成器漏掉一整列，
+    // 单看一两条用例是看不出来的。这里对 309 条逐条核对文案与手册数据的结构关系。
+    //
+    // 判据只用两条**互相独立**的观察：「说明必须是文案的结尾」+「签名必须是
+    // 文案的开头（其后紧跟分隔符）」。两者合起来就唯一确定了文案，不必在测试里
+    // 把实现的拼装规则再抄一遍。
+    int tip = 0, withSig = 0, withDesc = 0, sigDropped = 0;
+    for (int i = 0; i < kStatementCount; ++i) {
+        const StatementDef& s = kStatements[i];
+        std::string t;
+        const bool got = BuildHoverTip(s.name, std::strlen(s.name), t);
+        const bool hasDesc = s.desc && *s.desc;
+
+        CHECK(got);                     // 全库 309 条都该有文案
+        if (!got) continue;
+        ++tip;
+        CHECK(!t.empty());
+        CHECK(t.find('\n') == std::string::npos);    // 单行（折行交给气泡控件）
+        CHECK(t.find('\r') == std::string::npos);
+        CHECK(t.find("  ") == std::string::npos);    // 说明已做空白折叠
+
+        if (hasDesc) {
+            ++withDesc;
+            CHECK(HasSuffix(t, s.desc));   // 原文照抄、不截断：必须是文案的结尾
+        }
+
+        // 签名可用 = 有签名，且没把手册 Format 块里的参数注释（`//`）一起抽进来
+        const bool sigUsable = s.signature && *s.signature &&
+                               std::strstr(s.signature, "//") == nullptr;
+        if (!sigUsable) {
+            if (s.signature && *s.signature) ++sigDropped;
+            if (hasDesc) CHECK(t == s.desc);   // 签名丢了 → 文案就是说明本身
+            continue;
+        }
+        ++withSig;
+
+        std::string head(s.signature);
+        while (!head.empty() && (head.back() == ' ' || head.back() == '\t'))
+            head.pop_back();
+        const bool semi = !head.empty() && head.back() == ';';
+        if (semi) {
+            head.pop_back();
+            while (!head.empty() && (head.back() == ' ' || head.back() == '\t'))
+                head.pop_back();
+        }
+        CHECK(!head.empty());
+        CHECK(HasPrefixAt(t, 0, head));
+        if (hasDesc) {
+            // 分隔符要**按位置**比，不能用 t.find("//")：签名本身可能含 `//`
+            //（FORCE_VOLT 的 Format 块里印着 `//0: load board`），find 会先撞上它。
+            const std::string sep = semi ? ";//" : "//";
+            CHECK(HasPrefixAt(t, head.size(), sep));
+        } else {
+            CHECK(t == head);   // 没说明 → 文案就是签名本身
+            CHECK(t.find(";//") == std::string::npos);
+        }
+    }
+    // 数字写死：说明抽取的覆盖面一旦变了就该有人来看一眼
+    //（手册抽取脚本会同时留一份逐条复核清单，供人工扫一遍短得可疑的说明）。
+    // withSig 比 309 少 53 条 = 51 条没有签名 + 2 条签名里带参数注释（`//`）
+    // 被丢掉（FORCE_VOLT / CRAFT_c_get_load_board_id），后者落在「只显示说明」那类。
+    CHECK(tip == 309);
+    CHECK(withSig == 256);
+    CHECK(withDesc == 307);
+    CHECK(sigDropped == 2);
+}
+
 int main() {
     printf("== test_chromasig ==\n");
     RunForceVMldps();
@@ -617,6 +775,7 @@ int main() {
     RunExtraWords();            // 批次 77
     RunWantsParen();            // 批次 78
     RunDataIntegrity();
+    RunHoverTip();              // 批次 103
     if (g_fail) {
         printf("FAILED: %d check(s)\n", g_fail);
         return 1;

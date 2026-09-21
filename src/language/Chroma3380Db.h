@@ -10,7 +10,7 @@
 // 【数据布局：三个扁平池】
 //   kValues     候选值字符串池（去重）
 //   kParams     参数槽：名称 / 手册默认值 / 值区间 / 可选与枚举标记
-//   kStatements 语句：名称 / 章节 / 手册签名 / 参数区间
+//   kStatements 语句：名称 / 章节 / 手册签名 / 手册说明 / 参数区间
 //   用扁平池而不是「每条语句一个 static 数组」，是因为候选值跨族高度复用
 //   （ON/OFF、AVE/RMS 各有几十处引用），数组化会产生大量重复符号。
 
@@ -45,6 +45,9 @@ struct StatementDef {
     const char* name;
     const char* section;   // 手册章节号，便于回溯与「跳到手册」功能
     const char* signature; // 手册原文签名（用于签名提示的展示文案）
+    // 手册原文说明（悬停气泡的文案）。"" = 手册该节确实没写说明，
+    // 不是抽取失败：调用方此时只显示签名。
+    const char* desc;
     int         paramStart;
     int         paramCount;
     unsigned    flags;     // StmtFlag 位或
@@ -75,7 +78,7 @@ extern const char* const kPatModuleWords;  // .pat 模块语句
 extern const char* const kPatMicroWords;   // .pat 微指令
 
 // 按名查语句（大小写不敏感）。未收录返回 nullptr。
-// 线性扫描是够的：只在「签名提示」触发时调用一次，315 条量级可忽略。
+// 线性扫描是够的：只在「签名提示」「悬停气泡」触发时各调用一次，315 条量级可忽略。
 const StatementDef* FindStatement(const char* name, std::size_t len);
 
 } // namespace chroma3380

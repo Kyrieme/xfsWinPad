@@ -140,6 +140,13 @@ public:
     // 最近一次 LoadAll/LoadAllFrom 的加载失败清单（不兼容页数据源）
     const std::vector<PluginLoadFailure>& LoadFailures() const { return failures_; }
 
+    // 以进程外方式加载成功的插件清单（不兼容页在失败行之后追加展示）。
+    // ★ 与 failures_ **分开**：隔离是「加载成功了，只是换个进程跑」，
+    // 不是失败。混进失败账本会让「不兼容」页说谎。
+    // reason 令牌：oop-forced（用户写进 plugin_oop.txt 指定）/
+    //              oop-auto（曾杀死宿主被断路器墓碑后自动隔离）。
+    const std::vector<PluginLoadFailure>& IsolatedPlugins() const { return isolated_; }
+
     // Dispatch: returns true + invokes the plugin callback if `id` is a plugin
     // command. Returns false for built-in ids. Runs on the UI thread.
     bool Execute(unsigned int id);
@@ -253,6 +260,7 @@ private:
     std::vector<Loaded> loaded_;
     std::deque<PluginCommand> commands_;
     std::vector<PluginLoadFailure> failures_;   // LoadAll 失败记录（每次扫描重置）
+    std::vector<PluginLoadFailure> isolated_;   // 进程外加载成功记录（每次扫描重置）
     std::function<void()> onChanged_;           // LoadNew 成功加载后通知 UI 重建菜单
     std::wstring pendingFailReason_;            // 分支内置的原因令牌（abi/export/ansi）
     int lastLoadGle_ = 0;                       // 最近一次 LoadLibrary 的 GLE
@@ -266,8 +274,10 @@ private:
     std::unique_ptr<OopHost> oopOwned_;         // EnableOopHost() 创建
     OopHost* oopHost_ = nullptr;                // = oopOwned_.get()（空 = 未启用）
 
-    // 墓碑插件的进程外加载尝试（OopHost 未启用时返回 false）
-    bool TryOopLoad(const std::wstring& path);
+    // 进程外加载尝试（OopHost 未启用时返回 false）。reason 是成功时记入
+    // isolated_ 的令牌（oop-auto 墓碑自动隔离 / oop-forced 用户指定），
+    // 同时用于日志——否则强制隔离的插件会被日志说成"tombstoned"。
+    bool TryOopLoad(const std::wstring& path, const wchar_t* reason);
 };
 
 } // namespace xfs

@@ -75,6 +75,13 @@ bool Editor::Create(HWND parent, HINSTANCE hInst) {
     }
     ::SetWindowSubclass(hwnd_, EditorKeyProc, kEditorSubclassId, (DWORD_PTR)this);
     ApplyDefaultStyle(::GetDpiForWindow(parent));
+
+    // 批次 103：悬停气泡的触发延时。
+    // ★ Scintilla 的 dwellDelay 默认是 TimeForever（Editor.cxx:147），也就是
+    //   **永远不会发 SCN_DWELLSTART**。不显式设这个值，整套悬停功能会安静地完全
+    //   不工作——编译过、测试过、运行时不报任何东西。这是本功能唯一的"开关"。
+    //   600ms 是「确实停住了」与「只是划过」的分界；再短会在正常移动鼠标时误弹。
+    Send(SCI_SETMOUSEDWELLTIME, 600);
     return true;
 }
 
@@ -92,6 +99,12 @@ LRESULT CALLBACK Editor::EditorKeyProc(HWND h, UINT msg, WPARAM wp, LPARAM lp,
         self->CompleteAfterStatementAccepted();
         return 0;
     }
+
+    // 批次 103：任何键盘输入或滚轮都收起悬停气泡。
+    // 滚轮这一路尤其必要——鼠标没动，Scintilla 就不会发 SCN_DWELLEND，气泡会停在
+    // 原来的屏幕位置上，指着一段已经滚走的文字。
+    if (msg == WM_CHAR || msg == WM_KEYDOWN || msg == WM_MOUSEWHEEL)
+        self->HideHoverTip();
 
     // macro recording hook (before any handling so all input is captured)
     if (self->keyHookFn_) {
@@ -1191,6 +1204,10 @@ constexpr int kStmtCompleteMax = 400;
 // 已经不是人手写的，判为「不在实参里」不出提示即可（ChromaSignature 同此口径）。
 constexpr sptr_t kSigScanWindow = 4096;
 
+// 批次 103：悬停气泡在 tooltip 控件里的工具号。每个编辑器一个独立窗口、只挂一个
+// 工具，所以取 1 就够。
+constexpr UINT_PTR kHoverTipId = 1;
+
 }  // namespace
 
 bool Editor::HandleSignatureHint() {
@@ -1320,6 +1337,163 @@ void Editor::CancelSignatureHint() {
     sigTipStmt_ = nullptr;
     sigTipParam_ = -1;
     sigTipPos_ = -1;
+}
+
+// 把气泡文案按**像素**折行，用的是气泡自己的字体。
+//
+// 【为什么不能只靠 TTM_SETMAXTIPWIDTH 让它自己折】
+//   实测（批次 103 真机截图）：设了 maxwidth = 700 物理像素，
+//   气泡**确实**折成了两行，但第一行是从**词中间被裁掉**的——
+//   `…sets the Per-pin PMU in voltag`，后面 `e ` 直接不见了。
+//   即"折行宽度"和"窗口宽度"在原生 tracking tooltip 上不是同一个数，靠它折不可靠，
+//   而且**裁掉的是内容、不报任何错**。309 条语句的文案中位数 160 字符、79% 超过
+//   96 字符 ⇒ 靠不住就等于大多数气泡都缺字。
+//   所以：自己折好、用 \r\n 显式给出行边界，再把 TTM_SETMAXTIPWIDTH 设得足够大
+//   让它**不要**二次折行（二次折行正是裁切的来源）。
+//
+// 【为什么按像素而不是按字符数】
+//   字符数只有在等宽字体下才等于像素。气泡用的是系统 tooltip 字体，它随 DPI 缩放；
+//   按字符数折，换个 DPI 就重新出现裁切。量一次宽最稳，代价是几行 GDI。
+static std::wstring WrapBalloonText(HWND tip, const std::wstring& text, int maxPx)
+{
+    if (maxPx <= 0) return text;
+    HDC hdc = ::GetDC(tip);
+    if (!hdc) return text;
+    HFONT font = (HFONT)::SendMessageW(tip, WM_GETFONT, 0, 0);
+    HGDIOBJ oldFont = font ? ::SelectObject(hdc, font) : nullptr;
+
+    auto width = [&](const std::wstring& s) -> int {
+        SIZE sz{};
+        if (!::GetTextExtentPoint32W(hdc, s.c_str(), (int)s.size(), &sz)) return 0;
+        return (int)sz.cx;
+    };
+
+    std::wstring out, line;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        std::size_t j = i;
+        while (j < text.size() && text[j] != L' ') ++j;
+        std::wstring word = text.substr(i, j - i);
+        i = j;
+        while (i < text.size() && text[i] == L' ') ++i;   // 吃掉词间空格
+
+        // 整段没有空格的超长"词"（例如一串参数）：按像素硬切，别让它撑破屏幕。
+        while (width(word) > maxPx && word.size() > 1) {
+            std::size_t k = word.size();
+            while (k > 1 && width(word.substr(0, k)) > maxPx) --k;
+            if (!line.empty()) { out += line; out += L"\r\n"; line.clear(); }
+            out += word.substr(0, k);
+            out += L"\r\n";
+            word = word.substr(k);
+        }
+        if (word.empty()) continue;
+
+        if (line.empty()) {
+            line = word;
+        } else if (width(line + L" " + word) > maxPx) {
+            out += line;
+            out += L"\r\n";
+            line = word;
+        } else {
+            line += L" ";
+            line += word;
+        }
+    }
+    out += line;
+    if (oldFont) ::SelectObject(hdc, oldFont);
+    ::ReleaseDC(tip, hdc);
+    return out;
+}
+
+// ---- 批次 103：Chroma 3380 语句的悬停气泡 ------------------------------------
+//
+// 【为什么不用 Scintilla 自带的 calltip（SCI_CALLTIPSHOW）】
+//   1) 在 Scintilla 里 calltip 与补全下拉**互斥**（AutoCompleteStart() 第一行
+//      ct.CallTipCancel()、CallTipShow() 第一行 ac.Cancel()，见 HandleSignatureHint
+//      里的说明）。悬停气泡虽然多半出现在没打字的时候，但只要用户在下拉还开着时
+//      把鼠标停住，就会把下拉顶掉——那等于在惩罚"移动鼠标"这个动作。
+//   2) calltip 的宽度按最长行算。手册说明中位数 99 字符、用户点名的 FORCE_V_PPMU
+//      是 166 字符，会拉出一条横跨屏幕的窄带；原生 tooltip 可以自己折行（但**不能
+//      指望 TTM_SETMAXTIPWIDTH**，见 WrapBalloonText 的说明），那才是"气泡"的样子。
+//   3) 原生 tooltip 不抢焦点、不参与编辑器的键盘状态，SCN_DWELLEND 一到就收，
+//      语义正好是"悬停"。
+//
+// 【触发链】SCI_SETMOUSEDWELLTIME（在 Create 里设，见那里的说明）→ Scintilla 的
+//   dwell 计时器 → SCN_DWELLSTART → MainWindow 的 WM_NOTIFY 分发 → 这里。
+void Editor::HandleDwellStart(int x, int y) {
+    if (!hwnd_ || !IsChroma3380Lexer(lexerName_)) return;
+
+    const sptr_t pos = Send(SCI_POSITIONFROMPOINTCLOSE, (uptr_t)x, (LPARAM)y);
+    if (pos < 0) { HideHoverTip(); return; }
+
+    // 取词交给 Scintilla 自己的词边界：`FORCE_V_PPMU` 里的下划线、以及紧跟其后的
+    // `(`，只有 Scintilla 的词表口径说得准。判据那一半在 chroma3380::BuildHoverTip
+    // 里（纯函数、有单测），这里只负责"鼠标压着的是哪个词"。
+    const sptr_t ws = Send(SCI_WORDSTARTPOSITION, (uptr_t)pos, 1);
+    const sptr_t we = Send(SCI_WORDENDPOSITION, (uptr_t)pos, 1);
+    // 64 = FindStatement 的长度上限。超过它一定不是语句名（长路径 / 长数字之类），
+    // 先挡掉可以省一次取文本。
+    if (we <= ws || (we - ws) > 64) { HideHoverTip(); return; }
+
+    std::string word((size_t)(we - ws), '\0');
+    Sci_TextRangeFull tr{};
+    tr.chrg.cpMin = (Sci_Position)ws;
+    tr.chrg.cpMax = (Sci_Position)we;
+    tr.lpstrText = word.data();
+    Send(SCI_GETTEXTRANGEFULL, 0, (LPARAM)&tr);
+
+    std::string tip;
+    if (!chroma3380::BuildHoverTip(word.c_str(), word.size(), tip)) {
+        HideHoverTip();     // 不是已收录的语句名 → 不出气泡（也别弹空的）
+        return;
+    }
+
+    const int dpi = ::GetDpiForWindow(hwnd_);
+    if (!hoverTip_) {
+        // 懒创建：非 Chroma 语言的文档永远走不到这一行，没必要给每个标签都建窗口。
+        hoverTip_ = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+                                      WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                                      0, 0, 0, 0, hwnd_, nullptr,
+                                      ::GetModuleHandleW(nullptr), nullptr);
+        if (!hoverTip_) return;
+        // 给控件的 maxwidth 要**足够大**：折行由我们自己做（WrapBalloonText）。
+        // 这里要是设成"我们希望的宽度"，控件会二次折行，而二次折行会把词从中间裁掉。
+        ::SendMessageW(hoverTip_, TTM_SETMAXTIPWIDTH, 0, MulDiv(1600, dpi, 96));
+        // 悬停时不要自己消失（默认几秒就没了，用户还没读完）
+        ::SendMessageW(hoverTip_, TTM_SETDELAYTIME, TTDT_AUTOPOP,
+                       MAKELPARAM(60000, 0));
+    }
+
+    hoverText_ = WrapBalloonText(hoverTip_, Utf8ToWide(tip), MulDiv(560, dpi, 96));
+    TOOLINFOW ti{};
+    ti.cbSize = sizeof(ti);
+    ti.uFlags = TTF_TRACK | TTF_ABSOLUTE;
+    ti.hwnd = hwnd_;
+    ti.uId = kHoverTipId;
+    ti.lpszText = hoverText_.data();   // 每次都要重设：上面那行可能已让缓冲搬家
+    if (!hoverTipAdded_) {
+        ::SendMessageW(hoverTip_, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+        hoverTipAdded_ = true;
+    }
+
+    POINT sp{x, y};
+    ::ClientToScreen(hwnd_, &sp);
+    // 标准 TRACK 顺序：先关 → 定位 → 换文本 → 再开（与工具栏气泡同一套写法）。
+    // 光标右下方偏移，避开鼠标指针本身。
+    ::SendMessageW(hoverTip_, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
+    ::SendMessageW(hoverTip_, TTM_TRACKPOSITION, 0,
+                   MAKELPARAM(sp.x + 12, sp.y + MulDiv(22, dpi, 96)));
+    ::SendMessageW(hoverTip_, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+    ::SendMessageW(hoverTip_, TTM_TRACKACTIVATE, TRUE, (LPARAM)&ti);
+}
+
+void Editor::HideHoverTip() {
+    if (!hoverTip_) return;
+    TOOLINFOW ti{};
+    ti.cbSize = sizeof(ti);
+    ti.hwnd = hwnd_;
+    ti.uId = kHoverTipId;
+    ::SendMessageW(hoverTip_, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
 }
 
 // ---- 批次 77：Chroma 3380 语句名补全 ----------------------------------------

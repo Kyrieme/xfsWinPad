@@ -311,7 +311,8 @@ int PluginManager::ScanAndLoadFrom(const std::wstring& dir, bool skipLoaded) {
     int loaded = 0;
     int loadedNew = 0;
     std::error_code ec;
-    if (!skipLoaded) failures_.clear();   // 启动全量扫描重置账本；LoadNew 追加
+    // 启动全量扫描重置账本；LoadNew 追加
+    if (!skipLoaded) { failures_.clear(); isolated_.clear(); }
 
     // ---- 加载断路器（circuit breaker）-------------------------------------
     // 有失配插件会在 setInfo 里直接 exit() 杀死宿主（实测 ComparePlus），
@@ -321,9 +322,19 @@ int PluginManager::ScanAndLoadFrom(const std::wstring& dir, bool skipLoaded) {
     // （计入不兼容页，原因 fatal）。删除墓碑文件即可重试。
     const std::wstring attemptPath = dir + L"\\loadattempt.txt";
     const std::wstring tombPath = dir + L"\\plugin_tombstones.txt";
+    // 路径归一化：小写 + 分隔符统一成 '\\'。
+    // ★ 分隔符必须归一化。用户手写的 plugin_oop.txt 用的是 Windows 反斜杠，
+    //   而扫描出来的路径可能带正斜杠（真机实测：APPDATA 带正斜杠时整条路径
+    //   都是 `D:/...`）。只做小写会让两边**永远匹配不上**，而且**静默失败**
+    //   —— 插件照样加载，只是加载在**进程内**，界面上完全看不出来。
+    //   （这条是拿真实 GUI 跑出来的：单元测试两侧路径都来自 std::filesystem、
+    //   都是反斜杠，所以对分隔符差异完全无感。）
     auto ToKey = [](const std::wstring& p) {
         std::wstring k = p;
-        for (auto& c : k) c = (wchar_t)::towlower(c);
+        for (auto& c : k) {
+            if (c == L'/') c = L'\\';
+            c = (wchar_t)::towlower(c);
+        }
         return k;
     };
     std::set<std::wstring> tomb;
@@ -357,13 +368,30 @@ int PluginManager::ScanAndLoadFrom(const std::wstring& dir, bool skipLoaded) {
         for (const auto& l : loaded_) if (ToKey(l.path) == k) return true;
         return false;
     };
-    auto tryLoad = [this, &loaded, &loadedNew, skipLoaded, &tomb, &ToKey,
-                    &IsLoaded, &attemptPath](const std::wstring& p) {
+
+    // ---- 主动进程外加载名单（plugin_oop.txt）-------------------------------
+    // 与墓碑同一套文件约定：一行一个 DLL 路径，大小写不敏感。
+    // 墓碑是**被动**触发（插件必须先杀死宿主一次才被隔离）；本名单是**主动**
+    // 入口——已知有问题的插件可以提前关进代理进程，不必先挨一次崩溃。
+    const std::wstring oopListPath = dir + L"\\plugin_oop.txt";
+    std::set<std::wstring> forcedOop;
+    {
+        std::ifstream of(oopListPath.c_str());
+        std::string line;
+        while (std::getline(of, line)) {
+            if (!line.empty()) forcedOop.insert(ToKey(Utf8ToWide(line)));
+        }
+    }
+
+    auto tryLoad = [this, &loaded, &loadedNew, skipLoaded, &tomb, &forcedOop,
+                    &ToKey, &IsLoaded, &attemptPath](const std::wstring& p) {
         if (skipLoaded && IsLoaded(p)) return;   // 会话中加载：跳过已注册 DLL
-        if (tomb.count(ToKey(p))) {
+        const std::wstring key = ToKey(p);
+        if (tomb.count(key)) {
             // 墓碑插件：进程外隔离尝试（OopHost 启用时代理进程承载，
             // exit()/崩溃只死代理）。未启用/失败 → 保持原「跳过 + fatal」。
-            if (TryOopLoad(p)) {
+            if (TryOopLoad(p, L"oop-auto")) {
+                isolated_.push_back({p, L"oop-auto"});
                 ++loaded;
                 if (skipLoaded) ++loadedNew;
             } else {
@@ -372,6 +400,27 @@ int PluginManager::ScanAndLoadFrom(const std::wstring& dir, bool skipLoaded) {
                 f.path = p;
                 f.reason = L"fatal";
                 failures_.push_back(std::move(f));
+            }
+            return;
+        }
+        if (forcedOop.count(key)) {
+            // 用户指定进程外加载。★ 失败时**不回落进程内** —— 指定进程外正是
+            // 为了避开该插件在宿主进程内 exit()/崩溃，悄悄放回进程内等于把
+            // 风险还给他。代理侧失败原因（oop-died 等）由 TryOopLoad 并入账本。
+            const size_t before = failures_.size();
+            if (TryOopLoad(p, L"oop-forced")) {
+                isolated_.push_back({p, L"oop-forced"});
+                ++loaded;
+                if (skipLoaded) ++loadedNew;
+            } else {
+                if (failures_.size() == before) {   // 代理未给原因 → 兜底
+                    PluginLoadFailure f;
+                    f.path = p;
+                    f.reason = L"oop-unavailable";
+                    failures_.push_back(std::move(f));
+                }
+                Logger::Error("PluginManager: forced out-of-process load failed: "
+                              + WideToUtf8(p));
             }
             return;
         }
@@ -438,7 +487,7 @@ void PluginManager::EnableOopHost() {
     }
 }
 
-bool PluginManager::TryOopLoad(const std::wstring& path) {
+bool PluginManager::TryOopLoad(const std::wstring& path, const wchar_t* reason) {
     if (!oopHost_ || !hostWnd_) return false;
     Document* act = workspace_ ? workspace_->Active() : nullptr;
     HWND sci = act ? act->editor.Hwnd() : nullptr;
@@ -447,8 +496,10 @@ bool PluginManager::TryOopLoad(const std::wstring& path) {
         for (auto& f : oopHost_->TakeFailures()) failures_.push_back(std::move(f));
         return false;
     }
-    Logger::Info("PluginManager: tombstoned plugin loaded out-of-process: " +
-                 WideToUtf8(path));
+    // 日志必须带上真实原因：墓碑自动隔离与用户指定强制隔离是两回事，
+    // 一律写成 "tombstoned" 会让排查时看不到 plugin_oop.txt 是否生效。
+    Logger::Info("PluginManager: plugin loaded out-of-process (" +
+                 WideToUtf8(reason) + "): " + WideToUtf8(path));
     return true;
 }
 

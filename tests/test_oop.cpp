@@ -12,11 +12,15 @@
 //  6. 死亡归因+幸存者重加：killer 毒死共享代理 → 只记 killer oop-died，
 //     good/multi 撤销命令后重进新代理并可执行。
 //  7. 装载卡死：hang 插件 setInfo 永不返回 → 代理看门狗自杀 → 同 6 归因。
+//  9. plugin_oop.txt 主动隔离（批次 102）：**从未崩溃过**的正常插件写进名单
+//     → 直接走代理，账本记 oop-forced；指定的恶意插件代理失败时**不回落
+//     进程内**（回落会让本测试进程当场死亡——这正是要防的事）。
 //
 // 命令行参数 1：测试插件 DLL 所在目录（ctest 传 $<TARGET_FILE_DIR:oop_good>）。
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
+#include <fstream>
 #include <functional>
 #include <string>
 #include <filesystem>
@@ -326,6 +330,95 @@ int main(int argc, char** argv) {
               "msgbridge: all-zero replies aggregate to 0/unhandled");
         host2.ShutdownAll();
         DestroyWindow(recv);
+    }
+
+    // ---- 场景 9：plugin_oop.txt 主动进程外加载（批次 102）--------------------
+    // 场景 2~7 的进程外都是**被动**触发的（插件得先杀死宿主一次 → 墓碑）。
+    // 本场景验证**主动**入口：把插件路径写进 plugin_oop.txt，启动时直接走代理。
+    // 两个子场景：
+    //   9a. 正常插件（oop_good，从未崩溃）→ 被强制进程外，账本记 oop-forced
+    //       （**不是** oop-auto —— 令牌区分「用户指定」与「自动隔离」）。
+    //   9b. 恶意插件（oop_killer）→ 代理失败，且**绝不回落进程内**。
+    //       ★ 若此断言回归失败，回落会把 killer 装进本测试进程 ⇒ 进程当场退出。
+    //         所以"本测试崩了"就是"隔离回归了"的信号，不是测试本身不稳。
+    {
+        ResetMarkers();
+        PluginManager mgr;
+        HWND recv = MakeRecv();
+        mgr.SetHostWindow(recv);      // TryOopLoad 要求有宿主窗口，否则直接返回 false
+        mgr.EnableOopHost();
+
+        auto dir = std::filesystem::temp_directory_path() / L"xfs_oop_forced_test";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+
+        // ★ 名单里**故意写成正斜杠**。真实用户手写 plugin_oop.txt 用反斜杠，
+        //   而扫描出来的路径可能带正斜杠（真机实测：APPDATA 带正斜杠 ⇒ 整条
+        //   路径 `D:/...`）。若两侧都用 std::filesystem 的 .string()（都是
+        //   反斜杠），这个测试对分隔符差异**完全无感** —— 第一版就是这样，
+        //   结果真机上一跑插件仍走进程内加载。此处固定用正斜杠复现该场景。
+        auto Slashify = [](std::string s) {
+            for (auto& c : s) if (c == '\\') c = '/';
+            return s;
+        };
+
+        // 9a：正常插件 + 名单
+        std::filesystem::copy_file(dllDir / L"oop_good.dll", dir / L"oop_good.dll",
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        {
+            std::ofstream f((dir / L"plugin_oop.txt").c_str());
+            f << Slashify((dir / L"oop_good.dll").string()) << "\n";
+        }
+        int n = mgr.LoadAllFrom(dir.wstring());
+        CHECK(n == 1, "forced-oop: normal plugin loaded (1)");
+        CHECK(mgr.IsolatedPlugins().size() == 1 &&
+              mgr.IsolatedPlugins()[0].reason == L"oop-forced",
+              "forced-oop: ledger token is oop-forced, not oop-auto");
+        CHECK(mgr.LoadFailures().empty(),
+              "forced-oop: successful isolation is NOT recorded as a failure");
+        // ★ 进程级证据。负控实测：把强制名单关掉后，插件会**进程内**加载，
+        // 而「命令数=2」「EXEC 回传标记」这两条**照样通过**——因为插件无论
+        // 在哪个进程里，行为都一模一样。真正能区分的是下面这条（代理进程
+        // 数量）与上面的账本令牌，缺了它们这组断言就是自证。
+        CHECK(mgr.OopHostPtr() && mgr.OopHostPtr()->ProcessCount() == 1 &&
+              mgr.OopHostPtr()->Alive().size() == 1,
+              "forced-oop: a real proxy PROCESS hosts the plugin (not in-process)");
+        CHECK(mgr.CommandCount() == 2,
+              "forced-oop: 2 commands registered (via proxy)");
+        {
+            unsigned id0 = mgr.Commands()[0].id;
+            CHECK(mgr.Execute(id0), "forced-oop: Execute dispatched");
+            Sleep(200); PumpMessages();
+            CHECK(FindMarker(1, (INT_PTR)id0),
+                  "forced-oop: EXEC round-tripped through the proxy");
+        }
+
+        // 9b：恶意插件 + 名单 → 代理死，但不回落进程内
+        {
+            std::filesystem::copy_file(dllDir / L"oop_killer.dll", dir / L"oop_killer.dll",
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+            std::ofstream f((dir / L"plugin_oop.txt").c_str());
+            f << Slashify((dir / L"oop_good.dll").string()) << "\n"
+              << Slashify((dir / L"oop_killer.dll").string()) << "\n";
+        }
+        PluginManager mgr2;
+        mgr2.SetHostWindow(recv);
+        mgr2.EnableOopHost();
+        int n2 = mgr2.LoadAllFrom(dir.wstring());
+        CHECK(n2 == 1, "forced-oop: only the good plugin ends up loaded");
+        bool killerFailed = false;
+        for (const auto& f : mgr2.LoadFailures())
+            if (f.path.find(L"oop_killer.dll") != std::wstring::npos) killerFailed = true;
+        CHECK(killerFailed,
+              "forced-oop: killer recorded as a failure (proxy died), not loaded in-process");
+        CHECK(mgr2.CommandCount() == 2,
+              "forced-oop: killer contributed no commands (would have killed the host)");
+
+        mgr2.UnloadAll();
+        mgr.UnloadAll();
+        DestroyWindow(recv);
+        std::filesystem::remove_all(dir, ec);
     }
 
     std::printf("== %s ==\n", g_fail ? "FAILED" : "ALL PASSED");

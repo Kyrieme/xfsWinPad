@@ -5754,6 +5754,17 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     case SCN_DOUBLECLICK:
                         ed.HighlightOccurrences();
                         break;
+                    case SCN_DWELLSTART:
+                        // 批次 103：Chroma 语句的悬停气泡（手册签名 + 手册说明）。
+                        // sn->x/sn->y 是编辑器客户区坐标，Editor 侧自己转屏幕坐标。
+                        // 注意这条通知**默认不会来**：Scintilla 的 dwellDelay 默认
+                        // 是 TimeForever，必须由 Editor::Create 显式设
+                        // SCI_SETMOUSEDWELLTIME（见那里的说明）。
+                        ed.HandleDwellStart(sn->x, sn->y);
+                        break;
+                    case SCN_DWELLEND:
+                        ed.HideHoverTip();
+                        break;
                     case SCN_UPDATEUI: {
                         // focus in the other split view? track it for title/status
                         if (workspace_->CurrentView() != d->view) {

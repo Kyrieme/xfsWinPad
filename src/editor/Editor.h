@@ -220,6 +220,15 @@ public:
         extWords_ = std::move(cb);
     }
 
+    // --- 批次 103：Chroma 3380 语句的**悬停气泡** ------------------------------
+    // 鼠标停在某个标识符上不动时，气泡里显示手册原文：`签名;//说明`。
+    // 与签名气泡的分工：签名气泡是**打字时**告诉你「在第几个参数」；悬停气泡是
+    // **读代码时**告诉你「这条语句整体是干什么的」。两者用不同窗口，不互相顶掉。
+    // 只在 Chroma3380 三支词法器下工作（其它语言没有这份手册数据）。
+    // x/y 是编辑器客户区坐标（SCN_DWELLSTART 带来的坐标）。
+    void HandleDwellStart(int x, int y);
+    void HideHoverTip();
+
     // --- 右键上下文菜单（宿主弹自己的菜单；屏幕坐标）---
     // Scintilla 默认右键弹内置小菜单（SCI_USEPOPUP 默认开）——Create 里已关，
     // 右键经 EditorKeyProc 转给宿主决定内容（AI 快捷组等）。
@@ -262,6 +271,12 @@ private:
     const void* sigTipStmt_ = nullptr;   // 指向 kStatements 里的一条
     int sigTipParam_ = -1;
     sptr_t sigTipPos_ = -1;
+    // 批次 103 悬停气泡。窗口**懒创建**：非 Chroma 语言的文档永远走不到那里，
+    // 没必要给每个标签都建一个 tooltip。文本单独存在 hoverText_ 里，是因为
+    // tooltip 只记指针、不替我们保存字符串（每次显示都要重设指针）。
+    HWND hoverTip_ = nullptr;
+    bool hoverTipAdded_ = false;
+    std::wstring hoverText_;
     // 批次 78：语句名下拉的"锚"——我们在哪个位置弹的（= 被替换区间的起点）。
     // 只有它 >= 0 时 SCN_AUTOCCOMPLETED 才认作"这是我们自己弹的语句下拉"，
     // 并校验完成通知里的 position 与它相同才续动作。用完即清（一次性）。
