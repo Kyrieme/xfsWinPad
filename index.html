@@ -55,9 +55,9 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.13.3 · 2026-09-20 · Windows 10/11 x64</span>
+  <span class="ver">v0.13.4 · 2026-09-21 · Windows 10/11 x64</span>
   <div class="downloads">
-    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.2 MB）</a>
+    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
   </div>
   <p class="dl-note">便携版解压即用，不写注册表；两个版本功能完全一致。</p>
@@ -94,13 +94,30 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">790A2C4B0F2E322CB43A12DD4321F02B6AE2B80E0085AC86457D654E9D29AAD8</p>
+    <p class="hash">553C65C39FD769A56966458D3A6728628D86EC01E548645891D813564B3EA09F</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">F77918507EB0F85F784DB24DC479108DA50B2868E9EF3BF417BD98B5EB1E2046</p>
+    <p class="hash">0B067CD835B6E98B4223FFAD00A17EFF42728D5F99AB9FBF6A0F66365D903BD6</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.13.4</b>（2026-09-21）</p>
+    <ul>
+      <li><b>新增「语句悬停提示」</b>：把鼠标停在 <code>.pln</code> 里的语句名上
+        （例如 <code>FORCE_V_PPMU</code>），会弹出气泡直接显示<b>手册里的原始函数语法</b>
+        和<b>原始说明</b>，格式就是手册原文的 <code>签名);//说明</code>，例如
+        <code>FORCE_V_PPMU(pin_name, f_volt, v_range, I_range, I_clamp, wait_time);//This
+        statement sets the Per-pin PMU in voltage force mode…</code>。
+        共覆盖 <b>309 条</b>语句：256 条语法与说明都有，51 条只有说明
+        （手册里本来就没给语法行），2 条语法里带注释、按"不是语法"处理只显示说明。
+        说明文字是从语言手册里<b>逐条抽取</b>的（页码、页眉这类版面残留已剔除），
+        不是手写摘要 —— 所以你看到的就是手册原话</li>
+      <li><b>顺手修掉一个"看得见但一直没人注意"的显示缺陷</b>：长文案在气泡里会
+        <b>从词中间被裁掉</b> —— 例如某条第一行结尾变成 <code>…sets the Per-pin PMU in
+        voltag</code>，<b>尾部字母直接消失</b>，而且系统<b>不报任何错</b>。
+        这类文案中位数 160 字符、最长 1234 字符，超过九成都会触发。
+        现在改成按<b>像素</b>自己折行（用气泡自己的字体量宽），每一行都完整</li>
+    </ul>
     <p><b>v0.13.3</b>（2026-09-20）</p>
     <ul>
       <li><b>本版没有功能改动</b>，是「把已经发布的行为钉死」的一版。编译输出面板里
