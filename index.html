@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.13.4 · 2026-09-21 · Windows 10/11 x64</span>
+  <span class="ver">v0.14.0 · 2026-09-22 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,37 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">553C65C39FD769A56966458D3A6728628D86EC01E548645891D813564B3EA09F</p>
+    <p class="hash">92935F6CA8843D7C35CA43E7CE6A557590B8289FB315D31A02F25F60CE959BE6</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">0B067CD835B6E98B4223FFAD00A17EFF42728D5F99AB9FBF6A0F66365D903BD6</p>
+    <p class="hash">EC03FF8D7F1F532568532249CAF55F2BC87005F9F741EC2494FA71F5BF7399A0</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.14.0</b>（2026-09-22）</p>
+    <ul>
+      <li><b>新增「导航历史」</b>：<code>Alt+←</code> / <code>Alt+→</code> 在跳转之间来回，
+        与浏览器同构 —— 跳行、转到定义、诊断行双击都会自动记点；后退之后再跳会
+        <b>截断前进链</b>（不是追加到末尾），历史上限 64 条</li>
+      <li><b>新增「查找所有引用」</b>：<code>F12</code> 的反方向 —— 改一个 pin 之前先看
+        有多少地方用了它。逐行抹平注释与字符串后再做<b>整词</b>匹配，所以
+        <code>MCLK2</code> 和 <code>// MCLK</code> 不会被混为一谈；范围是左右两个视图里
+        所有打开的 Chroma 文档，加上当前文档 <code>SET_DEC_FILE</code> 引用的
+        <code>.dec</code>；命中直接进查找结果面板，双击跳转沿用原有逻辑</li>
+      <li><b>新增「转到定义」（<code>F12</code>）</b>：光标下的 pin 名 / pin 组名 / 时序名，
+        跳到本工程引用的 <code>.dec</code> 里那条声明并选中它</li>
+      <li><b>新增状态栏「定义」提示</b>：光标停在一个跳得动的符号上时，状态栏直接显示
+        <code>&lt;.dec 名&gt; 第 N 行</code> 和那一行原文，不必先试一下</li>
+      <li><b>插件进程外隔离变得可主动、也看得见</b>：插件目录下放一个
+        <code>plugin_oop.txt</code> 列上 DLL 路径，该插件启动时就直接在代理进程里跑，
+        <b>不必先崩一次宿主</b>；隔离状态在插件管理器的「不兼容」页<b>单独成行</b>，
+        与"加载失败"分开记账 —— 隔离是加载成功、只是换了个进程，
+        混进失败账本会让那一页说谎</li>
+      <li><b>修掉一个真实缺陷「关掉的窗口会复活」</b>：以前关掉一个窗口，下次启动它会
+        自己回来（还带着当时的文档）。根因是多窗口模型下<b>每个窗口各是一个进程、
+        没有全局管理者</b>，"我是不是最后一个窗口"只能在关窗那一刻现数同类主窗口 ——
+        现在还有别的窗口活着就<b>不留会话记录</b>，自己是最后一个才留；主窗口例外，始终保留</li>
+    </ul>
     <p><b>v0.13.4</b>（2026-09-21）</p>
     <ul>
       <li><b>新增「语句悬停提示」</b>：把鼠标停在 <code>.pln</code> 里的语句名上
