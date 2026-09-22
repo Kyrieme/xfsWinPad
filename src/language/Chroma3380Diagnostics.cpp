@@ -1139,8 +1139,34 @@ std::vector<Diagnostic> CheckApasImatch(const std::string& text,
 // 批次 89：ExtractDecSymbols —— 跨文件补全的词源（见头文件同节注释）
 // ---------------------------------------------------------------------------
 
+// 批次 104：ExtractDecSymbols 现在只是 ExtractDecSymbolLocations 的**只取名字视图**。
+//
+// 【为什么要改成委托，而不是两份并列实现】两者必须永远给出同一批名字：补全能给出的
+//   候选，跳转就该跳得到；跳得到的东西，补全也该认得。两份实现迟早分叉，而且分叉是
+//   **静默**的（用户只会觉得"这功能有时候不管用"）。委托之后，分叉在结构上不可能发生。
+//
+// 【合并前先证过等价】新函数是先**独立**写出来的，拿手册示例 + 全部自造边界用例 +
+//   11 个真实厂商 .dec（402 个符号）比对过名字与顺序完全一致，才做的这次合并。
+//   顺序不变是因为本函数逐条 push_back，与原来同一扫描序。
 std::vector<std::string> ExtractDecSymbols(const std::string& decText) {
+    const std::vector<DecSymbolLoc> locs = ExtractDecSymbolLocations(decText);
     std::vector<std::string> out;
+    out.reserve(locs.size());
+    for (const DecSymbolLoc& s : locs) out.push_back(s.name);
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 104：ExtractDecSymbolLocations —— 与 ExtractDecSymbols 同口径 + 位置
+//
+// 【实现顺序上的一个讲究（已按此顺序走完）】本函数当初是**另起一份独立实现**写出来
+//   的，不是直接改上面那份 ExtractDecSymbols。为的是先能拿真实语料证明"两份抽出来的
+//   名字集合一模一样"，**之后**才把 ExtractDecSymbols 改成委托本函数（见上方那段）。
+//   反过来做（先改再测）就只能证明"改完之后自己和自己一致"，等于什么都没证明。
+//   顺序不可颠倒；这个顺序本身就是这条等价性的证据。
+// ---------------------------------------------------------------------------
+std::vector<DecSymbolLoc> ExtractDecSymbolLocations(const std::string& decText) {
+    std::vector<DecSymbolLoc> out;
     std::set<std::string> uniq;
     const std::vector<LineSpan> lines = SplitLines(decText);
     std::vector<std::string> code;
@@ -1174,11 +1200,28 @@ std::vector<std::string> ExtractDecSymbols(const std::string& decText) {
         std::size_t endLine = 0, endCol = 0;
         if (!FindBlockEnd(code, braceLine, braceCol, endLine, endCol)) { ++i; continue; }
 
-        auto addName = [&](std::string name) {
+        // nameLine/nameCol 都是**抹平后**文本里的位置；因为 BlankComments 保长度，
+        // 它们在同一行的原文里同样成立（见头文件的口径说明）。
+        auto addName = [&](std::string name, std::size_t nameLine, std::size_t nameCol) {
             if (name.empty() || name.size() > 64) return;   // 手册 §2.7：max 64 chars
             if (!IsIdStart((unsigned char)name[0])) return;
             for (char c : name) if (!IsIdChar((unsigned char)c)) return;
-            if (uniq.insert(name).second) out.push_back(std::move(name));
+            if (!uniq.insert(name).second) return;          // 同名只记第一次
+            DecSymbolLoc loc;
+            loc.name = std::move(name);
+            loc.line = (int)nameLine + 1;                   // 内部 0-based → 对外 1-based
+            loc.col  = (int)nameCol;
+            // 批次 106：行文本从**原文**切，不用抹平后的 code[k] —— 提示要显示
+            // 用户眼前那一行（含注释与对齐空格）。nameLine 是 lines 的下标，
+            // 而 lines 就是从 decText 切的，所以两者天然同源、不会错位。
+            {
+                const LineSpan& L = lines[nameLine];
+                std::size_t b = L.begin, e = L.end;
+                while (b < e && (decText[b] == ' ' || decText[b] == '\t')) ++b;
+                while (e > b && (decText[e - 1] == ' ' || decText[e - 1] == '\t')) --e;
+                loc.lineText.assign(decText, b, e - b);
+            }
+            out.push_back(std::move(loc));
         };
 
         for (std::size_t k = braceLine; k <= endLine; ++k) {
@@ -1191,7 +1234,7 @@ std::vector<std::string> ExtractDecSymbols(const std::string& decText) {
             if (eq == kNone || eq > last) continue;                // 无 `=` 的行不猜
             std::size_t c3 = 0, l3 = 0;
             if (!LeadingIdentIn(code[k], b, eq, c3, l3)) continue;
-            addName(code[k].substr(c3, l3));
+            addName(code[k].substr(c3, l3), k, c3);
         }
         i = endLine + 1;
     }
@@ -1241,6 +1284,82 @@ std::vector<Diagnostic> ValidateChromaSource(const std::string& text,
         return a.start < b.start;
     });
     return out;
+}
+
+// 批次 106：状态栏「定义」提示的行文本（按码点边界截断）。见头文件里的说明。
+std::string DefinitionHintText(const std::string& lineText,
+                               const std::string& fallbackName,
+                               std::size_t maxBytes) {
+    const std::string& src = lineText.empty() ? fallbackName : lineText;
+    if (src.size() <= maxBytes) return src;
+    if (maxBytes == 0) return {};
+
+    // 从 maxBytes 往回退到码点边界。UTF-8 的续字节形如 10xxxxxx，遇到它就继续退；
+    // 退到第一个非续字节（首字节）就停 —— 那里是安全的切点。
+    // src.size() > maxBytes ⇒ src[maxBytes] 一定是合法下标，不用额外判界。
+    std::size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char>(src[cut]) & 0xC0) == 0x80) --cut;
+    if (cut == 0) return {};
+
+    std::string out = src.substr(0, cut);
+    out += "\xE2\x80\xA6";   // U+2026 HORIZONTAL ELLIPSIS
+    return out;
+}
+
+// 批次 107：查找所有引用。见头文件里的说明。
+//
+// 【为什么不设条数上限】引用条数由文本本身决定。设一个"最多报 4096 条"会让
+//   "找到 N 处引用"这句话变成谎话 —— 用户按它判断自己改一个 pin 要动多少地方。
+//   真实 Chroma 文件是几 KB 到几十 KB，量级上不存在这个顾虑；真出现极端文件，
+//   该修的是结果面板的分批渲染，不是在这里偷偷截断。
+std::vector<SymbolRef> FindSymbolReferences(const std::string& text,
+                                            const std::string& name) {
+    std::vector<SymbolRef> out;
+    if (name.empty()) return out;
+    for (char c : name)
+        if (!IsIdChar((unsigned char)c)) return out;   // 含非标识符字符 → 不开口
+
+    const std::vector<LineSpan> lines = SplitLines(text);
+    bool inBlock = false;
+    for (std::size_t li = 0; li < lines.size(); ++li) {
+        const LineSpan& L = lines[li];
+        // 抹平层：注释与字符串内容变成空格（**逐字节保长度** ⇒ 列号在原行上成立）
+        const std::string code = BlankComments(text, L.begin, L.end, inBlock);
+        std::size_t from = 0;
+        while (from < code.size()) {
+            const std::size_t p = code.find(name, from);
+            if (p == kNone) break;
+            const std::size_t after = p + name.size();
+            const bool leftOk  = (p == 0) || !IsIdChar((unsigned char)code[p - 1]);
+            const bool rightOk = (after >= code.size()) ||
+                                 !IsIdChar((unsigned char)code[after]);
+            if (leftOk && rightOk) {
+                SymbolRef r;
+                r.line = (int)li + 1;              // 内部 0-based → 对外 1-based
+                r.col  = (int)p;
+                r.len  = (int)name.size();
+                out.push_back(r);
+            }
+            from = p + 1;   // 只前进 1：紧贴的下一个候选也要被看到
+        }
+    }
+    return out;
+}
+
+bool LocateSymbolRef(const std::string& text, const SymbolRef& r,
+                   SymbolRefSpan& out) {
+    if (r.line < 1 || r.col < 0 || r.len <= 0) return false;
+    const std::vector<LineSpan> lines = SplitLines(text);
+    if ((std::size_t)r.line > lines.size()) return false;
+    const LineSpan& L = lines[(std::size_t)r.line - 1];
+    // SplitLines 的 begin 就是该行在**文档字节**里的起点（上一行 '\n' 之后），
+    // end 已经剥掉了 '\r' —— 两者正是结果面板要的区间与行文本边界。
+    if ((std::size_t)r.col + (std::size_t)r.len > L.end - L.begin) return false;
+    out.lineBeg = L.begin;
+    out.lineEnd = L.end;
+    out.start   = L.begin + (std::size_t)r.col;
+    out.end     = out.start + (std::size_t)r.len;
+    return true;
 }
 
 } // namespace chroma3380

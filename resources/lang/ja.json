@@ -139,6 +139,7 @@
   "sb.binary": "バイナリ",
   "sb.readonly": "読み取り専用",
   "sb.model.note": "CRAFT コンパイル結果ではありません",
+  "sb.defhint": "定義: {0} {1} 行目  {2}",
 
   "input.ok": "OK",
   "input.cancel": "キャンセル",
@@ -154,6 +155,10 @@
   "menu.view.csv": "CSV テーブル ビュー(&T)",
   "menu.view.chromacheck": "Chroma 静的チェック(&K)",
   "menu.view.diagnostics": "診断パネル(&D)",
+  "menu.view.gotodef": "定義へ移動(&D)",
+  "menu.view.findrefs": "すべての参照を検索(&R)",
+  "menu.view.navback": "前の位置へ(&B)",
+  "menu.view.navforward": "次の位置へ(&F)",
 
   "panel.csv": "CSV テーブル ビュー",
   "panel.csv.close": "✕ 閉じる",
@@ -809,5 +814,17 @@
   "msg.macro.badformat": "マクロ ファイルの形式が無効です。",
   "msg.macro.played": "再生完了: {0} 件の記録。",
   "msg.diff.needtwo": "比較するには少なくとも 2 つのドキュメントを開く必要があります。",
-  "msg.diff.done": "{0} 件の差異を検出しました（左右並列比較モードに移行）。"
+  "msg.diff.done": "{0} 件の差異を検出しました（左右並列比較モードに移行）。",
+
+  "msg.gotodef.wrongfile": "定義へ移動は Chroma の .pln / .pat ファイルでのみ有効です。",
+  "msg.gotodef.noword": "カーソル位置に移動できるシンボルがありません。",
+  "msg.gotodef.nodec": "このファイルには SET_DEC_FILE の参照がないため、検索先がありません。",
+  "msg.gotodef.notfound": "定義が見つかりません: {0}",
+  "msg.gotodef.openfail": "開けません: {0}",
+  "msg.findrefs.wrongfile": "すべての参照の検索は Chroma の .pln / .pat / .dec ファイルでのみ有効です。",
+  "msg.findrefs.noword": "カーソル位置にシンボルがありません。",
+  "msg.findrefs.none": "参照が見つかりません: {0}",
+  "msg.nav.noback": "戻れる位置がありません。",
+  "msg.nav.noforward": "進める位置がありません。",
+  "msg.nav.openfail": "開けません: {0}"
 }

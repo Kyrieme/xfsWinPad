@@ -621,6 +621,211 @@ static void RunExtractDecSymbols() {
     }
 }
 
+// 批次 104：ExtractDecSymbolLocations —— 「名字集合与 ExtractDecSymbols 一致」
+// + 「位置真的指到那个名字上」。
+//
+// 【为什么"一致"要当断言写】两者是同一个功能的两个视图（补全 / 跳转）。
+//   分叉的后果是**静默**的：补全能给出候选、跳转却跳不到；或者反过来，
+//   跳得到的东西补全不认识。用户看到的只是"这功能有时候不管用"。
+//   所以这里把一致性钉成断言 —— 而且它同时是"两套实现没走偏"的守门员。
+//
+// 【位置怎么验才不糊弄】不硬编码全部行号（那只是把实现抄一遍），而是给一条
+//   不依赖实现的定义：**把 line/col 拿去原文里取 len(name) 个字符，必须正好
+//   等于 name**。这条一破，位置就是错的。行号列号各钉几个具体值（手册示例
+//   是固定文本），防止"位置整体偏移但自洽"这种最阴的错。
+static void RunExtractDecSymbolLocations() {
+    auto namesOf = [](const std::vector<DecSymbolLoc>& v) {
+        std::vector<std::string> o;
+        o.reserve(v.size());
+        for (const DecSymbolLoc& s : v) o.push_back(s.name);
+        return o;
+    };
+    // 位置自证：line 是 1-based、col 是 0-based；按 \r 剥离后再取。
+    // 批次 106：顺带把 lineText 也钉住 —— 它必须**等于**同一行原文去掉首尾空白。
+    //   这里在测试侧**独立**再切一次行，不复用被测代码的 lines 表：否则"位置与
+    //   行文本同源"这条保证就退化成"两处抄了同一个错"，验不出任何东西。
+    auto positionsHold = [](const std::string& text, const std::vector<DecSymbolLoc>& v) {
+        std::vector<std::string> lines;
+        std::string cur;
+        for (char c : text) {
+            if (c == '\n') { lines.push_back(cur); cur.clear(); }
+            else if (c != '\r') cur.push_back(c);
+        }
+        lines.push_back(cur);
+        for (const DecSymbolLoc& s : v) {
+            if (s.line < 1 || s.line > (int)lines.size()) return false;
+            const std::string& L = lines[(std::size_t)s.line - 1];
+            if (s.col < 0 || (std::size_t)s.col + s.name.size() > L.size()) return false;
+            if (L.compare((std::size_t)s.col, s.name.size(), s.name) != 0) return false;
+            std::size_t b = 0, e = L.size();
+            while (b < e && (L[b] == ' ' || L[b] == '\t')) ++b;
+            while (e > b && (L[e - 1] == ' ' || L[e - 1] == '\t')) --e;
+            if (s.lineText != L.substr(b, e - b)) return false;
+        }
+        return true;
+    };
+
+    // 同一批文本喂给两个函数：名字与顺序都必须一致，位置必须成立。
+    const std::vector<std::string> cases = {
+        std::string(kManualDecExample),
+        std::string(kManualApasDec),
+        std::string(kManualTimeNameDef),
+        "PIN_GROUP {\n/* GHOST = A; */\nREAL = A;\n}\n",
+        "PIN_LIST (B) {\n A = 0 = 1 = IO\n B 0 = 1 = IO;\n}\n",
+        "PIN_GROUP {\n G1 = A;\n",                       // 未闭合块
+        "DEC_MODE APAS;\nDEVICE { X = 1; }\n",           // 非符号块
+        "PIN_GROUP {\n = A;\n 123 = A;\n}\n",            // 畸形行首
+        "",                                              // 空
+    };
+    for (const std::string& t : cases) {
+        const std::vector<DecSymbolLoc> locs = ExtractDecSymbolLocations(t);
+        CHECK(namesOf(locs) == ExtractDecSymbols(t));    // 名字集合 + 顺序都一致
+        CHECK(positionsHold(t, locs));                   // 位置真的落在名字上
+    }
+
+    // 精确行/列：手册 .dec 示例是固定文本，把几个点钉死。
+    // 1-based 行号：第 1 行是 PIN_LIST，第 2 行 `{`，第 3 行起是 pin。
+    {
+        const std::vector<DecSymbolLoc> v = ExtractDecSymbolLocations(kManualDecExample);
+        CHECK(v.size() == 21);
+        if (v.size() == 21) {
+            CHECK(v[0].name == "SEL0");          CHECK(v[0].line == 3);  CHECK(v[0].col == 8);
+            CHECK(v[16].name == "Vdps");         CHECK(v[16].line == 19); CHECK(v[16].col == 8);
+            CHECK(v[17].name == "CTRL");         CHECK(v[17].line == 24); CHECK(v[17].col == 2);
+            CHECK(v[20].name == "DPS_OS_PINS");  CHECK(v[20].line == 30); CHECK(v[20].col == 4);
+        }
+    }
+    // 同名重复 → 记**第一次**出现的位置（与 ExtractDecSymbols 的去重口径一致）
+    {
+        const std::vector<DecSymbolLoc> v =
+            ExtractDecSymbolLocations("PIN_GROUP {\n AAA = X;\n}\nPIN_GROUP {\n AAA = Y;\n}\n");
+        CHECK(v.size() == 1);
+        if (v.size() == 1) {
+            CHECK(v[0].name == "AAA");
+            CHECK(v[0].line == 2);
+            CHECK(v[0].col == 1);
+        }
+    }
+    // 行尾注释不该把列算歪：抽取跑在 BlankComments 之后（逐字节保长度），
+    // 所以列号在原行上同样成立；注释里的 `DDD = Y;` 不该被当成符号。
+    {
+        const char* dec = "PIN_GROUP {\n  CCC = X;   // note DDD = Y;\n}\n";
+        const std::vector<DecSymbolLoc> v = ExtractDecSymbolLocations(dec);
+        CHECK(v.size() == 1);
+        if (v.size() == 1) {
+            CHECK(v[0].name == "CCC");
+            CHECK(v[0].line == 2);
+            CHECK(v[0].col == 2);
+            // 批次 106：lineText 是**原文**那一行 —— 行内对齐空格与行尾注释都
+            // 原样保留（抹平层只用于找位置，不用于显示），只去掉首尾空白。
+            CHECK(v[0].lineText == "CCC = X;   // note DDD = Y;");
+        }
+        CHECK(namesOf(v) == ExtractDecSymbols(dec));
+    }
+    // 批次 106：首尾的 tab 也要去掉（真实 .dec 用 tab 缩进很常见）
+    {
+        const std::vector<DecSymbolLoc> v =
+            ExtractDecSymbolLocations("PIN_GROUP {\n\t\tQQ = A;\t\n}\n");
+        CHECK(v.size() == 1);
+        if (v.size() == 1) CHECK(v[0].lineText == "QQ = A;");
+    }
+    // 批次 106：每个符号的 lineText 都必须**包含它自己的名字** —— 这条断言说的
+    // 是"提示里显示的那一行"与"提示里说的那个名字"确实在同一行上，而不是
+    // 行号和行文本各自成立、合起来却指向不同的行。
+    {
+        const std::vector<DecSymbolLoc> v = ExtractDecSymbolLocations(kManualDecExample);
+        for (const DecSymbolLoc& s : v) {
+            CHECK(!s.lineText.empty());
+            CHECK(s.lineText.find(s.name) != std::string::npos);
+        }
+    }
+    // 空 / 无块
+    CHECK(ExtractDecSymbolLocations("").empty());
+    CHECK(ExtractDecSymbolLocations("DEC_MODE APAS;\n").empty());
+}
+
+// 批次 106：DefinitionHintText —— 状态栏「定义」提示要显示的那行文本。
+//
+// 【为什么值得单测】它唯一的工作是"截断"，而按字节截断有一个**静默**的失败模式：
+//   把一个多字节汉字劈成两半，产生非法 UTF-8。它不崩、不报错，只在状态栏上显示
+//   成乱码或被 Utf8ToWide 吞掉半个字 —— 属于"看起来只是有点怪"的那类 bug，
+//   最容易长期潜伏。所以下面除了具体实例，还有一条**扫描式**的一般断言。
+static void RunDefinitionHintText() {
+    // 合法 UTF-8 判定（测试侧独立实现，不复用被测代码的任何东西）
+    auto isUtf8 = [](const std::string& s) {
+        for (std::size_t i = 0; i < s.size();) {
+            const unsigned char c = (unsigned char)s[i];
+            std::size_t n = 0;
+            if (c < 0x80) n = 1;
+            else if ((c & 0xE0) == 0xC0) n = 2;
+            else if ((c & 0xF0) == 0xE0) n = 3;
+            else if ((c & 0xF8) == 0xF0) n = 4;
+            else return false;
+            if (i + n > s.size()) return false;
+            for (std::size_t k = 1; k < n; ++k)
+                if (((unsigned char)s[i + k] & 0xC0) != 0x80) return false;
+            i += n;
+        }
+        return true;
+    };
+
+    // 不超长 → 原样返回
+    CHECK(DefinitionHintText("MCLK = 40 = 1 = IO;", "MCLK", 120) == "MCLK = 40 = 1 = IO;");
+    // 正好等于上限 → 不截（边界是 `<=` 而不是 `<`）
+    CHECK(DefinitionHintText("ABC", "X", 3) == "ABC");
+    // fallback：lineText 为空时退回名字；两个都空则空
+    CHECK(DefinitionHintText("", "MCLK", 120) == "MCLK");
+    CHECK(DefinitionHintText("", "", 120).empty());
+    // 截断（纯 ASCII）：切点正好落在码点边界
+    CHECK(DefinitionHintText("0123456789", "", 4) == std::string("0123") + "\xE2\x80\xA6");
+
+    // ★ 切点落在多字节码点**内部**时必须退到边界。
+    //   "时钟" = E6 97 B6 E9 92 9F（各 3 字节）。maxBytes=4 落在第二个汉字的
+    //   首字节之后的续字节上 ⇒ 只能保留第一个汉字 + 省略号。
+    //   按字节硬切会得到 E6 97 B6 E9 —— 末尾半个字，非法序列。
+    {
+        const std::string s = "\xE6\x97\xB6\xE9\x92\x9F";
+        CHECK(s.size() == 6);
+        const std::string got = DefinitionHintText(s, "", 4);
+        CHECK(got == std::string("\xE6\x97\xB6") + "\xE2\x80\xA6");
+        CHECK(got.size() == 6);   // 3 + 3
+        CHECK(isUtf8(got));
+    }
+    // 切点恰好落在汉字边界上 → 整字保留
+    CHECK(DefinitionHintText("\xE6\x97\xB6\xE9\x92\x9F", "", 3) ==
+          std::string("\xE6\x97\xB6") + "\xE2\x80\xA6");
+    // 正好装得下 → 不截
+    CHECK(DefinitionHintText("\xE6\x97\xB6\xE9\x92\x9F", "", 6) ==
+          std::string("\xE6\x97\xB6\xE9\x92\x9F"));
+
+    // ★ 一般形式：**任意**切点下结果都必须是合法 UTF-8。
+    //   上面两条只是它的具体实例；这条才保证"退到码点边界"这件事没有漏掉的
+    //   分支（例如连续三个 4 字节码点、或截断后恰好只剩 1 字节的残段）。
+    {
+        // 混排：ASCII + 3 字节汉字 + 4 字节 emoji + 省略号本身
+        const std::string s = "AB" "\xE6\x97\xB6\xE9\x92\x9F" "\xF0\x9F\x98\x80"
+                              "CD" "\xE2\x80\xA6" "E";
+        CHECK(isUtf8(s));
+        for (std::size_t n = 0; n <= s.size() + 2; ++n)
+            CHECK(isUtf8(DefinitionHintText(s, "x", n)));
+        // 全程不超长时结果必须与原文逐字节相同
+        CHECK(DefinitionHintText(s, "x", s.size()) == s);
+    }
+    // maxBytes = 0：没地方放，返回空（宁可空，也不要一个孤零零的省略号）
+    CHECK(DefinitionHintText("ABC", "MCLK", 0).empty());
+    // 4 字节码点被切在中间，且一直退到 0 也放不下任何一个完整码点 → 返回空。
+    // （宁可空，也不要留下 F0 9F 这种残段，也不要凭空多出一个超宽的省略号。）
+    // ⚠️ 这条最初被我写成"应该返回一个省略号"—— 是断言把它纠正过来的：
+    //    退到 0 之后确实**没有**任何完整码点可以保留，"再加省略号"等于凭空造内容。
+    {
+        const std::string s = "\xF0\x9F\x98\x80" "Z";   // emoji(4B) + Z
+        CHECK(s.size() == 5);
+        CHECK(DefinitionHintText(s, "", 2).empty());
+        // 刚好放得下整个 emoji → emoji + 省略号
+        CHECK(DefinitionHintText(s, "", 4) == std::string("\xF0\x9F\x98\x80") + "\xE2\x80\xA6");
+    }
+}
+
 static void RunCrossKind() {
     // SET_DEC_FILE 的规则不适用 .dec（.dec 的 DEC_MODE 反而必须有分号）
     CHECK(ValidateChromaSource("SET_DEC_FILE \"a.dec\" ;\n", ChromaFileKind::Dec).empty());
@@ -1094,7 +1299,38 @@ static int ScanFile(int argc, char** argv) {
     return d.empty() ? 0 : 1;
 }
 
+// `--symbols <文件>…` —— 把每个 .dec 抽出的「名字 + 位置」按**入参下标**打出来，
+// 供 Python 侧对**真实语料**逐条核对：这一行这一列是不是真的写着这个名字。
+//
+// 【为什么打下标而不是路径】真实语料路径含中文，而 main 的 argv 是 ANSI 码页的
+//   字节、控制台再按自己的码页输出 —— 中间任何一环对不上，Python 那边读到的
+//   就是乱码路径（本项目在控制台码页这件事上吃过亏）。下标是纯 ASCII，
+//   调用方本来就知道自己传了什么，不需要回读。
+//
+// 【为什么要有这个入口】同上：真实 .dec 是私密文件（.gitignore 排除，CI 上不存在），
+//   不能写进单元测试的断言里，只能做成可手动调用的入口给脚本用。
+static int DumpSymbols(int argc, char** argv) {
+    int total = 0;
+    for (int i = 2; i < argc; ++i) {
+        std::ifstream in(argv[i], std::ios::binary);
+        if (!in) {
+            std::printf("cannot open index=%d\n", i - 2);
+            return 2;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+        const std::vector<DecSymbolLoc> v = ExtractDecSymbolLocations(text);
+        std::printf("SYMBOLS %d n=%zu\n", i - 2, v.size());
+        for (const DecSymbolLoc& s : v)
+            std::printf("  %d %d %s\n", s.line, s.col, s.name.c_str());
+        total += (int)v.size();
+    }
+    std::printf("TOTAL %d\n", total);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc > 2 && std::string(argv[1]) == "--symbols") return DumpSymbols(argc, argv);
     if (argc > 1) return ScanFile(argc, argv);
     std::printf("== test_chromadiag ==\n");
     RunFileKind();
@@ -1108,6 +1344,8 @@ int main(int argc, char** argv) {
     RunRptCount();
     RunCrossFileApas();
     RunExtractDecSymbols();
+    RunExtractDecSymbolLocations();
+    RunDefinitionHintText();
     RunCrossKind();
     if (g_fail) {
         std::printf("FAILED: %d check(s)\n", g_fail);

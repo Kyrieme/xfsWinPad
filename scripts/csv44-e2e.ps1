@@ -6,6 +6,16 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 # fidelity is covered by ctest BuildPrintPages. ASCII only (CJK via \uXXXX).
 $ErrorActionPreference = "Stop"
 
+# ---- profile guard -----------------------------------------------------------
+# Uniform rule: every e2e probe declares its profile handling. This one launches
+# the app itself, so it may kill stray instances first; a surviving
+# session-<pid>.json would otherwise be resurrected as a phantom window.
+$scriptDir = $PSScriptRoot
+if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+. (Join-Path $scriptDir '_profile-guard.ps1')
+Start-ProfileGuard
+trap { Say-PG ("PROFILE-GUARD-TRAP: " + $_.Exception.Message); Stop-ProfileGuard; exit 1 }
+
 # Orphan instances steal windows (batch 42 lesson) - kill first.
 Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
@@ -63,6 +73,7 @@ function Fail($m) {
   Write-Output "E2E-FAIL: $m"
   if ($p -and !$p.HasExited) { Stop-Process -Id $p.Id -Force }
   exit 1
+  Stop-ProfileGuard
 }
 
 $p = Start-Process -FilePath $Exe -ArgumentList "`"$csvPath`"" -PassThru
@@ -104,5 +115,6 @@ try {
   Fail $_.Exception.Message
 } finally {
   if ($p -and !$p.HasExited) { Stop-Process -Id $p.Id -Force }
+Stop-ProfileGuard
   Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

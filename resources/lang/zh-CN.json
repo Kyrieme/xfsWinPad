@@ -139,6 +139,7 @@
   "sb.binary": "二进制",
   "sb.readonly": "只读",
   "sb.model.note": "非 CRAFT 编译结果",
+  "sb.defhint": "定义：{0} 第 {1} 行  {2}",
 
   "input.ok": "确定",
   "input.cancel": "取消",
@@ -154,6 +155,10 @@
   "menu.view.csv": "CSV 表格视图(&T)",
   "menu.view.chromacheck": "Chroma 静态检查(&K)",
   "menu.view.diagnostics": "诊断面板(&D)",
+  "menu.view.gotodef": "转到定义(&D)",
+  "menu.view.findrefs": "查找所有引用(&R)",
+  "menu.view.navback": "上一处(&B)",
+  "menu.view.navforward": "下一处(&F)",
 
   "panel.csv": "CSV 表格视图",
   "panel.csv.close": "✕ 关闭",
@@ -810,5 +815,17 @@
   "msg.macro.badformat": "宏文件格式无效。",
   "msg.macro.played": "回放完成：{0} 条记录。",
   "msg.diff.needtwo": "需要至少两个打开的文档才能对比。",
-  "msg.diff.done": "发现 {0} 处差异（已进入并排对比模式）。"
+  "msg.diff.done": "发现 {0} 处差异（已进入并排对比模式）。",
+
+  "msg.gotodef.wrongfile": "转到定义只对 Chroma 的 .pln / .pat 文件有效。",
+  "msg.gotodef.noword": "光标下没有可跳转的符号。",
+  "msg.gotodef.nodec": "本文档没有 SET_DEC_FILE 引用，无处可查。",
+  "msg.gotodef.notfound": "未找到定义：{0}",
+  "msg.gotodef.openfail": "无法打开 {0}",
+  "msg.findrefs.wrongfile": "查找所有引用只对 Chroma 的 .pln / .pat / .dec 文件有效。",
+  "msg.findrefs.noword": "光标下没有符号。",
+  "msg.findrefs.none": "未找到引用：{0}",
+  "msg.nav.noback": "没有可回退的位置。",
+  "msg.nav.noforward": "没有可前进的位置。",
+  "msg.nav.openfail": "无法打开 {0}"
 }

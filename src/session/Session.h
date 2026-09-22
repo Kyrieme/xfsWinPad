@@ -47,6 +47,34 @@ std::wstring SessionSlotPath(bool primary);
 std::vector<std::wstring> SessionSlots(const std::wstring& dir,
                                        unsigned long excludePid,
                                        unsigned int maxAgeDays = 30);
+
+// Closing one window is NOT the same event as quitting the whole application.
+// Every window is its own process and there is no global owner, so "am I the
+// last window?" can only be answered by counting the live main windows at close
+// time (MainWindow::CountOtherMainWindows).
+//   * last window closing  == the app exits -> leave the state behind, the next
+//     launch restores it (this is the long-standing behaviour);
+//   * other windows still alive == the user deliberately dropped this one ->
+//     leave nothing behind.
+// Getting this wrong is what produced the "extra window on every launch" bug:
+// a window that was closed while others stayed open still wrote its slot, and
+// because a restored child claims the slot and writes a fresh one on its own
+// exit, the ghost window was self-perpetuating (only the 30-day GC bounded it).
+enum class CloseDisposition {
+    PersistSession,   // the app is exiting: write session.json / this slot
+    RetireSlot,       // only this window goes away: write nothing
+};
+CloseDisposition SessionCloseDisposition(int otherLiveWindows);
+
+// Applies the policy above and, when it says "persist", writes `slotPath`.
+// `isPrimary` windows always persist: session.json is the canonical session and
+// the primary is what a later launch restores as "the main window". When the
+// disposition is RetireSlot the path is cleared instead, so a same-pid leftover
+// (pid recycling) cannot resurrect the window either.
+// Returns true when the state was written.
+bool SessionPersistOnClose(const std::wstring& slotPath, bool isPrimary,
+                           const SessionState& s, int otherLiveWindows);
+
 bool SessionSave(const std::wstring& path, const SessionState& s);
 bool SessionLoad(const std::wstring& path, SessionState* out);
 

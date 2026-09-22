@@ -136,6 +136,56 @@ int main() {
         ::RemoveDirectoryW(dir.c_str());
     }
 
+    // ---- 5. close disposition: closing one window != quitting the app -----
+    // 批次 108：非 primary 窗口在"还有别的窗口活着"时不许留下槽位 —— 否则它
+    // 下次启动会复活成幽灵窗口；而且恢复出来的子窗口认领槽位后又会在自己退出
+    // 时写一个新的槽位，这个幽灵是自我延续的（旧 bug 只能靠 30 天 GC 兜底）。
+    {
+        std::wstring dir = TempPath(L"xfs_close_policy_test");
+        ::CreateDirectoryW(dir.c_str(), nullptr);
+        const std::wstring slot = dir + L"\\session-4242.json";
+        const std::wstring legacy = dir + L"\\session.json";
+        SessionState s;
+        s.entries.push_back(SessionEntry{L"D:\\keep.txt", 1, 1});
+
+        // (a) another window is still alive -> retire: write nothing, and clear a
+        //     same-pid leftover so pid recycling cannot resurrect it either.
+        {
+            HANDLE h = ::CreateFileW(slot.c_str(), GENERIC_WRITE, 0, nullptr,
+                                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            DWORD w = 0; ::WriteFile(h, "{}", 2, &w, nullptr);
+            ::CloseHandle(h);
+            CHECK(!SessionPersistOnClose(slot, false, s, 1));
+            CHECK(::GetFileAttributesW(slot.c_str()) == INVALID_FILE_ATTRIBUTES);
+        }
+
+        // (b) last window -> persist: the app is exiting, restore me next launch
+        CHECK(SessionPersistOnClose(slot, false, s, 0));
+        {
+            SessionState back;
+            CHECK(SessionLoad(slot, &back));
+            CHECK(back.entries.size() == 1);
+            CHECK(!back.entries.empty() && back.entries[0].path == L"D:\\keep.txt");
+        }
+
+        // (c) the primary always persists: session.json is the canonical session
+        CHECK(SessionPersistOnClose(legacy, true, s, 3));
+        {
+            SessionState back;
+            CHECK(SessionLoad(legacy, &back));
+            CHECK(back.entries.size() == 1);
+        }
+
+        // (d) the predicate itself (the branch both callers read)
+        CHECK(SessionCloseDisposition(0) == CloseDisposition::PersistSession);
+        CHECK(SessionCloseDisposition(1) == CloseDisposition::RetireSlot);
+        CHECK(SessionCloseDisposition(7) == CloseDisposition::RetireSlot);
+
+        ::DeleteFileW(slot.c_str());
+        ::DeleteFileW(legacy.c_str());
+        ::RemoveDirectoryW(dir.c_str());
+    }
+
     ::DeleteFileW(path.c_str());
 
     if (g_fail == 0) { printf("ALL SESSION TESTS PASSED\n"); return 0; }

@@ -222,6 +222,24 @@ endif()
 
 add_test(NAME chromadiag COMMAND test_chromadiag)
 
+# 批次 107：查找所有引用（FindSymbolReferences）。
+# **新开一个目标**而不是折进 test_chromadiag —— 让 ctest 总数（33 → 34）本身成为可见
+# 信号：折进去的话，"新测试忘了注册进 CMakeLists"会伪装成"100% 通过"。
+add_executable(test_findrefs test_findrefs.cpp
+    ../src/language/Chroma3380Diagnostics.cpp
+    ../src/language/Chroma3380Db.cpp
+    ../src/language/Chroma3380Complete.cpp)
+
+target_compile_definitions(test_findrefs PRIVATE UNICODE _UNICODE NOMINMAX)
+target_include_directories(test_findrefs PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
+    ${CMAKE_SOURCE_DIR}/third_party/lexilla/include)
+if(MSVC)
+    target_compile_options(test_findrefs PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME findrefs COMMAND test_findrefs)
+
 # 批次 94：CRAFT 工程模型内核（方向 D 第一刀）。同样是纯字符串逻辑、零 Windows API，
 # 所以单独一个目标、不链任何 Scintilla / Util。
 # 用例把**厂商 makefile 原文**与**厂商中间产物的字节**都钉住了（见测试文件头）。
@@ -276,6 +294,18 @@ endif()
 target_link_libraries(test_shortcut PRIVATE shlwapi)
 
 add_test(NAME shortcut COMMAND test_shortcut)
+
+# 批次 105：导航历史（"上一处 / 下一处"）。纯游标算术，零 Windows API、零 IO，
+# 所以单独一个目标；语义（去重 / 分支截断 / 上限 / 空历史）在测试文件里分节钉住。
+add_executable(test_navhistory test_navhistory.cpp
+    ../src/core/NavHistory.cpp)
+
+target_compile_definitions(test_navhistory PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_navhistory PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME navhistory COMMAND test_navhistory)
 
 add_executable(test_lineops test_lineops.cpp
     ../src/editor/LineOps.cpp)

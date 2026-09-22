@@ -139,6 +139,7 @@
   "sb.binary": "Binary",
   "sb.readonly": "Read Only",
   "sb.model.note": "Not a CRAFT compilation result",
+  "sb.defhint": "Definition: {0} line {1}  {2}",
 
   "input.ok": "OK",
   "input.cancel": "Cancel",
@@ -154,6 +155,10 @@
   "menu.view.csv": "CSV &Table View",
   "menu.view.chromacheck": "Chroma Static &Check",
   "menu.view.diagnostics": "&Diagnostics Panel",
+  "menu.view.gotodef": "Go to &Definition",
+  "menu.view.findrefs": "Find All &References",
+  "menu.view.navback": "&Back",
+  "menu.view.navforward": "&Forward",
 
   "panel.csv": "CSV Table View",
   "panel.csv.close": "✕ Close",
@@ -810,5 +815,17 @@
   "msg.macro.badformat": "Invalid macro file format.",
   "msg.macro.played": "Playback finished: {0} record(s).",
   "msg.diff.needtwo": "At least two open documents are required to compare.",
-  "msg.diff.done": "Found {0} difference(s) (side-by-side compare mode entered)."
+  "msg.diff.done": "Found {0} difference(s) (side-by-side compare mode entered).",
+
+  "msg.gotodef.wrongfile": "Go to Definition works in Chroma .pln / .pat files only.",
+  "msg.gotodef.noword": "No symbol under the caret.",
+  "msg.gotodef.nodec": "This file has no SET_DEC_FILE reference; nothing to look up.",
+  "msg.gotodef.notfound": "Definition not found: {0}",
+  "msg.gotodef.openfail": "Cannot open {0}",
+  "msg.findrefs.wrongfile": "Find All References works in Chroma .pln / .pat / .dec files only.",
+  "msg.findrefs.noword": "No symbol under the caret.",
+  "msg.findrefs.none": "No references found: {0}",
+  "msg.nav.noback": "Nothing to go back to.",
+  "msg.nav.noforward": "Nothing to go forward to.",
+  "msg.nav.openfail": "Cannot open {0}"
 }

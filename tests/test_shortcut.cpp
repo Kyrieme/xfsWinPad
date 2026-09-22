@@ -44,6 +44,20 @@ int main() {
             if (kv.first == (unsigned)Cmd::EditUndo) { undoInAccel = true; break; }
         CHECK(!undoInAccel);
         CHECK(t.Get(Cmd::Preferences).vk == 0);       // 未登记 = 无快捷键
+        // 批次 107：查找所有引用 = Shift+F12。
+        // 【为什么这条断言在单测里】真机探针验不了它：本沙箱里桌面被别的进程的
+        //   全屏窗口占着，SetForegroundWindow 抢不回前台（实测前台是
+        //   Chrome_WidgetWin_1），SendInput 送去的按键进了那个窗口。而"表里有没
+        //   有这一条"是确定性的事实 —— 宁可把它钉在每次 CI 都跑的地方，也不写
+        //   一条没人跑过的真机断言（硬约束 21）。
+        ShortcutInfo refs = t.Get(Cmd::FindAllReferences);
+        CHECK(refs.Valid() && refs.vk == VK_F12 && refs.shift &&
+              !refs.ctrl && !refs.alt);
+        // 与 F12（转到定义）必须**不同**：两条占同一组合时，TranslateAccelerator
+        // 只会命中其中一个，另一个从此永远打不到 —— 编译、链接、运行都不报错。
+        ShortcutInfo gd = t.Get(Cmd::GotoDefinition);
+        CHECK(gd.Valid() && gd.vk == VK_F12 && !gd.shift);
+        CHECK(!refs.SameAs(gd));
     }
     // --- 组合串编解码 round trip ---------------------------------------------
     {

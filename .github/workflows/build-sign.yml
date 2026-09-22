@@ -105,7 +105,18 @@ jobs:
 
       - name: Portable zip
         shell: pwsh
-        run: Compress-Archive -Path dist/payload/* -DestinationPath dist/xfsWinPad-portable.zip -Force
+        # Exclude stray diagnostics: the app writes debug.log next to its own exe by design
+        # (field troubleshooting), and dist/payload contains that exe — so anything that ran
+        # the packaged app in place leaves a debug.log there. A `dist/payload/*` wildcard
+        # would ship it silently, and it contains local paths (user profile, temp dirs).
+        # Listed explicitly rather than `*.log` so a future log we DO want is not swallowed.
+        run: |
+          $stray = @('debug.log', 'xfsWinPad.log')
+          $items = @(Get-ChildItem -LiteralPath dist/payload |
+                     Where-Object { $stray -notcontains $_.Name })
+          if ($items.Count -eq 0) { throw 'payload is empty' }
+          Compress-Archive -Path ($items | ForEach-Object { $_.FullName }) `
+                           -DestinationPath dist/xfsWinPad-portable.zip -Force
 
       - name: Upload portable zip (unsigned fallback builds)
         if: ${{ vars.SIGNPATH_ORGANIZATION_ID == '' }}

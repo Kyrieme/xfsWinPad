@@ -139,6 +139,7 @@
   "sb.binary": "이진 파일",
   "sb.readonly": "읽기 전용",
   "sb.model.note": "CRAFT 컴파일 결과가 아님",
+  "sb.defhint": "정의: {0} {1}행  {2}",
 
   "input.ok": "확인",
   "input.cancel": "취소",
@@ -154,6 +155,10 @@
   "menu.view.csv": "CSV 표 보기(&T)",
   "menu.view.chromacheck": "Chroma 정적 검사(&K)",
   "menu.view.diagnostics": "진단 패널(&D)",
+  "menu.view.gotodef": "정의로 이동(&D)",
+  "menu.view.findrefs": "모든 참조 찾기(&R)",
+  "menu.view.navback": "이전 위치(&B)",
+  "menu.view.navforward": "다음 위치(&F)",
 
   "panel.csv": "CSV 표 보기",
   "panel.csv.close": "✕ 닫기",
@@ -809,5 +814,17 @@
   "msg.macro.badformat": "매크로 파일 형식이 잘못되었습니다.",
   "msg.macro.played": "재생 완료: {0}개 기록.",
   "msg.diff.needtwo": "비교하려면 문서를 두 개 이상 열어야 합니다.",
-  "msg.diff.done": "차이 {0}곳을 발견했습니다(나란히 비교 모드로 전환됨)."
+  "msg.diff.done": "차이 {0}곳을 발견했습니다(나란히 비교 모드로 전환됨).",
+
+  "msg.gotodef.wrongfile": "정의로 이동은 Chroma .pln / .pat 파일에서만 동작합니다.",
+  "msg.gotodef.noword": "커서 아래에 이동할 기호가 없습니다.",
+  "msg.gotodef.nodec": "이 파일에는 SET_DEC_FILE 참조가 없어 조회할 대상이 없습니다.",
+  "msg.gotodef.notfound": "정의를 찾을 수 없습니다: {0}",
+  "msg.gotodef.openfail": "열 수 없습니다: {0}",
+  "msg.findrefs.wrongfile": "모든 참조 찾기는 Chroma .pln / .pat / .dec 파일에서만 동작합니다.",
+  "msg.findrefs.noword": "커서 아래에 기호가 없습니다.",
+  "msg.findrefs.none": "참조를 찾을 수 없습니다: {0}",
+  "msg.nav.noback": "되돌아갈 위치가 없습니다.",
+  "msg.nav.noforward": "앞으로 갈 위치가 없습니다.",
+  "msg.nav.openfail": "열 수 없습니다: {0}"
 }

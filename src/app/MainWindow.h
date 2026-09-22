@@ -21,6 +21,7 @@
 #include "DiagnosticsPanel.h"
 #include "CompilePanel.h"
 #include "../language/CraftRunner.h"   // craft::BuildResult / Toolchain / BuildStep
+#include "../core/NavHistory.h"        // 批次 105：导航历史（上一处/下一处）
 #include "../bigfile/BigFileView.h"
 #include "../git/GitClient.h"
 #include "../hex/HexPanel.h"
@@ -149,6 +150,83 @@ private:
     // 返回读到的 .dec 文本（规则 3 复用，同一轮不读两遍盘）。
     std::vector<std::string> RefreshDecSymbols();
 
+    // --- 批次 104：转到定义（F12 / View 菜单）-------------------------------
+    // 光标下的符号（pin / pin 组 / 时序名）→ 本工程 `SET_DEC_FILE` 引用的 `.dec`
+    // 里那条声明。**不新增词源**：挑文件用 ExtractDecSymbols，落点用
+    // ExtractDecSymbolLocations —— 与悬停提示、跨文件补全同一口径。
+    void GotoChromaDefinition();
+    // 把已经打开的文档（任一视图）激活；没打开就按路径打开。返回最终的活动文档
+    // （失败给 nullptr）。抽出来是因为"先看两视图再开文件"这套逻辑在别处也写过，
+    // 而转到定义**必须**优先落到已打开的那份上（用户可能在右边视图改过它）。
+    Document* ActivateOrOpenDocument(const std::wstring& full);
+
+    // 状态栏"一次性消息"通道。复用 [5]（语言段）——这是本程序既有的瞬态消息位
+    // （宏回放完成提示也用它），下一次 UpdateStatusBar 会把语言名写回去。
+    // 没有独立段落是**刻意**的：为了不挤掉 Ln/Col、编码、EOL 这些常驻信息。
+    void SetTransientStatus(const std::wstring& text);
+
+    // --- 批次 106：状态栏「定义」提示（转到定义的"看得见"那一半）-------------
+    // 批次 104 加了 F12 跳转、批次 105 加了 Alt+Left 回程，但**没有任何东西告诉
+    // 用户脚下这个词是可以跳的** —— 一次单向旅程。这个提示把"跳到哪去"提前显示
+    // 在状态栏上：光标停在被引用 .dec 里声明过的符号上时，[7] 段显示
+    // `<.dec 名> 第 N 行  <那一行原文>`；离开符号就清空。
+    //
+    // 【为什么不是悬停气泡】原计划是把提示接到批次 103 的悬停气泡上，但本沙箱
+    //   里鼠标悬停路径**不可验证**（桌面被一个全屏窗口覆盖，光标永远落不到本程序
+    //   窗口上，见 MEMORY 里那次实测）。按"没真机跑过的 e2e 断言等于未验证"的
+    //   纪律，宁可选一个**不用鼠标**就能断言的观测面：状态栏是标准控件，
+    //   段的长度与文本都能跨进程读到。
+    //
+    // 【为什么挂在 SCN_UPDATEUI】它本来就是"光标动了"的通知，同一处理里已经有
+    //   UpdateStatusBar()。挂在定时器上会让提示慢半拍，还得自己造一套"光标变了"
+    //   的判定。
+    //
+    // 【为什么不查盘】只查 RefreshDecSymbols 填好的缓存（defHints_）—— 光标每动
+    //   一格都重读一次 .dec 是不可接受的。
+    void RefreshDefinitionHint();
+
+    // 状态栏「定义」提示的一行数据。名字 + 来自哪个 .dec（只留文件名：状态栏那段
+    // 只有 250px，路径会把行号挤没）+ 行号 + 那一行原文（UTF-8）。
+    struct DefHintEntry {
+        std::string  name;
+        std::wstring decFile;
+        int          line = 0;
+        std::string  lineText;
+    };
+    // 与 decSymbols 同一批 .dec 抽出来，所以**只在 RefreshDecSymbols 里重建**。
+    // 重建点与消费点分离，是为了让"光标移动"这条热路径上零 IO。
+    std::vector<DefHintEntry> defHints_;
+    // 上一次写进状态栏的提示文本。用来避免重复 SB_SETTEXTW —— 同一行内左右移动
+    // 时提示内容不变，反复写既白白跨进程发消息、又会让那段闪烁。
+    std::wstring defHintShown_;
+
+    // --- 批次 105：导航历史（上一处 / 下一处，Alt+Left / Alt+Right）-----------
+    // 游标语义在 NavHistory.h 里（纯逻辑、有单测）；这里只做"翻译"：
+    // 把编辑器位置翻译成 NavPoint，再把 NavPoint 还原成"激活文档 + 光标落点"。
+    //
+    // 【记两次是刻意的】每次跳转**前后各记一次**。因为 NavHistory::Push 对"与当前
+    //   项相同"的点是空操作，"跳转前"那次在常见情形下自动退化成 no-op；而用户
+    //   在跳转前手动移动过的那一段不会丢（它被这一次记下来）。少记一次会退化成
+    //   "只能跳回上一次跳转的落点"，多记一次不会（去重在 NavHistory 里）。
+    void RememberNavPoint();
+    // 取"活动文档此刻的光标位置"当一个导航点。返回 false 表示这一点不入历史
+    // （没有活动文档 / 大文件查看器没有 Scintilla 光标 / 未命名文档没有路径）。
+    bool NavPointHere(NavPoint* out) const;
+    // 回到一个导航点。目标文档可能已经关了 ⇒ 走 ActivateOrOpenDocument 重新打开
+    // （与转到定义同一条路径，包括"优先落到右边视图里已打开的那份"）。
+    // 位置会夹到文件长度以内 —— 文件可能在这期间被外部改短了。
+    bool GoToNavPoint(const NavPoint& p);
+    void NavBack();
+    void NavForward();
+    NavHistory navHistory_;
+
+    // --- 批次 107：查找所有引用（Shift+F12）---------------------------------
+    // 扫描范围 = 所有打开的 Chroma 文档（左右两视图）+ 当前文档 SET_DEC_FILE
+    // 引用的 .dec（那里的声明也算一处，与 VS Code 的语义一致：改一个 pin 之前
+    // 要同时看到"谁在用"和"它在哪儿定义"）。
+    // 命中直接喂给既有的结果面板，双击跳转沿用 OnResultActivate —— 不新造一套。
+    void FindAllReferences();
+
     // --- 批次 96：CRAFT 编译集成（方向 D 第三刀）-----------------------------
     // 内核分三层，这里只负责"何时跑、结果给谁看"：
     //   CraftProject（纯函数：该跑什么）→ CraftHost（读盘/读环境）→ CraftRunner（真的跑）
@@ -233,6 +311,9 @@ private:
     void SpawnWithArgs(const std::wstring& args);
     void SpawnRestoreWindow(const std::wstring& slotFile);  // --new --restore slot
     void NewWindowProcess();   // File > New Window (blank, unshared session)
+    // How many other xfsWinPad main windows are alive right now (any process).
+    // Used at WM_CLOSE to tell "closing one window" from "the app is exiting".
+    int CountOtherMainWindows() const;
     void StartupSession();   // CLI files / --restore / legacy restore + fan-out
     void RestoreSession(const struct SessionState& ss);
     void OpenCliFiles(const StartupOptions& opts); // 单实例转发/启动共用：开文件进标签

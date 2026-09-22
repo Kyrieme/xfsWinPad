@@ -161,6 +161,18 @@ ShortcutTable::Defaults() {
             mk(Cmd::ViewLogPanel, true, true, false, 'L'),
             mk(Cmd::ViewTerminal, true, true, false, 'T'),
             mk(Cmd::ViewAiPanel, true, true, false, 'A'),
+            // 批次 104：转到定义。F12 是编辑器界的老约定（VS / VS Code / N++ 的
+            // "转到定义"都是 F12），且此前**未被占用**（见 check-command-ids.py
+            // 与 ShortcutTable 全表扫描），所以不需要任何迁移。
+            mk(Cmd::GotoDefinition, false, false, false, VK_F12),
+            // 批次 107：查找所有引用。Shift+F12 是 VS / VS Code 里"F12 的反方向"
+            // 的固定搭配，且此前未被占用（全表只有这一处 VK_F12，不带 Shift）。
+            mk(Cmd::FindAllReferences, false, false, true, VK_F12),
+            // 批次 105：上一处/下一处。Alt+Left / Alt+Right 是浏览器与 VS Code 的
+            // 通用约定，且本表此前**没有** Alt+方向键（只有 Ctrl+Alt+字母），
+            // 不需要迁移。与转到定义配成一对：跳出去 + 跳回来。
+            mk(Cmd::NavBack, false, true, false, VK_LEFT),
+            mk(Cmd::NavForward, false, true, false, VK_RIGHT),
             mk(Cmd::MacroStart, true, false, true, 'R'),
             mk(Cmd::MacroPlayback, true, false, true, 'M'),
             // 批次 29 行变换

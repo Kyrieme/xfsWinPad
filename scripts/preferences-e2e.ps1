@@ -6,6 +6,16 @@
 param(
     [Parameter(Mandatory=$true)][string]$ExePath
 )
+# ---- profile guard -----------------------------------------------------------
+# Uniform rule: every e2e probe declares its profile handling. This one launches
+# the app itself, so it may kill stray instances first; a surviving
+# session-<pid>.json would otherwise be resurrected as a phantom window.
+$scriptDir = $PSScriptRoot
+if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+. (Join-Path $scriptDir '_profile-guard.ps1')
+Start-ProfileGuard
+trap { Say-PG ("PROFILE-GUARD-TRAP: " + $_.Exception.Message); Stop-ProfileGuard; exit 1 }
+
 $ErrorActionPreference = 'Stop'
 
 Add-Type @"
@@ -66,6 +76,7 @@ public static class PF {
 "@
 
 function Fail([string]$m) { Write-Output "FAIL $m"; if ($app) { Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force }; exit 1 }
+Stop-ProfileGuard
 
 function Wait-True([scriptblock]$cond, [int]$timeoutMs) {
     $deadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
@@ -130,4 +141,5 @@ Write-Output 'PASS X close re-enables owner (freeze regression)'
 
 Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Output 'preferences-e2e: ALL PASS'
+Stop-ProfileGuard
 exit 0

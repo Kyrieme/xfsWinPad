@@ -13,6 +13,7 @@
 #include "../core/Util.h"
 #include "../document/Document.h"
 #include "../editor/Editor.h"
+#include "../encoding/Encoding.h"   // 批次 106：DecodeToUtf8（.dec 的 ANSI/GBK → UTF-8）
 #include "../language/LanguageMap.h"
 #include "../language/XfsLexer.h"     // 批次 73：Chroma 族词法器名（模型来源标注）
 #include "../language/Chroma3380Diagnostics.h"  // 批次 87：静态校验内核（纯函数）
@@ -64,6 +65,13 @@ constexpr UINT_PTR kAiReloadTimer = 4;      // AI 改盘延迟对比（3s）
 constexpr UINT_PTR kDiagTimerId = 5;
 constexpr int kDiagDebounceMs = 450;
 
+// 批次 106：状态栏「定义」提示里那行原文最多显示多少 UTF-8 字节。
+// [7] 段是 250px（96dpi），250 字节足够放一条真实的 .dec 条目
+// （`MCLK    =   40  =  1  = IO  ;  //CLK` 才 33 字节）；再长就该截 ——
+// 截断按**码点边界**退，见 chroma3380::DefinitionHintText（.dec 的行尾注释
+// 经常是中文，按字节硬切会产生非法 UTF-8，显示成乱码）。
+constexpr std::size_t kDefHintMaxBytes = 160;
+
 // 批次 87：这个文档要不要走 Chroma 静态检查？判定交给内核（FileKindFromPath），
 // 保证"什么算 Chroma 文件"只有一处实现 —— 状态栏、菜单、刷新路径都调它。
 chroma3380::ChromaFileKind KindOfDocument(const Document& d) {
@@ -77,9 +85,13 @@ chroma3380::ChromaFileKind KindOfDocument(const Document& d) {
 //   · 相对路径相对**本文档所在目录**解析（手册写法 `.\ls299_pin.dec`）；
 //   · 找不到 / 不是常规文件 / 超过 8MB / 读失败 —— 一律静默跳过；
 //   · 最多读 8 个引用（防御性上限；正常工程只有 1 个 SET_DEC_FILE）。
-std::vector<std::string> LoadReferencedDecTexts(const Document& d,
-                                                const std::string& text) {
-    std::vector<std::string> out;
+//
+// 批次 104：拆成"解析路径"与"读文本"两步。转到定义要的是**路径**（要在那里打开
+// 文件），补全要的是**文本**。两步共用同一套路径解析，免得出现"补全能认、跳转认
+// 不出"这种分叉（与 ExtractDecSymbols/Locations 合并成委托是同一个理由）。
+std::vector<std::filesystem::path> ResolveDecFilePaths(const Document& d,
+                                                      const std::string& text) {
+    std::vector<std::filesystem::path> out;
     const std::vector<chroma3380::DecFileRef> refs = chroma3380::FindDecFileRefs(text);
     out.reserve(refs.size());
     for (const chroma3380::DecFileRef& ref : refs) {
@@ -94,13 +106,29 @@ std::vector<std::string> LoadReferencedDecTexts(const Document& d,
         if (p.is_relative()) p = d.path.parent_path() / p;
         std::error_code ec;
         if (!std::filesystem::is_regular_file(p, ec)) continue;
-        const uintmax_t size = std::filesystem::file_size(p, ec);
-        if (ec || size == 0 || size > 8u * 1024u * 1024u) continue;
-        std::ifstream in(p, std::ios::binary);
-        if (!in) continue;
-        std::string body((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
-        out.push_back(std::move(body));
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+// 8MB 上限：真实 .dec 是几 KB 到几十 KB，到这个量级一定不是工程里的引脚定义。
+// 读失败 / 空文件一律给空串，调用方按"这条引用没用"处理（与上面同口径：宁漏不误）。
+std::string ReadSmallTextFile(const std::filesystem::path& p) {
+    std::error_code ec;
+    const uintmax_t size = std::filesystem::file_size(p, ec);
+    if (ec || size == 0 || size > 8u * 1024u * 1024u) return {};
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return {};
+    return std::string((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+}
+
+std::vector<std::string> LoadReferencedDecTexts(const Document& d,
+                                                const std::string& text) {
+    std::vector<std::string> out;
+    for (const std::filesystem::path& p : ResolveDecFilePaths(d, text)) {
+        std::string body = ReadSmallTextFile(p);
+        if (!body.empty()) out.push_back(std::move(body));
     }
     return out;
 }
@@ -118,6 +146,26 @@ std::vector<std::string> MergeDecSymbols(const std::vector<std::string>& decText
         }
     }
     return out;
+}
+
+// 批次 104：光标下的"词"（转到定义的第一步）。
+// 词边界交给 Scintilla（与悬停提示 HandleDwellStart 同一个口径）：`MCLK` 这种
+// 全大写、`UR_PIN_GROUP` 这种带下划线的名字，只有 Scintilla 的词表说得准，
+// 自己写一套"字母数字下划线"迟早和它不一致。第二个参数 1 = 只认词字符。
+// 长度上限 64 与内核 addName 的同一处约定对齐（手册 §2.7：名字最长 64 字符），
+// 拿一个明显不是符号的长串去翻 .dec 是白读盘。
+std::string WordAtCaret(const Editor& ed) {
+    const sptr_t pos = ed.Send(SCI_GETCURRENTPOS);
+    const sptr_t ws = ed.Send(SCI_WORDSTARTPOSITION, (uptr_t)pos, 1);
+    const sptr_t we = ed.Send(SCI_WORDENDPOSITION, (uptr_t)pos, 1);
+    if (we <= ws || (we - ws) > 64) return {};
+    std::string word((std::size_t)(we - ws), '\0');
+    Sci_TextRangeFull tr{};
+    tr.chrg.cpMin = (Sci_Position)ws;
+    tr.chrg.cpMax = (Sci_Position)we;
+    tr.lpstrText = word.data();
+    ed.Send(SCI_GETTEXTRANGEFULL, 0, (LPARAM)&tr);
+    return word;
 }
 
 // Plain container for the tab strip + editor controls.
@@ -663,6 +711,17 @@ void MainWindow::BuildMenus() {
     AppendMenuW(view, MF_STRING | (settings_.chromaDiagnostics ? MF_CHECKED : 0),
                 Cmd::ViewChromaCheck, Tr(L"menu.view.chromacheck"));
     item(view, Tr(L"menu.view.diagnostics"), Cmd::ViewDiagnostics);
+    // 批次 104：转到定义放在 Chroma 簇里。它不是"视图开关"，但用户的直觉是
+    // "Chroma 的功能都在这一块" —— 塞进「搜索」菜单反而找不到。
+    item(view, Tr(L"menu.view.gotodef"), Cmd::GotoDefinition);
+    // 批次 107：查找所有引用。紧挨着"转到定义" —— 一个是去定义处，一个是列出
+    // 所有用法，用户想到其中一个就会想到另一个。
+    item(view, Tr(L"menu.view.findrefs"), Cmd::FindAllReferences);
+    // 批次 105：上一处 / 下一处。转到定义是它们最大的"产地"，所以挨着放；
+    // 但它们本身与 Chroma 无关 —— 跳行、诊断面板双击同样入历史。
+    sep(view);
+    item(view, Tr(L"menu.view.navback"), Cmd::NavBack);
+    item(view, Tr(L"menu.view.navforward"), Cmd::NavForward);
     sep(view);
     item(view, Tr(L"menu.view.zoomin"), Cmd::ViewZoomIn);
     item(view, Tr(L"menu.view.zoomout"), Cmd::ViewZoomOut);
@@ -2045,7 +2104,12 @@ void MainWindow::DoGotoLine() {
     Document* d = workspace_->Active();
     if (!d) return;
     int line = GotoDialog::Run(hwnd_, inst_, (int)d->editor.Send(SCI_GETLINECOUNT));
-    if (line > 0) d->editor.GotoLine(line);
+    if (line > 0) {
+        // 批次 105：跳转前后各记一次 —— 见 MainWindow.h 里"记两次是刻意的"。
+        RememberNavPoint();
+        d->editor.GotoLine(line);
+        RememberNavPoint();
+    }
 }
 
 void MainWindow::InsertDateTime() {
@@ -3206,6 +3270,8 @@ void MainWindow::ApplyAll(const AppSettings& s) {
 //   3) --no-restore / 非 primary 无参：空白窗口；
 //   4) primary 无参：恢复 session.json，并把其余存活槽位逐个 spawn 成独立
 //      窗口（孤儿槽由 SessionSlots 的 30 天 GC 兜底回收）。
+// 写出一侧（批次 108）：槽位只在"我是最后一个活着的窗口"（= 应用退出）时写，
+// 否则被关掉的窗口下次启动会复活；见 SessionCloseDisposition / WM_CLOSE。
 void MainWindow::StartupSession() {
     if (!startup_.files.empty()) { OpenCliFiles(startup_); return; }
     if (!startup_.restoreFile.empty()) {
@@ -3402,6 +3468,34 @@ void MainWindow::SpawnRestoreWindow(const std::wstring& slotFile) {
 // 批次 67：File > New Window (Ctrl+Shift+N)——独立空窗口，不重复恢复会话
 void MainWindow::NewWindowProcess() {
     SpawnWithArgs(L"--new --no-restore");
+}
+
+// 批次 108：数一遍"除自己之外还活着几个 xfsWinPad 主窗口"。
+// 所有主窗口共用 kClassName（main.cpp 的单实例握手也靠它找窗口），而每个
+// 窗口各占一个进程 ⇒ 排除自己的 pid 即可。窗口的"可见性"不作判据：最小化
+// 的窗口照样是活的，启动早期尚未 ShowWindow 的窗口也算活。
+namespace {
+struct OtherMainWindowCtx {
+    unsigned long selfPid = 0;
+    int count = 0;
+};
+BOOL CALLBACK CountOtherMainWindowProc(HWND h, LPARAM lp) {
+    auto* ctx = reinterpret_cast<OtherMainWindowCtx*>(lp);
+    wchar_t cls[64] = {};
+    if (::GetClassNameW(h, cls, 64) == 0) return TRUE;
+    if (::lstrcmpW(cls, kClassName) != 0) return TRUE;
+    DWORD pid = 0;
+    ::GetWindowThreadProcessId(h, &pid);
+    if (pid != ctx->selfPid) ++ctx->count;
+    return TRUE;
+}
+}  // namespace
+
+int MainWindow::CountOtherMainWindows() const {
+    OtherMainWindowCtx ctx;
+    ctx.selfPid = (unsigned long)::GetCurrentProcessId();
+    ::EnumWindows(&CountOtherMainWindowProc, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.count;
 }
 
 void MainWindow::SpawnWithArgs(const std::wstring& args) {
@@ -3723,7 +3817,11 @@ void MainWindow::ToggleDiagnostics() {
 // 免得同一轮里读两遍盘。
 std::vector<std::string> MainWindow::RefreshDecSymbols() {
     Document* d = workspace_ ? workspace_->Active() : nullptr;
-    if (!d) return {};
+    if (!d) {
+        defHints_.clear();
+        RefreshDefinitionHint();
+        return {};
+    }
 
     const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
     const bool wantsDec = (kind == chroma3380::ChromaFileKind::Plan ||
@@ -3731,13 +3829,371 @@ std::vector<std::string> MainWindow::RefreshDecSymbols() {
     if (!wantsDec || d->editor.IsLargeFile()) {
         // 非 Chroma / 大文件：清空缓存（弹窗少一路词源，不是错）。
         d->decSymbols.clear();
+        defHints_.clear();
+        RefreshDefinitionHint();
         return {};
     }
 
-    std::vector<std::string> decTexts =
-        LoadReferencedDecTexts(*d, d->editor.GetTextUtf8());
+    const std::string src = d->editor.GetTextUtf8();
+    std::vector<std::string> decTexts = LoadReferencedDecTexts(*d, src);
     d->decSymbols = MergeDecSymbols(decTexts);
+
+    // 批次 106：同一批 .dec 再抽一次**带位置**的，喂状态栏「定义」提示。
+    // 这里必须重抽（而不是从 decSymbols 反推），两个理由都不是洁癖：
+    //   ① decSymbols 是**原始字节**上的抽取结果（真实 .dec 是 ANSI/GBK），而位置
+    //      只能在**解码后**的文本上算 —— F12 正是拿编辑器文本重抽的（见
+    //      GotoChromaDefinition 的"位置口径"一节）。两边同源，提示才不可能与
+    //      跳转打架：提示说"第 4 行"，F12 就必须落在第 4 行。
+    //   ② 提示还要那一行的**原文**（含对齐空格与行尾注释），名字清单里没有。
+    // 代价是每个 .dec 多扫一遍（真实 .dec 只有几 KB），比"提示与跳转各说各话"划算。
+    defHints_.clear();
+    {
+        std::set<std::string> seen;
+        for (const std::filesystem::path& p : ResolveDecFilePaths(*d, src)) {
+            const std::string utf8 = encoding::DecodeToUtf8(ReadSmallTextFile(p)).utf8;
+            if (utf8.empty()) continue;
+            // 只留文件名：路径会把行号从 250px 里挤出去，而文件名已经足够让用户
+            // 知道跳过去会打开哪一个（同目录下的 .dec 通常只有一个）。
+            const std::wstring fname = p.filename().wstring();
+            for (const chroma3380::DecSymbolLoc& s :
+                 chroma3380::ExtractDecSymbolLocations(utf8)) {
+                // 与 GotoChromaDefinition 同口径：多个 .dec 里有同名时取**引用顺序
+                // 上的第一个**（ExtractDecSymbolLocations 内部也是同名记第一次）。
+                if (!seen.insert(s.name).second) continue;
+                defHints_.push_back({s.name, fname, s.line, s.lineText});
+            }
+        }
+    }
+    // 缓存刚换过 → 提示必须跟着换。光标可能一动没动（换标签、改完 .dec 存盘），
+    // 所以不能指望 SCN_UPDATEUI 来收尾。
+    RefreshDefinitionHint();
     return decTexts;
+}
+
+// 批次 106：状态栏「定义」提示（转到定义的"看得见"那一半）。见头文件里的说明。
+void MainWindow::RefreshDefinitionHint() {
+    if (!status_) return;
+
+    std::wstring text;
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (d) {
+        const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
+        const bool wanted = (kind == chroma3380::ChromaFileKind::Plan ||
+                             kind == chroma3380::ChromaFileKind::Pattern);
+        if (wanted && !d->editor.IsLargeFile()) {
+            // 词边界口径与 F12 / 悬停提示同一处（WordAtCaret 走 Scintilla 的词表），
+            // 所以"提示出现了"与"F12 跳得动"是同一件事的两个说法。
+            const std::string word = WordAtCaret(d->editor);
+            if (!word.empty()) {
+                for (const DefHintEntry& e : defHints_) {
+                    if (e.name != word) continue;
+                    text = I18n::Instance().Fmt(L"sb.defhint",
+                        {e.decFile, std::to_wstring(e.line),
+                         Utf8ToWide(chroma3380::DefinitionHintText(
+                             e.lineText, e.name, kDefHintMaxBytes))});
+                    break;
+                }
+            }
+        }
+    }
+
+    if (text == defHintShown_) return;   // 没变就不写（避免状态栏闪烁，见头文件）
+    defHintShown_ = text;
+    status_->SetDefinitionHint(text);
+}
+
+// ---- 批次 104：转到定义 ------------------------------------------------------
+
+void MainWindow::SetTransientStatus(const std::wstring& text) {
+    if (status_) status_->SetPart(5, text);
+    Logger::Info("transient status: " + WideToUtf8(text));
+}
+
+// 已经打开的文档优先 —— 转到定义**必须**落到用户手里那份上。原因不只是"少开一个
+// 标签"：右边视图里那份可能已经被改过（未保存），跳到磁盘版就等于跳到一份旧文本，
+// 用户看到的和跳到的对不上。左视图（docs_）和右视图（视图 1）都要找。
+Document* MainWindow::ActivateOrOpenDocument(const std::wstring& full) {
+    if (!workspace_ || full.empty()) return nullptr;
+    const std::filesystem::path fp(full);
+
+    for (int i = 0; i < workspace_->Count(); ++i)
+        if (workspace_->DocumentAt(i)->path == fp) {
+            workspace_->Activate(i);
+            return workspace_->Active();
+        }
+    for (int i = 0; i < workspace_->Count1(); ++i)
+        if (workspace_->FindByTabIndex1(i)->path == fp) {
+            workspace_->ActivateView1(i);
+            return workspace_->Active1();
+        }
+
+    workspace_->OpenPath(full);
+    return workspace_->Active();
+}
+
+// Chroma 3380 转到定义：光标下的符号 → 被引用 .dec 里的声明处。
+//
+// 【为什么只在 .pln / .pat 里可用】只有它们有 `SET_DEC_FILE`。光标已经落在
+//   `.dec` 里时，"定义"就是脚下这一行，跳过去等于没动 —— 所以按文档类型直接挡掉
+//   并给一句说明，而不是做一个看起来能用、实际空转的命令。
+//
+// 【位置口径上的坑（这个功能真正的难点）】内核抽出来的 (line, col) 是**原始文件
+//   字节**里的位置，而编辑器里装的是**解码后的 UTF-8**。真实 .dec 是 ANSI/GBK，
+//   只要名字**同一行前面**出现过非 ASCII 字节（一行中文注释就够了），两套字节偏移
+//   就不再相等 —— 拿原始 col 去编辑器里定位会偏，而且偏得不多不少刚好躲过肉眼
+//   检查。所以分两步：① 用**名字**（与位置无关）在原始字节里挑出是哪个 .dec；
+//   ② 打开它，再在**编辑器自己的文本**上重抽一次位置。落点永远和用户看到的那份
+//   文本同源，与文件原本是什么编码无关。
+//
+// 【找不到时】宁可什么都不做也不瞎跳（硬约束 ③ 的同一精神），但**不静默**。
+void MainWindow::GotoChromaDefinition() {
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!d) return;
+
+    const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
+    if ((kind != chroma3380::ChromaFileKind::Plan &&
+         kind != chroma3380::ChromaFileKind::Pattern) || d->editor.IsLargeFile()) {
+        SetTransientStatus(Tr(L"msg.gotodef.wrongfile"));
+        return;
+    }
+
+    const std::string word = WordAtCaret(d->editor);
+    if (word.empty()) {
+        SetTransientStatus(Tr(L"msg.gotodef.noword"));
+        return;
+    }
+
+    const std::vector<std::filesystem::path> decs =
+        ResolveDecFilePaths(*d, d->editor.GetTextUtf8());
+    if (decs.empty()) {
+        SetTransientStatus(Tr(L"msg.gotodef.nodec"));
+        return;
+    }
+
+    // ① 按名字挑文件。多个 .dec 里有同名（不同工艺库）时取**引用顺序上的第一个**，
+    //    与 ExtractDecSymbolLocations"同名只记第一次"同口径。
+    std::wstring hit;
+    for (const std::filesystem::path& p : decs) {
+        const std::vector<std::string> names =
+            chroma3380::ExtractDecSymbols(ReadSmallTextFile(p));
+        if (std::find(names.begin(), names.end(), word) != names.end()) {
+            hit = p.wstring();
+            break;
+        }
+    }
+    if (hit.empty()) {
+        SetTransientStatus(I18n::Instance().Fmt(L"msg.gotodef.notfound",
+                                                {Utf8ToWide(word)}));
+        return;
+    }
+
+    // ② 打开（或激活）那份 .dec，在**它的文本**上重抽位置 —— 见上面"位置口径"。
+    RememberNavPoint();   // 批次 105：跳转前记下"从哪来"
+    Document* target = ActivateOrOpenDocument(hit);
+    if (!target) {
+        SetTransientStatus(I18n::Instance().Fmt(L"msg.gotodef.openfail", {hit}));
+        return;
+    }
+
+    int line = 0, col = 0;
+    for (const chroma3380::DecSymbolLoc& s :
+         chroma3380::ExtractDecSymbolLocations(target->editor.GetTextUtf8())) {
+        if (s.name == word) { line = s.line; col = s.col; break; }
+    }
+    if (line <= 0) {
+        // 理论上到不了：① 已经在磁盘文本里找到过这个名字。真到了这里说明文件在
+        // 两次读之间被改过（或解码后名字变了）。至少把光标放到文件开头，**不装作
+        // 跳到了**。
+        target->editor.GotoLine(1);
+        ::SetFocus(target->editor.Hwnd());
+        RememberNavPoint();
+        return;
+    }
+
+    // 用**字节**定位，不用 Editor::GotoPosition —— 它的列是"显示列"（tab 已展开，
+    // 走 SCI_FINDCOLUMN 的逆），而 col 是行内字节偏移，含 tab 的行上两者不相等。
+    // SCI_POSITIONFROMLINE 给行首字节位置（CRLF 下 `\r` 算上一行行尾），加行内偏移
+    // 正好落在名字首字节；再选满整个名字，用户一眼看到跳到了哪个符号。
+    const sptr_t lineStart =
+        target->editor.Send(SCI_POSITIONFROMLINE, (uptr_t)(line - 1));
+    target->editor.SelectRange(lineStart + col,
+                               lineStart + col + (sptr_t)word.size());
+    ::SetFocus(target->editor.Hwnd());
+    RememberNavPoint();   // 批次 105：跳转后记下"到哪去"
+}
+
+// ---- 批次 107：查找所有引用（Shift+F12）-------------------------------------
+//
+// F12 回答"这个词在哪儿定义的"，这条回答它的反方向："这个词在哪些地方被用过"。
+// 改一个 pin 之前得先知道要动多少处 —— 只有 F12 的话，用户得自己拿查找框一遍遍搜，
+// 而普通查找会把 `MCLK2`、`// MCLK` 这些都算进来。
+//
+// 三个刻意的选择：
+//
+// ① 判定交给内核（FindSymbolReferences），宿主不重写"什么算一次引用"。
+//    整词边界 / 注释不算 / 字符串不算，这三条各有单测，抄一份到宿主迟早分叉。
+//
+// ② 结果喂给既有的**查找结果面板**，双击跳转沿用 OnResultActivate。不新造一个
+//    "引用列表"控件：面板已经有文件名列、有计数、有磁盘命中的路由（打开未打开的
+//    .dec 并选中那一行），这些正是这条命令需要的。
+//
+// ③ 范围 = 所有打开的 Chroma 文档 + 当前文档 SET_DEC_FILE 引用的 .dec。
+//    .dec 里的**声明**也算一处，与 VS Code 的语义一致：改一个 pin 之前要同时看到
+//    "谁在用"和"它在哪儿定义"。
+//
+// 位置口径（与 GotoChromaDefinition 同一条纪律）：
+//   内核给的是"第几行 + 行内字节偏移"，结果面板要的是**文档字节区间**。
+//   .dec 那一侧必须在**解码后**的文本上算（真实 .dec 是 ANSI/GBK，编辑器打开后
+//   文档里是 UTF-8）—— 在原始字节上算出来的偏移，双击会选中别的地方。
+void MainWindow::FindAllReferences() {
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!d) return;
+
+    const chroma3380::ChromaFileKind kind = KindOfDocument(*d);
+    if ((kind != chroma3380::ChromaFileKind::Plan &&
+         kind != chroma3380::ChromaFileKind::Pattern &&
+         kind != chroma3380::ChromaFileKind::Dec) || d->editor.IsLargeFile()) {
+        SetTransientStatus(Tr(L"msg.findrefs.wrongfile"));
+        return;
+    }
+
+    const std::string word = WordAtCaret(d->editor);
+    if (word.empty()) {
+        SetTransientStatus(Tr(L"msg.findrefs.noword"));
+        return;
+    }
+
+    std::vector<SearchHit> hits;
+
+    // 把内核的 (行, 列, 长) 翻成面板要的 (start, end) + 行文本。
+    // path 为空 = 已打开的文档（走 docIndex 路由）；非空 = 磁盘命中（面板会去打开）。
+    auto push = [&](const std::string& text, const std::wstring& label,
+                    const std::wstring& path, int docIndex, int docView) {
+        if (text.empty()) return;
+        for (const chroma3380::SymbolRef& r :
+             chroma3380::FindSymbolReferences(text, word)) {
+            // 区间换算在内核里（有单测）：它错了是静默的 —— 行号与行文本都对，
+            // 只有双击选中的东西偏几个字节。
+            chroma3380::SymbolRefSpan sp;
+            if (!chroma3380::LocateSymbolRef(text, r, sp)) continue;
+            SearchHit h;
+            h.file     = label;
+            h.path     = path;
+            h.docIndex = docIndex;
+            h.docView  = docView;
+            h.line     = r.line;
+            h.start    = (sptr_t)sp.start;
+            h.end      = (sptr_t)sp.end;
+            h.lineText = Utf8ToWide(text.substr(sp.lineBeg, sp.lineEnd - sp.lineBeg));
+            hits.push_back(std::move(h));
+        }
+    };
+
+    // ① 所有打开的 Chroma 文档（左右两视图都算；大文件查看器没有 Scintilla 光标，
+    //    位置口径完全不同，跳过）。
+    auto scanDoc = [&](Document* doc, int idx, int view) {
+        if (!doc || doc->editor.IsLargeFile()) return;
+        const chroma3380::ChromaFileKind k = KindOfDocument(*doc);
+        if (k != chroma3380::ChromaFileKind::Plan &&
+            k != chroma3380::ChromaFileKind::Pattern &&
+            k != chroma3380::ChromaFileKind::Dec) return;
+        push(doc->editor.GetTextUtf8(), doc->DisplayName(), std::wstring(), idx, view);
+    };
+    for (int i = 0; i < workspace_->Count(); ++i)
+        scanDoc(workspace_->DocumentAt(i), i, 0);
+    for (int i = 0; i < workspace_->Count1(); ++i)
+        scanDoc(workspace_->FindByTabIndex1(i), i, 1);
+
+    // ② 当前文档 SET_DEC_FILE 引用的 .dec。已经打开的由 ① 覆盖，这里只补没打开的，
+    //    免得同一行在结果里出现两次。
+    auto isOpen = [&](const std::filesystem::path& p) {
+        for (int i = 0; i < workspace_->Count(); ++i)
+            if (workspace_->DocumentAt(i)->path == p) return true;
+        for (int i = 0; i < workspace_->Count1(); ++i)
+            if (workspace_->FindByTabIndex1(i)->path == p) return true;
+        return false;
+    };
+    for (const std::filesystem::path& p :
+         ResolveDecFilePaths(*d, d->editor.GetTextUtf8())) {
+        if (isOpen(p)) continue;
+        const std::string raw = ReadSmallTextFile(p);
+        if (raw.empty()) continue;
+        push(encoding::DecodeToUtf8(raw).utf8,
+             p.filename().wstring(), p.wstring(), -1, 0);
+    }
+
+    if (hits.empty()) {
+        SetTransientStatus(I18n::Instance().Fmt(L"msg.findrefs.none",
+                                               {Utf8ToWide(word)}));
+        return;
+    }
+    ShowSearchResults(std::move(hits));
+}
+
+// ---- 批次 105：导航历史（上一处 / 下一处）------------------------------------
+//
+// 游标语义（去重 / 分支截断 / 上限）全在 NavHistory 里，且有单测。这里只做两件
+// 事：把编辑器位置翻译成 NavPoint，把 NavPoint 还原成"激活文档 + 光标落点"。
+
+bool MainWindow::NavPointHere(NavPoint* out) const {
+    if (!out || !workspace_) return false;
+    Document* d = workspace_->Active();
+    if (!d) return false;
+    // 大文件查看器没有 Scintilla 光标，位置口径完全不同 —— 硬塞进历史会让
+    // "回到那个位置"变成一句谎话。
+    if (d->editor.IsLargeFile()) return false;
+    // 未命名文档没有可复现的路径（历史里存的就是路径），无处可回。
+    if (d->path.empty()) return false;
+    out->path = d->path.wstring();
+    out->pos = (long long)d->editor.Send(SCI_GETCURRENTPOS);
+    return true;
+}
+
+void MainWindow::RememberNavPoint() {
+    NavPoint p;
+    if (NavPointHere(&p)) navHistory_.Push(p);
+}
+
+bool MainWindow::GoToNavPoint(const NavPoint& p) {
+    // 目标文档可能已经关了 —— 重新打开它（与转到定义同一条路径：已打开的优先，
+    // 包括右边视图里那份被改过的）。
+    Document* d = ActivateOrOpenDocument(p.path);
+    if (!d) return false;
+    if (d->editor.IsLargeFile()) return false;
+    // 文件可能在这期间被外部改短了 ⇒ 位置夹到合法区间，别把光标扔到文档外。
+    const sptr_t len = d->editor.Send(SCI_GETLENGTH);
+    sptr_t pos = (sptr_t)p.pos;
+    if (pos < 0) pos = 0;
+    if (pos > len) pos = len;
+    d->editor.Send(SCI_GOTOPOS, (uptr_t)pos);
+    d->editor.Send(SCI_SCROLLCARET);
+    ::SetFocus(d->editor.Hwnd());
+    return true;
+}
+
+void MainWindow::NavBack() {
+    NavPoint p;
+    if (!navHistory_.Back(&p)) {
+        SetTransientStatus(Tr(L"msg.nav.noback"));
+        return;
+    }
+    if (!GoToNavPoint(p)) {
+        SetTransientStatus(I18n::Instance().Fmt(L"msg.nav.openfail", {p.path}));
+        return;
+    }
+    // 【到站后刻意不再记一次】Back() 已经把"当前项"挪到这一格上了，此刻
+    // points_[cursor_] 就是我们所在的位置。再 Push 一次会**截断前进链**，
+    // 用户就再也回不到刚才那份文档了 —— 这是"回到上一处"最容易写错的地方。
+}
+
+void MainWindow::NavForward() {
+    NavPoint p;
+    if (!navHistory_.Forward(&p)) {
+        SetTransientStatus(Tr(L"msg.nav.noforward"));
+        return;
+    }
+    if (!GoToNavPoint(p))
+        SetTransientStatus(I18n::Instance().Fmt(L"msg.nav.openfail", {p.path}));
 }
 
 void MainWindow::RefreshDiagnostics() {
@@ -3861,9 +4317,12 @@ void MainWindow::OnDiagActivate(int row) {
     if (from > lineEnd) from = lineEnd;
     sptr_t len = it->length > 0 ? (sptr_t)it->length : 1;
     if (from + len > lineEnd) len = (std::max)((sptr_t)1, lineEnd - from);
+    // 批次 105：面板双击也是一次"跳转"，入导航历史（前后各记一次）。
+    RememberNavPoint();
     ed.GotoPosition(it->line, it->column);   // 先滚到行（列位），再上选区
     ed.SelectRange(from, from + len);        // 选中被判错的片段
     ::SetFocus(ed.Hwnd());
+    RememberNavPoint();
 }
 
 // ============================================================================
@@ -5304,6 +5763,10 @@ void MainWindow::ExecuteCommand(unsigned int id) {
         case Cmd::ViewCsvView: ToggleCsvView(); break;
         case Cmd::ViewDiagnostics: ToggleDiagnostics(); break;
         case Cmd::ViewChromaCheck: ToggleChromaCheck(); break;
+        case Cmd::GotoDefinition: GotoChromaDefinition(); break;
+        case Cmd::FindAllReferences: FindAllReferences(); break;
+        case Cmd::NavBack: NavBack(); break;
+        case Cmd::NavForward: NavForward(); break;
         // 批次 96：CRAFT 编译集成（工具菜单）
         case Cmd::BuildCompile: CompileActiveProject(); break;
         case Cmd::ViewCompileOutput: ToggleCompilePanel(); break;
@@ -5782,6 +6245,10 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                             if (selStart == selEnd) ed.ClearOccurrenceHighlight();
                         }
                         UpdateStatusBar();
+                        // 批次 106：状态栏「定义」提示。UPDATEUI 本来就是"光标动了"
+                        // 的通知，而且这条路径**每次纯光标移动**都会走（不是只有编辑
+                        // 才来），正好是提示需要的触发时机。提示只查缓存、不读盘。
+                        RefreshDefinitionHint();
                         // plugin host: caret/scroll activity → cursor event
                         pluginEvtPending_ |= XFS_EVT_CURSOR_MOVED;
                         ::SetTimer(hwnd_, kPluginEvtTimerId, 250, nullptr);
@@ -5975,7 +6442,13 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             ss.activeView = workspace_->CurrentView();
             // 批次 67：primary 写 legacy session.json，额外窗口各写自己的
             // session-<pid>.json 槽位，多进程并发退出互不覆盖。
-            SessionSave(SessionSlotPath(startup_.firstInstance), ss);
+            // 批次 108：但要先分清"关掉这一个窗口"和"整个应用退出" ——
+            // 还有别的窗口活着时写槽位，会让这个被关掉的窗口在下次启动时
+            // 复活成幽灵窗口（见 SessionCloseDisposition）。primary 的
+            // session.json 是权威会话，照旧始终写。
+            const bool primary = startup_.firstInstance;
+            SessionPersistOnClose(SessionSlotPath(primary), primary, ss,
+                                  CountOtherMainWindows());
 
             if (workspace_->CloseAll(/*keepOneDoc=*/false)) {
                 // delete autosave files (clean exit)

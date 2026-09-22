@@ -5,6 +5,9 @@
 #include <windows.h>
 #include <shlobj.h>
 
+#include <filesystem>
+#include <system_error>
+
 namespace xfs {
 
 std::wstring SessionDir() {
@@ -65,6 +68,24 @@ std::vector<std::wstring> SessionSlots(const std::wstring& dir,
     } while (::FindNextFileW(h, &fd));
     ::FindClose(h);
     return out;
+}
+
+CloseDisposition SessionCloseDisposition(int otherLiveWindows) {
+    // Only the last window to close is an application exit; anything else is the
+    // user dropping one window while the app keeps running.
+    return otherLiveWindows > 0 ? CloseDisposition::RetireSlot
+                                : CloseDisposition::PersistSession;
+}
+
+bool SessionPersistOnClose(const std::wstring& slotPath, bool isPrimary,
+                           const SessionState& s, int otherLiveWindows) {
+    if (!isPrimary &&
+        SessionCloseDisposition(otherLiveWindows) == CloseDisposition::RetireSlot) {
+        std::error_code ec;
+        std::filesystem::remove(slotPath, ec);
+        return false;
+    }
+    return SessionSave(slotPath, s);
 }
 
 // --- flat JSON (same minimal format as Settings) ------------------------------

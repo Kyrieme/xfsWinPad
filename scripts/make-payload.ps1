@@ -1,4 +1,4 @@
-# Assembles dist\payload\ from build outputs, builds xtaclean.exe,
+﻿# Assembles dist\payload\ from build outputs, builds xtaclean.exe,
 # generates dist\setup.rsp (relative paths) and compiles dist\setup.exe.
 # Works on local machine (PS 5.1) and GitHub Actions runners (pwsh 7).
 # Run from repo root:  powershell -File scripts\make-payload.ps1 [-SkipSetup]
@@ -107,7 +107,27 @@ if (-not $SkipSetup) {
         & $csc "@dist\setup.rsp"
         if ($LASTEXITCODE -ne 0) { throw 'setup.exe build failed' }
         Copy-Item "$root\dist\setup.exe" "$root\dist\xfsWinPad-setup.exe" -Force
-        Compress-Archive -Path "$pay\*" -DestinationPath "$root\dist\xfsWinPad-portable.zip" -Force
+        # 打包 payload 时**剔掉** debug.log / xfsWinPad.log。
+        #
+        # 【为什么需要】程序按设计会在**自己 exe 同目录**写 debug.log（现场排查用，
+        #   日志跟着工程走），而 dist\payload 里就放着 xfsWinPad.exe ⇒ 只要有人在这个
+        #   目录里跑一次打包好的程序，payload 里就会多出 debug.log。原来这里是
+        #   `Compress-Archive -Path "$pay\*"` 通配 ⇒ 它会被**静默**打进发布包。
+        #   实测（批次 103 之后）：本地那份 zip 里就混进了 debug.log，而它含本机路径
+        #   （用户目录、开发用的临时工作目录）—— 正是"注释/字符串不得指向本机路径"
+        #   那条约束要防的泄露，只是走的是构建产物这条路，源码守卫看不见。
+        #   CI 不受影响（干净工作区 + 从不跑 GUI），但本地手工打包会中招。
+        #
+        # 【为什么显式列名字而不是 `*.log`】只可能是这两个；用通配会把将来某个
+        #   "其实应该发出去"的 .log 一并吞掉，属于误伤。
+        # 【为什么不用 Remove-Item】沙箱的 safe-delete 钩子会把删除变成**终止性错误**，
+        #   反而让整个打包失败（实测过），所以只从入包清单里排除、不动磁盘。
+        $strayLogs = @('debug.log', 'xfsWinPad.log')
+        $zipItems = @(Get-ChildItem -LiteralPath $pay |
+                      Where-Object { $strayLogs -notcontains $_.Name })
+        if ($zipItems.Count -eq 0) { throw "payload is empty: $pay" }
+        Compress-Archive -Path ($zipItems | ForEach-Object { $_.FullName }) `
+                         -DestinationPath "$root\dist\xfsWinPad-portable.zip" -Force
         Write-Host 'dist\setup.exe + dist\xfsWinPad-setup.exe + portable zip rebuilt'
     } finally { Pop-Location }
 } else {

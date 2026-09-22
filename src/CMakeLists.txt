@@ -31,6 +31,7 @@ set(XFS_APP_SOURCES
     core/Util.cpp
     core/JsonLite.cpp
     core/I18n.cpp
+    core/NavHistory.cpp
 
     encoding/Encoding.cpp
     csv/CsvParser.cpp
