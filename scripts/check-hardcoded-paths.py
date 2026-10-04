@@ -35,8 +35,9 @@
 判定规则（窄而精确，零误报）
 --------------------------
 只揪**"指向本检出"**的字面量：一个 `<盘符>:<分隔符>` 开头、且路径段里**含有
-本仓库目录名**（`os.path.basename(仓库根)`）的字符串。这条判据不碰正当代码里
-的例子路径（如注释里写的 `C:\\Windows\\Temp\\x`，盘符后跟的不是本仓库名），
+本仓目录名**（见 `PROJECT_DIR_NAMES`，并上本次实际检出目录名）的字符串。这条
+判据不碰正当代码里的
+例子路径（如注释里写的 `C:\\Windows\\Temp\\x`，盘符后跟的不是本仓库名），
 也不碰 PowerShell 里合法的运行时常量（`$env:APPDATA`、`$env:TEMP`）。
 
 冻结豁免
@@ -68,6 +69,19 @@ TEXT_SUFFIXES = (
 
 # 单个文件超过这个大小就不扫（防御性上限，与其他守卫一致）。
 MAX_SCAN_BYTES = 4 * 1024 * 1024
+
+# 本仓的**目录名**（不是检出位置）。判据必须与"这次是在哪个目录里检出的"无关。
+#
+# 【为什么需要它，而不是只用 os.path.basename(仓库根)】
+#   旧实现只取 basename(仓库根) 当判据。但本机的检出目录叫 `xfsPad`，GitHub
+#   Actions 的检出目录叫 `xfsWinPad`（其把仓库检出到两级同名目录）—— 于是**同一条
+#   判据在两端得出不同结论**：`scripts/craft-e2e.ps1` 里那处真机样本前缀（一个
+#   `Z:` 盘、路径里含 `xfsPad` 段）在本机能命中（走豁免 ⇒ CLEAN），在 CI 命中不了
+#   （豁免被判
+#   "陈旧" ⇒ 恒红，且与代码无关）。一条守卫在 CI 与本机给出不同结论，本身就是要修
+#   的病。判据因此锚定**工程名**而不是"本次检出目录名"：本仓两个已知目录名都算，
+#   再并上本次实际的 basename（覆盖有人把 clone 目录改成别的名字的情况）。
+PROJECT_DIR_NAMES = ("xfsPad", "xfsWinPad")
 
 # 文件名 -> 期望命中数。见模块头"冻结豁免"。项数即断言，陈旧即红。
 EXEMPT = {
@@ -113,9 +127,14 @@ def git_ls_files():
 CANDIDATE = re.compile(r"[A-Za-z]:[\\/][^\r\n'\"`]*")
 
 
-def build_pattern(repo_name):
-    """返回 (候选正则, 仓库名路径段正则)。"""
-    seg = re.compile(r"[\\/]" + re.escape(repo_name) + r"(?:[\\/]|$)")
+def build_pattern(dir_names):
+    """返回 (候选正则, 仓库名路径段正则)。
+
+    dir_names：所有可能的本仓目录名（见 PROJECT_DIR_NAMES）。任一命中即算
+    "指向本检出的字面量"，这样 CI 与本机不会因检出目录名不同而结论不同。
+    """
+    alt = "|".join(re.escape(n) for n in sorted(dir_names))
+    seg = re.compile(r"[\\/](?:" + alt + r")(?:[\\/]|$)")
     return CANDIDATE, seg
 
 
@@ -172,11 +191,16 @@ def main():
     os.chdir(root)
 
     repo_name = os.path.basename(os.path.normpath(root))
+    # 判据目录名 = 已知工程名 ∪ 本次检出目录名。**并上 basename 是为了不丢
+    # "有人把 clone 目录改成别的名字"这一路**；并上 PROJECT_DIR_NAMES 是为了
+    # 让 CI（检出目录 xfsWinPad）与本机（xfsPad）得出同一结论。
+    dir_names = set(PROJECT_DIR_NAMES) | {repo_name}
     files = git_ls_files()
-    bad, hits, checked = check_paths(root, files, build_pattern(repo_name))
+    bad, hits, checked = check_paths(root, files, build_pattern(dir_names))
 
     if verbose:
-        print("仓库：%s（目录名 %s）" % (root, repo_name))
+        print("仓库：%s（目录名 %s；判据目录名 %s）"
+              % (root, repo_name, " / ".join(sorted(dir_names))))
         print("跟踪文件：%d" % len(files))
         print("扫描的脚本文件：%d" % checked)
         print("命中文件：%d  豁免：%d" % (len(hits), len(EXEMPT)))

@@ -127,8 +127,18 @@ def sub_all(pattern, repl, text, label):
 
 
 def read_text(path):
+    """读取文本，并把**行尾统一成 LF**。
+
+    变异用的正则里有 `^...$`（例如改 COUNT_CASES 的 `CJK_ALLOW_COUNT = N`）。
+    本仓没有 .gitattributes，`core.autocrlf=true` ⇒ 同一次检出在不同环境可能拿到
+    LF 或 CRLF；原样保留 CRLF 时，`$` 前的那个 `\\r` 会让 `[ \\t]*$` 匹配不上，
+    变异"没生效"，自测当场抛 AssertionError。**实测**：本机与 CI 都因此红过
+    （同一行 `sub_once(r"^%s[ \\t]*=[ \\t]*(\\d+)[ \\t]*$" ...)`）。统一成 LF 后
+    判据与行尾无关。
+    """
     with open(path, "rb") as fh:
-        return fh.read().decode("utf-8")
+        return (fh.read().decode("utf-8")
+                .replace("\r\n", "\n").replace("\r", "\n"))
 
 
 def write_text(path, text):
