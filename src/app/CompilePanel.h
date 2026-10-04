@@ -71,6 +71,7 @@ public:
     void ShowBusy(const std::wstring& text);   // 清列表 + 只换摘要（编译进行中）
     void Clear();          // 清空并按 Retranslate 的规则重置标题
     void Retranslate();    // 语言切换后重刷文本
+    void OnDpiChanged(int dpi);   // 批次 138b：重建字体并重新交给子控件
 
     int RowCount() const { return (int)rows_.size(); }
     const CompileRow* RowAt(int i) const {

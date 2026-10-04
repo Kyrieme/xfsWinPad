@@ -11,6 +11,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <memory>
@@ -265,13 +266,18 @@ int main() {
         CHECK(mgr.ForwardNppMessage(nn::NPPM_ALLOCATECMDID, 9999, (LPARAM)&id, h) == FALSE && h);  // 超池
     }
 
-    // ---- 菜单/命令句柄族：GETMENUHANDLE / GETMENUBAR / SETMENUITEMCHECK / GETSHORTCUTBYCMDID ----
+    // ---- 菜单/命令句柄族：GETMENUHANDLE / ISTABBARHIDDEN / SETMENUITEMCHECK / GETSHORTCUTBYCMDID ----
     {
         // 未注入句柄：明确拒答（0）
         bool h = false;
         CHECK(mgr.ForwardNppMessage(nn::NPPM_GETMENUHANDLE, nn::NppPluginMenu, 0, h) == 0 && h);
         h = false;
-        CHECK(mgr.ForwardNppMessage(nn::NPPM_GETMENUBAR, 0, 0, h) == 0 && h);
+        // ★ 批次 120 回归判据：NPPMSG+52 是上游真实的 NPPM_ISTABBARHIDDEN（返回
+        //   BOOL），**不是**菜单栏句柄。旧代码在这里挂的是上游不存在的
+        //   `NPPM_GETMENUBAR` 并返回 mainMenu_ ⇒ 插件问"标签栏隐藏了吗"会拿到
+        //   一个非空 HMENU 读成 TRUE。判据必须落在"**不是句柄**"上，所以下面
+        //   在**句柄已注入**之后再断言一次（未注入时 0 与 FALSE 同值，没有区分力）。
+        CHECK(mgr.ForwardNppMessage(nn::NPPM_ISTABBARHIDDEN, 0, 0, h) == FALSE && h);
 
         HMENU pluginMenu = ::CreatePopupMenu();
         HMENU mainMenu = ::CreateMenu();
@@ -282,8 +288,11 @@ int main() {
         CHECK(mgr.ForwardNppMessage(nn::NPPM_GETMENUHANDLE, nn::NppPluginMenu, 0, h) == (LRESULT)pluginMenu && h);
         h = false;
         CHECK(mgr.ForwardNppMessage(nn::NPPM_GETMENUHANDLE, nn::NppMainMenu, 0, h) == (LRESULT)mainMenu && h);
+        // ★ 有区分力的那一半：句柄非空时，ISTABBARHIDDEN 仍须是 FALSE。
+        //   （若退化成"返回 mainMenu_"，这条会红 —— 负控 ④ 就是它。）
         h = false;
-        CHECK(mgr.ForwardNppMessage(nn::NPPM_GETMENUBAR, 0, 0, h) == (LRESULT)mainMenu && h);
+        CHECK(mgr.ForwardNppMessage(nn::NPPM_ISTABBARHIDDEN, 0, 0, h) == FALSE && h);
+        CHECK(mainMenu != nullptr && (LRESULT)mainMenu != FALSE);   // 上一条的对照物
         h = false;
         CHECK(mgr.ForwardNppMessage(nn::NPPM_GETMENUHANDLE, 7, 0, h) == 0 && h);
 
@@ -437,6 +446,103 @@ int main() {
     {
         bool h = false;
         CHECK(mgr.ForwardNppMessage(nn::NPPM_RELOADBUFFERID, curId, 0, h) == FALSE && h);
+    }
+
+    // ---- [11] 外来指针：拒答，而不是访问违例 -----------------------------------
+    // NPPM_* 编号在 WM_USER 之上 ⇒ Windows **不封送参数**。进程外插件
+    // （OOP 代理进程）把 NPPM_* 发给宿主主窗口时，wp/lp 里的指针是它自己
+    // 地址空间的地址；宿主解引用 = 访问违例，而这里没有 SEH。
+    // 本机替身（从宿主视角看与外来指针完全同类）：
+    //   * 只读页 —— "能读、不能写"，打所有**出参**分支；
+    //   * 保留区 —— "读也不行"，打所有**入参**分支。
+    // 若判据被改成恒真，下面的调用会直接 AV ⇒ 本测试进程死（= 红），
+    // 连计数断言都到不了。这就是这条守卫的负控形态。
+    printf("[11] foreign pointer refusal\n");
+    {
+        // 只读页先按 RW 分配、填 0xAB、再降级：拒答后要能证明"一个字节都没写"
+        auto* roRaw = static_cast<unsigned char*>(
+            ::VirtualAlloc(nullptr, 4096, MEM_COMMIT, PAGE_READWRITE));
+        CHECK(roRaw != nullptr);
+        memset(roRaw, 0xAB, 4096);
+        DWORD old = 0;
+        CHECK(::VirtualProtect(roRaw, 4096, PAGE_READONLY, &old) != FALSE);
+        void* rsv = ::VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+        CHECK(rsv != nullptr);
+
+        const LPARAM badOut = (LPARAM)roRaw;
+        const LPARAM badIn = (LPARAM)rsv;
+        const unsigned before = mgr.PointerRefusalCount();
+        unsigned expect = 0;
+        bool h = false;
+
+        // (a) 出参族：契约失败值 + 记账
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETCURRENTSCINTILLA, 0, badOut, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETPLUGINSCONFIGDIR, 64, badOut, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETFULLCURRENTPATH, 64, badOut, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETFILENAME, 64, badOut, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_ALLOCATECMDID, 2, badOut, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETSHORTCUTBYCMDID, 0, badOut, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETFULLPATHFROMBUFFERID, curId, badOut, h) == -1 && h); ++expect;
+
+        // (b) 入参族：读不到就拒答
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_SWITCHTOFILE, 0, badIn, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_DOOPEN, 0, badIn, h) == FALSE && h); ++expect;
+        h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_GETOPENFILENAMES_DEPRECATED, (WPARAM)rsv, 4, h) == 0 && h); ++expect;
+
+        // (c) DMM 族：结构体本身就读不到（旧代码会先崩在这里，
+        //     连 DockManager 那条"拒绝跨进程 hClient"的守卫都到不了）
+        {
+            struct Probe final : DockHost {
+                int dockCalls = 0;
+                bool DockWidget(const npp::DockedWidgetData&) override { ++dockCalls; return true; }
+                bool Show(HWND) override { return true; }
+                bool Hide(HWND) override { return true; }
+                void UpdateDisplayInfo(HWND) override {}
+                bool ShowByName(const wchar_t*) override { return true; }
+                HWND FindHwndByName(const wchar_t*, const wchar_t*) override { return nullptr; }
+            } probe;
+            mgr.SetDockHost(&probe);
+            h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_DMMREGASDCKDLG, 0, badIn, h) == FALSE && h); ++expect;
+            CHECK(probe.dockCalls == 0);          // 落地端根本没被叫到
+            h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_DMMVIEWOTHERTAB, 0, badIn, h) == FALSE && h); ++expect;
+            h = false; CHECK(mgr.ForwardNppMessage(nn::NPPM_DMMGETPLUGINHWNDBYNAME, (WPARAM)badIn, 0, h) == 0 && h); ++expect;
+            CHECK(probe.dockCalls == 0);
+            mgr.SetDockHost(nullptr);
+        }
+
+        // 计数必须**恰好**涨了这么多次：判据若被改成恒真（或整段被摘掉），
+        // 这一条会红（而在恒真的情况下进程多半已经先 AV 了）
+        CHECK(mgr.PointerRefusalCount() == before + expect);
+
+        // 只读页内容必须原封不动（"拒答" = 一个字节都没写）
+        {
+            const unsigned char* p = roRaw;
+            bool untouched = true;
+            for (int i = 0; i < 4096; ++i) if (p[i] != 0xAB) { untouched = false; break; }
+            CHECK(untouched);
+        }
+
+        // ---- 正控：同一批消息换成合法缓冲必须成功（证明不是"把功能关了"）----
+        const unsigned beforeOk = mgr.PointerRefusalCount();
+        int view = -1;
+        h = false;
+        CHECK(mgr.ForwardNppMessage(nn::NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&view, h) == TRUE &&
+              view == 0 && h);
+        std::wstring cfg;
+        CHECK(QueryAndFetch(mgr, nn::NPPM_GETPLUGINSCONFIGDIR, cfg));
+        CHECK(!cfg.empty());
+        std::wstring full;
+        CHECK(QueryAndFetch(mgr, nn::NPPM_GETFULLCURRENTPATH, full));
+        CHECK(full == L"D:\\proj\\data\\readme.md");
+        int id = 0;
+        h = false;
+        CHECK(mgr.ForwardNppMessage(nn::NPPM_ALLOCATECMDID, 2, (LPARAM)&id, h) == TRUE && h);
+        CHECK(id >= 10501);
+        // 合法指针一次都不该被记账
+        CHECK(mgr.PointerRefusalCount() == beforeOk);
+
+        ::VirtualFree(rsv, 0, MEM_RELEASE);
+        ::VirtualFree(roRaw, 0, MEM_RELEASE);
     }
 
     mgr.AttachNppDocSource(nullptr);

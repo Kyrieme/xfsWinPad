@@ -203,7 +203,7 @@ int main() {
         WriteBytes(path, bytes);
         BigFileModel m;
         CHECK(!m.Open(path));
-        CHECK(m.Error().find(L"UTF-16") != std::wstring::npos);
+        CHECK(m.Error() == BigFileModel::Err::Utf16);
         m.Close();
         ::DeleteFileW(path.c_str());
     }

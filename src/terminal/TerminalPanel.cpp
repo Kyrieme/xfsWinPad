@@ -162,6 +162,24 @@ void TerminalPanel::SetFont(const std::wstring& name, int size) {
     }
 }
 
+// 批次 138b：跨屏换 dpi 后重建标题条字体，并让终端等宽字体跟上。
+void TerminalPanel::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (!nf) return;
+    HFONT old = font_;
+    font_ = nf;
+    if (label_)    ::SendMessageW(label_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (closeBtn_) ::SendMessageW(closeBtn_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (old) ::DeleteObject(old);
+    // 终端等宽字体走 SetFont：它已经是从父窗口现取 dpi 的那条路径，
+    // 输入框与 Scintilla 正文字号一起跟上（并在 STYLECLEARALL 后重放主题色）。
+    SetFont(fontName_, fontSize_);
+}
+
 void TerminalPanel::Destroy() {
     pty_.Stop();
     if (sci_) { ::RemoveWindowSubclass(sci_, SciProcThunk, kSciSubclassId);
@@ -326,12 +344,13 @@ void TerminalPanel::Retranslate() {
 
 void TerminalPanel::UpdateLabel() {
     if (!label_) return;
-    std::wstring s = Tr(L"panel.terminal");
-    s += L" — ";
-    s += running_ ? Tr(L"panel.terminal.running") : Tr(L"panel.terminal.notrunning");
-    s += L"（";
-    s += running_ ? Tr(L"panel.terminal.hintrun") : Tr(L"panel.terminal.hintstop");
-    s += L"）";
+    // 一次性交给格式串，而不是在代码里拼「（…）」—— 括号、破折号在别的语言里
+    // 未必是这两个全角字符（en/ko 用半角括号），拼在代码里就漏不进语言文件。
+    std::wstring s = I18n::Instance().Fmt(
+        L"panel.terminal.fmt",
+        {Tr(L"panel.terminal"),
+         running_ ? Tr(L"panel.terminal.running") : Tr(L"panel.terminal.notrunning"),
+         running_ ? Tr(L"panel.terminal.hintrun") : Tr(L"panel.terminal.hintstop")});
     ::SetWindowTextW(label_, s.c_str());
 }
 

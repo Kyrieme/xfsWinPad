@@ -120,6 +120,29 @@ void ResultsPanel::Retranslate() {
         ::SetWindowTextW(label_, Tr(L"panel.results"));
 }
 
+// 批次 138b：跨屏换 dpi 后重建字体。先建新的、再换、最后删旧的 —— 反过来的话
+// 子控件在两次 WM_SETFONT 之间会短暂持有一个已销毁的 HFONT。
+void ResultsPanel::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (!nf) return;   // 建不出来就维持原状，比换成默认字体更接近"什么都没发生"
+    HFONT old = font_;
+    font_ = nf;
+    if (list_)     ::SendMessageW(list_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (label_)    ::SendMessageW(label_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (closeBtn_) ::SendMessageW(closeBtn_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (old) ::DeleteObject(old);
+    // 本面板没有对外的 Layout(w,h)，子控件位置全在 WM_SIZE 里按客户区现算。
+    // 客户区尺寸没变时 MoveWindow 不会自发 WM_SIZE（同尺寸换屏），而标题行
+    // 高度是按 dpi 折出来的 —— 所以这里主动补一次重排。
+    RECT rc{};
+    ::GetClientRect(hwnd_, &rc);
+    ::SendMessageW(hwnd_, WM_SIZE, 0, MAKELPARAM(rc.right, rc.bottom));
+}
+
 LRESULT CALLBACK ResultsPanel::WndProcThunk(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     if (m == WM_CREATE) {
         auto* cs = (CREATESTRUCTW*)lp;

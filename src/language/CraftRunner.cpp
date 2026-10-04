@@ -180,9 +180,7 @@ BuildResult RunPlan(const std::vector<BuildStep>& steps,
     // launched 的语义是"**真的起过进程**"，不是"尝试过"。工具链路径为空时
     // CreateProcess 根本没跑，这时候报"已启动"会让 UI 显示一个假的成功。
     if (!br.launched) {
-        br.note = br.steps.empty()
-                      ? L"没有可执行的步骤"
-                      : L"未能启动编译工具（plncmp / patcmp 路径未配置？）";
+        br.note = br.steps.empty() ? RunNote::NoSteps : RunNote::LaunchFail;
     }
     return br;
 }

@@ -51,6 +51,7 @@ public:
     void Update(const std::wstring& summary, std::vector<DiagItem> items);
     void Clear();          // 清空并按 Retranslate 的规则重置标题
     void Retranslate();    // 语言切换后重刷文本
+    void OnDpiChanged(int dpi);   // 批次 138b：重建字体并重新交给子控件
 
     // 双击回调用它取"是哪一条"（下标越界返回 nullptr）
     int ItemCount() const { return (int)items_.size(); }

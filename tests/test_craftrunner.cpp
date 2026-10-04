@@ -322,7 +322,7 @@ static void RunPlanOk() {
     CHECK(br.allOk);
     CHECK(br.firstFailedStep == -1);
     CHECK(br.steps.size() == 2);
-    CHECK(br.note.empty());
+    CHECK(br.note == RunNote::None);
 }
 
 static void RunPlanStopsOnFailure() {
@@ -362,13 +362,13 @@ static void RunPlanMissingToolchain() {
     CHECK(!a.allOk);
     CHECK(a.steps.size() == 1);
     CHECK(a.steps[0].spawnFailed);
-    CHECK(!a.note.empty());
+    CHECK(a.note != RunNote::None);
 
     const BuildResult b = RunPlan(std::vector<BuildStep>(), L"", L"", 5000);
     CHECK(!b.launched);
     CHECK(!b.allOk);
     CHECK(b.steps.empty());
-    CHECK(!b.note.empty());
+    CHECK(b.note != RunNote::None);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +376,17 @@ static void RunPlanMissingToolchain() {
 //   走的是 CraftHost::LoadProject —— **和 UI 完全同一段读盘代码**，不是这里另写
 //   一份。否则探针验证过的路径和 UI 跑的路径会悄悄分叉。
 // ---------------------------------------------------------------------------
+
+// RunNote 是内核枚举（只说"是哪一类"，显示文本由 UI 按语言键取），
+// 探针这里只打印语言无关的名字。
+static const char* NoteName(RunNote n) {
+    switch (n) {
+        case RunNote::None:       return "none";
+        case RunNote::NoSteps:    return "nosteps";
+        case RunNote::LaunchFail: return "launchfail";
+    }
+    return "?";
+}
 
 static int ProbeProject(const wchar_t* anyPath) {
     const Project proj = LoadProject(anyPath);
@@ -419,7 +430,7 @@ static int ProbeProject(const wchar_t* anyPath) {
         std::printf("%s\n", s.output.c_str());
     }
     std::printf("allOk      : %s\n", br.allOk ? "yes" : "NO");
-    if (!br.note.empty()) std::printf("note       : %s\n", ToUtf8(br.note).c_str());
+    if (br.note != RunNote::None) std::printf("note       : %s\n", NoteName(br.note));
     return br.allOk ? 0 : 1;
 }
 

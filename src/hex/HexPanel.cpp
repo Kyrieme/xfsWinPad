@@ -127,6 +127,22 @@ void HexPanel::Layout(int w, int h) {
     ::MoveWindow(sci_, 6, 26, std::max(0, w - 12), std::max(0, h - 32), TRUE);
 }
 
+// 批次 138b：跨屏换 dpi 后重建标题条字体。sci_ 的正文字体走
+// SCI_STYLESETFONT（点值），与 font_ 无关，这里不动它。
+void HexPanel::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (!nf) return;
+    HFONT old = font_;
+    font_ = nf;
+    if (label_)    ::SendMessageW(label_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (closeBtn_) ::SendMessageW(closeBtn_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (old) ::DeleteObject(old);
+}
+
 // ------------------------------------------------------------------ load/save
 
 bool HexPanel::Load(const std::wstring& filePath) {

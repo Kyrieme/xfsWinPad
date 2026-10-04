@@ -56,6 +56,10 @@ public:
     // Preferred control height for the current DPI
     int HeightForDpi(int dpi) const;
 
+    // 批次 138b：DPI 变化后重建标签字体并重新交给控件（标签宽度/省略号
+    // 都是量着这个字体算的，字号不跟着走就会错位）。控件高度由宿主设置。
+    void OnDpiChanged(int dpi);
+
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 

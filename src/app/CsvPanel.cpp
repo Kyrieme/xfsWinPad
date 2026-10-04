@@ -122,6 +122,23 @@ bool CsvPanel::Create(HWND parent, HINSTANCE hInst) {
     return true;
 }
 
+// 批次 138b：跨屏换 dpi 后重建字体（先建新的、换、再删旧的）。
+// cellEdit_ 是就地编辑时才存在的临时控件，存在也一并跟上。
+void CsvPanel::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (!nf) return;
+    HFONT old = font_;
+    font_ = nf;
+    for (HWND h : { label_, closeBtn_, saveBtn_, filterEdit_, countLabel_,
+                    list_, cellEdit_ })
+        if (h) ::SendMessageW(h, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (old) ::DeleteObject(old);
+}
+
 void CsvPanel::Destroy() {
     if (filterTimer_) { ::KillTimer(hwnd_, kFilterTimer); filterTimer_ = 0; }
     if (hwnd_) { ::KillTimer(hwnd_, kBigPollTimer); }

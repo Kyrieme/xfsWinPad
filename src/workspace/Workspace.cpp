@@ -287,6 +287,17 @@ void Workspace::LayoutRight(int w, int h) {
         if (d.get() != Active1()) ::ShowWindow(d->editor.Hwnd(), SW_HIDE);
 }
 
+// 批次 138b：跨屏换 dpi 后重建一次性资源。几何（Layout/LayoutView/LayoutRight
+// 里的 tabH、编辑器铺满）每次现取 GetDpiForWindow，自愈，不在这里管；要管的
+// 是两条创建期一次成型的：标签条字体、编辑器像素边距。
+// 刻意不调 ApplyDefaultStyle —— 它会顺手把用户字体偏好重置回 Consolas 10。
+void Workspace::OnDpiChanged(int dpi) {
+    tabs_.OnDpiChanged(dpi);
+    tabs1_.OnDpiChanged(dpi);
+    for (auto& d : docs_) d->editor.OnDpiChanged(dpi);
+    for (auto& d : docs1_) d->editor.OnDpiChanged(dpi);
+}
+
 void Workspace::SetActiveDoc(Document* d) {
     if (d && (d->view == 0 || d->view == 1)) currentView_ = d->view;
 }
@@ -677,11 +688,20 @@ void Workspace::OpenPath(const std::wstring& pathRaw, int gotoLine, bool readOnl
         return;
     }
 
-    // already open? just focus it
+    // already open? just focus it. **两个视图都要找** —— 只查 docs_ 的话，
+    // 文件在右视图开着时会被当成从没打开过，于是又解析一遍，而末尾的 InsertDoc
+    // 只会插到左视图（doc->view = 0）⇒ 同一个文件在双视图里各出现一份。
     for (int i = 0; i < (int)docs_.size(); ++i) {
         if (docs_[i]->path == path) {
             if (gotoLine > 0) docs_[i]->editor.GotoLine(gotoLine);
             Activate(i);
+            return;
+        }
+    }
+    for (int i = 0; i < (int)docs1_.size(); ++i) {
+        if (docs1_[i]->path == path) {
+            if (gotoLine > 0) docs1_[i]->editor.GotoLine(gotoLine);
+            ActivateView1(i);
             return;
         }
     }

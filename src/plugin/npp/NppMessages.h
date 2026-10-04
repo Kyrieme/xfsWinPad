@@ -13,6 +13,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <cstddef>
 
 namespace xfs {
 namespace npp {
@@ -58,9 +59,15 @@ enum NppMsg : UINT {
     NPPM_SETMENUITEMCHECK         = kNppMsgBase + 40,
     // BOOL (UINT_PTR cmdID, BOOL doCheck)：按命令 id 勾选/取消勾选对应菜单项。
     //   插件命令（≥PluginCmdFirst）勾在 Plugins 子菜单，内建命令勾在主菜单栏。
-    NPPM_GETMENUBAR               = kNppMsgBase + 52,
-    // HMENU (0,0)：返回主菜单栏句柄（老插件兼容路径，等价 GETMENUHANDLE
-    //   的 NppMainMenu 分支）。
+    NPPM_ISTABBARHIDDEN           = kNppMsgBase + 52,
+    // BOOL (0,0)：标签栏当前是否隐藏。★ 本行的名字与数值是批次 120 修正过的：
+    //   本文件原先在这里写的是 `NPPM_GETMENUBAR`，而**上游没有这个宏**
+    //   （官方 plugin-communication 手册里查无此名）；NPPMSG+52 是真实存在的
+    //   NPPM_ISTABBARHIDDEN。旧代码对 +52 返回主菜单栏句柄 ⇒ 插件问
+    //   "标签栏隐藏了吗"会拿到一个非空 HMENU 并读成 TRUE（静默错答，不是崩溃）。
+    //   我们未实现 NPPM_HIDETABBAR(+51)，标签栏恒不隐藏 ⇒ 恒 FALSE。
+    //   ⚠ 这与"明确拒答返回 0"**同值** ⇒ 本条消息的"拒答"与"正确回答"在返回值上
+    //     不可区分，所以没有"不答"这个选项；FALSE 恰好就是正确答案。
     NPPM_GETSHORTCUTBYCMDID       = kNppMsgBase + 76,
     // BOOL (UINT_PTR cmdID, ShortcutKey* sk)：回填命令的快捷键
     //   （{bool ctrl, bool alt, bool shift, UCHAR key}，布局见 NppCompat.h）。
@@ -114,7 +121,67 @@ enum NppMsg : UINT {
     // 两段式同 GETPLUGINSCONFIGDIR：(int strLen, wchar_t* str|NULL)
 };
 
-// 视图常量（上游 #define 的同名事实值）
+// ---- 已知 NPPM_* 清单（★ 新增枚举值时**必须**同步加到这里）-------------------
+// 用途：进程外插件桥的"可封送性"分类表（plugin/oop/NppmMarshal.h）要保证
+// **每一条** NPPM_* 都被显式分过类（受支持 / 明确不支持 + 原因）。枚举本身
+// 在 C++ 里不可遍历，所以用这张清单做对照物 —— 它必须与上面的 NppMsg 枚举
+// 一一对应。
+//
+// ★ 纪律：在 NppMsg 里加一条，就在本数组里加同一条（就在同一个文件里，
+//   相隔几十行）。守卫 tests/test_nppm_marshal.cpp 会双向对账：
+//   清单里的每条都要在分类表里，分类表里的每条也都要在清单里。
+//   漏加清单 ⇒ 守卫报 "table entry not in kNppKnownMsgs"；
+//   漏加分类表 ⇒ 守卫报 "declared but unclassified"。
+// ⚠ 本守卫的边界：它证明「分类表 ↔ 本清单」一致，**不**证明「本清单 ↔
+//   枚举」一致（编译器帮不上忙，枚举不可遍历）。**这一半由批次 120 补上**：
+//   `scripts/check-nppm-contract.py` 把枚举**体当文本**解析（规则 R4），
+//   与清单双向对账；同一个脚本还按**名字**逐条核对上游数值（规则 R1/R2）。
+//   ⇒ 加枚举值却忘了加清单，现在会红，不必只靠纪律。
+inline constexpr unsigned kNppKnownMsgs[] = {
+    NPPM_GETCURRENTSCINTILLA,
+    NPPM_GETNBOPENFILES,
+    NPPM_GETOPENFILENAMES_DEPRECATED,
+    NPPM_GETOPENFILENAMESPRIMARY_DEPRECATED,
+    NPPM_GETOPENFILENAMESSECOND_DEPRECATED,
+    NPPM_RELOADFILE,
+    NPPM_SWITCHTOFILE,
+    NPPM_SAVECURRENTFILE,
+    NPPM_SAVEALLFILES,
+    NPPM_GETNPPVERSION,
+    NPPM_GETMENUHANDLE,
+    NPPM_SETMENUITEMCHECK,
+    NPPM_ISTABBARHIDDEN,
+    NPPM_GETSHORTCUTBYCMDID,
+    NPPM_GETPLUGINSCONFIGDIR,
+    NPPM_GETPOSFROMBUFFERID,
+    NPPM_GETFULLPATHFROMBUFFERID,
+    NPPM_GETBUFFERIDFROMPOS,
+    NPPM_GETCURRENTBUFFERID,
+    NPPM_RELOADBUFFERID,
+    NPPM_DOOPEN,
+    NPPM_ALLOCATECMDID,
+    NPPM_DMMSHOW,
+    NPPM_DMMHIDE,
+    NPPM_DMMUPDATEDISPINFO,
+    NPPM_DMMREGASDCKDLG,
+    NPPM_DMMVIEWOTHERTAB,
+    NPPM_DMMGETPLUGINHWNDBYNAME,
+    NPPM_GETFULLCURRENTPATH,
+    NPPM_GETCURRENTDIRECTORY,
+    NPPM_GETFILENAME,
+    NPPM_GETNAMEPART,
+    NPPM_GETEXTPART,
+    NPPM_GETCURRENTWORD,
+};
+inline constexpr std::size_t kNppKnownCount =
+    sizeof(kNppKnownMsgs) / sizeof(kNppKnownMsgs[0]);
+
+// 视图常量（上游 #define 的同名事实值）。★ 这 7 个常量与上面的消息号一样是
+// **接口数值**：分发器用 == 拿它们比较插件传来的 wParam/lParam（PluginManager.cpp），
+// 抄错 = 宿主按另一个视图/菜单作答（静默答错，不是崩溃）。所以它们同样受
+// scripts/check-nppm-contract.py 规则 R5 按**名字**核对（映射表 CONST_OF）。
+// ⚠ 在这里新增任何 `constexpr int` 都会被 R5 当成"未登记"而报红 —— 若它来自
+//   上游，就把「我们的名字 → 上游宏名」加进 CONST_OF。
 constexpr int kAllOpenFiles = 0;
 constexpr int kPrimaryView  = 1;
 constexpr int kSecondView   = 2;

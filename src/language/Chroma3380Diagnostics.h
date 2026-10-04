@@ -46,7 +46,7 @@
 // 【manualPage 的取值约定】
 //   1..N = 手册（Language Manual）PDF 页码；**0 = 没有单一页码**。
 //   规则 8 的依据是"该语句自己的 Format 块"，不是某一页，所以取 0，
-//   章节号写在 message 里（形如「手册 §4.5 签名最多 9 个参数」）。
+//   章节号走文案参数（形如「手册 §4.5 签名最多 9 个参数」）。
 
 #include <string>
 #include <vector>
@@ -71,6 +71,33 @@ enum class DiagSeverity {
     Warning,  // 依据较弱：手册用希望/建议语气、依据是散文措辞、或需要跨文件才能确认
 };
 
+// 诊断文案的 id（批次 134）。
+//
+// 【为什么是 id 而不是 std::string message】
+//   本层是**内核**，不引 I18n.h（分层硬约束，与 CraftRunner::RunNote /
+//   BigFileModel::Err 同口径）：这里只说"是哪一条、带哪些参数"，人类可读的短句
+//   由 UI 侧按 id 查语言键（src/app/MainWindow.cpp 的 kDiagMsgKeys[]），参数按
+//   顺序填进文案里的 {0} {1} …。
+//   若直接把中文写死成本层的 std::string，换语言不会跟着变 —— 而 R6/R7
+//   （scripts/check-lang-keys.py）正会把这种"绕过 Tr() 的硬编码文案"报红。
+//
+// 【参数约定】args 是 UTF-8 文本，条数与顺序与语言键里的占位符一一对应。
+//   数字也按文本传（内核不负责本地化数字格式）。
+enum class DiagMsgId {
+    None = 0,                 // 无文案（不该出现；UI 兜底显示规则码）
+    SetDecFileNoSemicolon,    // COM-001 无参
+    DuplicatePinName,         // DEC-001 {0}=pin 名 {1}=首次定义行（1-based）
+    DuplicateAteChannel,      // DEC-002 {0}=ATE 通道号 {1}=首次定义行
+    DuplicateDutPin,          // DEC-003 {0}=DUT pin 号 {1}=首次定义行
+    DuplicatePinGroup,        // DEC-004 {0}=pin_group 名 {1}=首次定义行
+    TooManyArgs,              // PLN-010 {0}=语句名 {1}=§节号 {2}=签名上限 {3}=实给个数
+    TooFewArgs,               // PLN-011 {0}=语句名 {1}=§节号 {2}=必填个数 {3}=实给个数
+    VectorWidthMismatch,      // PAT-001 {0}=向量宽度 {1}=HEADER 行 {2}=声明的 pin 数
+    VectorWidthMismatchMany,  // PAT-001 多行变体：同上 + {3}=本模块不符行数
+    RptOutOfRange,            // PAT-003 {0}=RPT 次数（原样文本）
+    ImatchApasConflict,       // XFILE-001 无参
+};
+
 struct Diagnostic {
     int          line       = 0;      // 0-based 行号（与 SCI_GETCURLINE 同口径）
     int          start      = 0;      // 行内起始列（字节，0-based）
@@ -78,7 +105,8 @@ struct Diagnostic {
     DiagSeverity severity   = DiagSeverity::Error;
     const char*  code       = nullptr; // 稳定标识，UI 与测试都按它断言
     int          manualPage = 0;       // 手册（Language Manual）1-based PDF 页
-    std::string  message;              // 中文文案，短句
+    DiagMsgId    msgId      = DiagMsgId::None;  // 文案 id（UI 侧查语言键）
+    std::vector<std::string> args;              // 文案参数（UTF-8），见 DiagMsgId 注释
 };
 
 // 规则清单（每条都标了取证位置）：

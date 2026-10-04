@@ -35,6 +35,9 @@ public:
     void ApplyTheme(const ThemeDef& t);
     void Layout(int w, int h);
     void Retranslate();
+    // 批次 138b：DPI 变化后重建正文字体（EnsureFont 按新 dpi 重算字号并重排
+    // 行高/字符宽）。工具行用的是 DEFAULT_GUI_FONT 库存字体，无需重建。
+    void OnDpiChanged(int dpi);
 
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);

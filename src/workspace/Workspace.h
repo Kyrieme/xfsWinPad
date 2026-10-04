@@ -33,6 +33,9 @@ public:
     void ApplyPrefsToAll(const AppSettings& prefs);
     void Layout(int x, int y, int w, int h);
     void LayoutRight(int w, int h);   // layout the right/other view's tab+editor
+    // 批次 138b：DPI 变化后转发给两视图的标签条（字体是一次性资源），
+    // 并让各文档编辑器按新 dpi 重算边距（边距宽是像素，不会自愈）。
+    void OnDpiChanged(int dpi);
 
     // --- document lifecycle ---
     void NewDocument();

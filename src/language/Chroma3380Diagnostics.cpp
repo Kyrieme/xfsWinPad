@@ -206,6 +206,21 @@ bool FindBlockEnd(const std::vector<std::string>& code, std::size_t line, std::s
 // 规则实现
 // ---------------------------------------------------------------------------
 
+void PushDiag(std::vector<Diagnostic>& out, int line, std::size_t col, std::size_t len,
+              const char* codeStr, int page, DiagMsgId msgId,
+              std::vector<std::string> args, DiagSeverity sev = DiagSeverity::Error) {
+    Diagnostic d;
+    d.line = line;
+    d.start = (int)col;
+    d.length = (int)(len > 0 ? len : 1);
+    d.severity = sev;
+    d.code = codeStr;
+    d.manualPage = page;
+    d.msgId = msgId;
+    d.args = std::move(args);
+    out.push_back(d);
+}
+
 // C3380-COM-001 —— SET_DEC_FILE 末尾不能有分号。
 //   手册 §3.3.2（p41）的 .pat 示例与真实 .pln 第 21 行都是
 //   `SET_DEC_FILE ".\x.dec"`，无分号。这条同时适用 .pln 与 .pat。
@@ -217,30 +232,9 @@ void CheckSetDecFileNoSemicolon(const std::vector<std::string>& code,
         if (Upper(code[i].substr(col, len)) != "SET_DEC_FILE") continue;
         std::size_t last = LastCodeIn(code[i], 0, code[i].size());
         if (last == kNone || code[i][last] != ';') continue;
-        Diagnostic d;
-        d.line = (int)i;
-        d.start = (int)last;
-        d.length = 1;
-        d.severity = DiagSeverity::Error;
-        d.code = "C3380-COM-001";
-        d.manualPage = 41;
-        d.message = "SET_DEC_FILE 末尾不能有分号";
-        out.push_back(d);
+        PushDiag(out, (int)i, last, 1, "C3380-COM-001", 41,
+                 DiagMsgId::SetDecFileNoSemicolon, {});
     }
-}
-
-void PushDiag(std::vector<Diagnostic>& out, int line, std::size_t col, std::size_t len,
-              const char* codeStr, int page, std::string msg,
-              DiagSeverity sev = DiagSeverity::Error) {
-    Diagnostic d;
-    d.line = line;
-    d.start = (int)col;
-    d.length = (int)(len > 0 ? len : 1);
-    d.severity = sev;
-    d.code = codeStr;
-    d.manualPage = page;
-    d.message = std::move(msg);
-    out.push_back(d);
 }
 
 // pin 类型的"资源域"。手册与编译器都把 pin 分成**互不相通**的若干域：
@@ -300,17 +294,18 @@ void ParsePinEntry(const std::string& s, std::size_t b, std::size_t e, int lineN
 
     auto note = [&](std::map<std::string, int>& m, const std::string& key,
                     std::size_t col, std::size_t len, const char* codeStr,
-                    const std::string& what) {
+                    DiagMsgId msgId) {
         auto it = m.find(key);
         if (it == m.end()) {
             m.emplace(key, lineNo);
             return;
         }
-        PushDiag(out, lineNo, col, len, codeStr, 25,
-                 what + " " + key + " 重复（第 " + std::to_string(it->second + 1) + " 行已定义）");
+        PushDiag(out, lineNo, col, len, codeStr, 25, msgId,
+                 { key, std::to_string(it->second + 1) });
     };
 
-    note(scope.nameFirstLine, name, parts[0].b, name.size(), "C3380-DEC-001", "pin 名");
+    note(scope.nameFirstLine, name, parts[0].b, name.size(), "C3380-DEC-001",
+         DiagMsgId::DuplicatePinName);
 
     // 末段 = pin_type（`pin_name = ate_pin = dut_pin = pin_type ;`）。
     // 类型认不出（空 / 非标识符）就**不判** 002/003：域未知时无法区分"跨域复用"
@@ -328,12 +323,12 @@ void ParsePinEntry(const std::string& s, std::size_t b, std::size_t e, int lineN
     for (std::size_t k = 1; k + 2 < parts.size(); ++k) {
         for (const Num& n : NumbersIn(s, parts[k].b, parts[k].e)) {
             note(scope.ateFirstLine, DomainKey(domain, s.substr(n.b, n.e - n.b)),
-                 n.b, n.e - n.b, "C3380-DEC-002", "ATE 通道");
+                 n.b, n.e - n.b, "C3380-DEC-002", DiagMsgId::DuplicateAteChannel);
         }
     }
     for (const Num& n : NumbersIn(s, dutSeg.b, dutSeg.e)) {
         note(scope.dutFirstLine, DomainKey(domain, s.substr(n.b, n.e - n.b)),
-             n.b, n.e - n.b, "C3380-DEC-003", "DUT pin 号");
+             n.b, n.e - n.b, "C3380-DEC-003", DiagMsgId::DuplicateDutPin);
     }
 }
 
@@ -354,8 +349,8 @@ void ParseGroupEntry(const std::string& s, std::size_t b, std::size_t e, int lin
         firstLine.emplace(name, lineNo);
         return;
     }
-    PushDiag(out, lineNo, col, len, "C3380-DEC-004", 27,
-             "pin_group 名 " + name + " 重复（第 " + std::to_string(it->second + 1) + " 行已定义）");
+    PushDiag(out, lineNo, col, len, "C3380-DEC-004", 27, DiagMsgId::DuplicatePinGroup,
+             { name, std::to_string(it->second + 1) });
 }
 
 // .dec：只认 PIN_LIST / PIN_GROUP 两个顶层块（其它顶层块与本批规则无关）。
@@ -622,7 +617,7 @@ bool IsArgCountExcluded(const char* name, std::size_t len) {
 //
 // 高亮范围：两种诊断都只标**语句名**（不是实参表）。理由：少参数时"缺的那段"
 // 在原文里根本不存在，标名字是唯一稳定的锚点；实参表的字节跨度可能很长，
-// 画出来反而看不清。细节在 message 里（含手册章节号）。
+// 画出来反而看不清。细节在文案参数里（含手册章节号）。
 void CheckArgumentCount(const std::vector<std::string>& code, std::vector<Diagnostic>& out) {
     for (std::size_t i = 0; i < code.size(); ++i) {
         const std::string& ln = code[i];
@@ -670,14 +665,12 @@ void CheckArgumentCount(const std::vector<std::string>& code, std::vector<Diagno
             const std::string sec = st->section ? st->section : "";
             if (n > b.maxArgs) {
                 PushDiag(out, (int)i, col, len, "C3380-PLN-010", 0,
-                         std::string(st->name) + " 实参太多：手册 §" + sec + " 签名最多 " +
-                             std::to_string(b.maxArgs) + " 个参数，这里给了 " +
-                             std::to_string(n) + " 个");
+                         DiagMsgId::TooManyArgs,
+                         {st->name, sec, std::to_string(b.maxArgs), std::to_string(n)});
             } else if (n < b.required) {
                 PushDiag(out, (int)i, col, len, "C3380-PLN-011", 0,
-                         std::string(st->name) + " 实参不足：手册 §" + sec + " 签名至少 " +
-                             std::to_string(b.required) + " 个参数，这里只给了 " +
-                             std::to_string(n) + " 个",
+                         DiagMsgId::TooFewArgs,
+                         {st->name, sec, std::to_string(b.required), std::to_string(n)},
                          DiagSeverity::Warning);
             }
         }
@@ -903,12 +896,16 @@ void CheckHeaderVectorWidth(const std::vector<std::string>& code,
         }
         if (firstLine < 0) continue;
 
-        std::string msg = "向量宽度 " + std::to_string(firstWidth) +
-                          " 与 HEADER（第 " + std::to_string(h.line + 1) +
-                          " 行）声明的 " + std::to_string(h.pinCount) + " 个 pin 不一致";
-        if (mismatched > 1) msg += "（本模块共 " + std::to_string(mismatched) + " 行如此）";
+        std::vector<std::string> args = {std::to_string(firstWidth),
+                                         std::to_string(h.line + 1),
+                                         std::to_string(h.pinCount)};
+        DiagMsgId msgId = DiagMsgId::VectorWidthMismatch;
+        if (mismatched > 1) {
+            msgId = DiagMsgId::VectorWidthMismatchMany;
+            args.push_back(std::to_string(mismatched));
+        }
         PushDiag(out, firstLine, (std::size_t)firstStart, (std::size_t)firstLen,
-                 "C3380-PAT-001", 41, std::move(msg), DiagSeverity::Warning);
+                 "C3380-PAT-001", 41, msgId, std::move(args), DiagSeverity::Warning);
 
         if (++emitted >= 64) break;   // 畸形文件保护：正常 .pat 的模块数远小于此
     }
@@ -1025,9 +1022,8 @@ void CheckRptCount(const std::vector<std::string>& code, std::vector<Diagnostic>
             std::size_t nc = 0, nl = 0;
             if (!RptValueAfter(L, at + 3, L.size(), v, nc, nl)) continue;
             if (v >= kRptMinValue && v <= kRptMaxValue) continue;
-            std::string msg = "RPT 次数 " + L.substr(nc, nl) +
-                              " 超出手册允许的 2 .. 16777215";
-            PushDiag(out, (int)k, nc, nl, "C3380-PAT-003", 44, std::move(msg),
+            PushDiag(out, (int)k, nc, nl, "C3380-PAT-003", 44,
+                     DiagMsgId::RptOutOfRange, {L.substr(nc, nl)},
                      DiagSeverity::Warning);
             ++emitted;
         }
@@ -1122,10 +1118,7 @@ std::vector<Diagnostic> CheckApasImatch(const std::string& text,
             const bool rightOk = (p + 6 >= m.size()) || !IsIdChar((unsigned char)m[p + 6]);
             if (leftOk && rightOk) {
                 PushDiag(out, (int)i, p, 6, "C3380-XFILE-001", 44,
-                         "IMATCH 仅支持 NORM 模式的向量（手册 §3.4.1.3），而本文件"
-                         "引用的 .dec 声明了 DEC_MODE APAS —— APAS 下 IMATCH 失效"
-                         "（培训教材 p43）",
-                         DiagSeverity::Warning);
+                         DiagMsgId::ImatchApasConflict, {}, DiagSeverity::Warning);
                 p += 6;
                 continue;
             }

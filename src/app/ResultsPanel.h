@@ -37,6 +37,11 @@ public:
     // re-apply localized texts after a language switch
     void Retranslate();
 
+    // 批次 138b：DPI 变化的"重建一次性资源"入口。font_ 是本面板自己
+    // CreateFontW 建出来的，不会跟着系统缩放走 —— 必须显式重建并重新交给
+    // 各子控件。面板自身的几何排布由宿主随后的 LayoutChildren 负责。
+    void OnDpiChanged(int dpi);
+
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);
     LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);

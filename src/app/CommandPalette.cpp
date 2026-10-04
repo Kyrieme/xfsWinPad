@@ -57,19 +57,10 @@ const Item kItems[] = {
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 
-HFONT g_palFont = nullptr;
-
-HFONT PalFont(HWND ref) {
-    if (!g_palFont) {
-        int dpi = ::GetDpiForWindow(ref);
-        g_palFont = ::CreateFontW(-MulDiv(10, dpi, 96), 0, 0, 0, FW_NORMAL,
-                                  FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                  OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                                  L"Segoe UI");
-    }
-    return g_palFont;
-}
+// 批次 140：这里原来有一个进程级单例 `g_palFont`（首次调用者的 dpi 建一次，
+// 之后**既不重建也不释放**）。本面板每次 Show 新建窗口、Close 销毁，所以那个
+// 单例让「把主窗口换到另一块 dpi 的屏上再开面板」永远沿用最初的字号。已改为
+// 由窗口自己持有 font_（见 Show/Close）—— 顺带消掉它同时兼任别的窗口字体的可能。
 
 bool ContainsCI(const std::wstring& hay, const std::wstring& needle) {
     if (needle.empty()) return true;
@@ -231,7 +222,13 @@ void CommandPalette::Show(HWND parent, HINSTANCE hInst) {
                               style, x, y, rc.right - rc.left, rc.bottom - rc.top,
                               nullptr, nullptr, hInst, this);
     if (!hwnd_) { hwnd_ = nullptr; return; }
-    font_ = PalFont(hwnd_);
+    // 批次 140：字号按**本窗口当前 dpi** 现场建（面板是按父窗口位置摆的，落在
+    // 哪块屏就以哪块屏为准）。每次 Show 都重读 ⇒ 换屏后重开即自愈。
+    const int fdpi = ::GetDpiForWindow(hwnd_);
+    font_ = ::CreateFontW(-MulDiv(10, fdpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                          FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
     edit_ = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_TABSTOP,
@@ -258,6 +255,8 @@ void CommandPalette::Close() {
         hwnd_ = nullptr;
         ::DestroyWindow(h);
     }
+    // 批次 140：控件随窗口一起没了，字体才能安全释放（仍被控件持有的字体不能删）。
+    if (font_) { ::DeleteObject(font_); font_ = nullptr; }
 }
 
 } // namespace xfs

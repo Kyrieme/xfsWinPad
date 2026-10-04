@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"))
 # Batch 43 e2e: CSV panel go-to-row (ID_CTX_GOTO) + export selected rows
 # (ID_CTX_EXPORT). ASCII only.
 $ErrorActionPreference = "Stop"

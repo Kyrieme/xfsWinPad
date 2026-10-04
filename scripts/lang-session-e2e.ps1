@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"))
 # Batch 66+ e2e: manual Language-menu pick must survive a restart.
 #   A1 close after WM_COMMAND LangFirst+1 -> session.json entry gains "lang": 1
 #   A2 relaunch (session restore) -> Language popup item 1 has MF_CHECKED

@@ -53,12 +53,20 @@ struct StepResult {
     std::string  output;          // stdout + stderr 合并（原样字节）
 };
 
+// 编译**没能跑起来**的原因。本层只说"是哪一类"，文案由 UI 按语言键取
+// （与 CraftProject/Chroma3380Diagnostics 同口径：内核零 I18n 依赖）。
+enum class RunNote {
+    None = 0,   // 与 launched/allOk 一致，无需额外说明
+    NoSteps,    // 构建计划为空（缺 makefile / 认不出变量）
+    LaunchFail, // 一步都没起来（plncmp / patcmp 路径没配）
+};
+
 struct BuildResult {
     bool                    launched = false;   // 至少启动过一步
     bool                    allOk = false;      // 全部成功
     int                     firstFailedStep = -1;
     std::vector<StepResult> steps;
-    std::wstring            note;   // 工具链缺失等情况的说明（空 = 正常）
+    RunNote                 note = RunNote::None;
 };
 
 // 单步执行（**阻塞**）。exePath 为空时返回 spawnFailed=true。

@@ -111,6 +111,9 @@ public:
     void ApplyTheme(const ThemeDef& t);
     void Retranslate();
     void Layout(int w, int h);
+    // 批次 138b：DPI 变化后重建标题条/按钮字体。输入框与 transcript 用的
+    // mono_ 由 Layout 现取 dpi 幂等重建，这里不重复处理。
+    void OnDpiChanged(int dpi);
 
     // 打开面板时调用：确保 serve 在线 + 建/复用会话 + 恢复历史。
     // workDir 作为 opencode 的项目根（当前编辑器工作区）。

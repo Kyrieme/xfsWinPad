@@ -58,6 +58,9 @@ public:
         if (tree_) ::InvalidateRect(tree_, nullptr, FALSE);
     }
 
+    // 批次 138b：DPI 变化后重建树控件字体（创建期一次成型，不会自愈）。
+    void OnDpiChanged(int dpi);
+
 private:
     friend LRESULT CALLBACK FeWndProc(HWND, UINT, WPARAM, LPARAM);
     friend LRESULT CALLBACK FeTreeProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);

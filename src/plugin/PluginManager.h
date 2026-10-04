@@ -58,6 +58,32 @@ struct NppDocSource {
     virtual bool SaveAllDocs(bool& anySaved) = 0;
 };
 
+// 进程外（代理承载）插件对话框的停靠通道（v2.8，批次 117）。
+//
+// 为什么必须有它：DockManager 与插件对话框之间的三条通路**跨进程都走不通或
+// 不安全**（全部为实测结论，展开见 DockManager.cpp 的守卫注释）：
+//   * `WM_NOTIFY`（`DMN_DOCK` / `DMN_SWITCHIN` / 可 veto 的 `DMN_CLOSE`）——
+//     跨进程被系统拒绝（err=5 ACCESS_DENIED，`lParam=0` 照样拒）；
+//   * 直发 `DMM_*`（`WM_USER` 段）—— 能送达，但会让编辑器 UI 线程去等一个
+//     可能不泵消息的插件线程（挂起风险）；
+//   * dock 本身那三步（`GWL_STYLE` / `SetParent` / `SetWindowPos`）—— **可行**
+//     （不是"被系统禁止"，旧注释错了），但同样有挂起风险。
+// ⇒ 通知与动作必须由**代理在它自己的进程里**转发。
+//
+// 生产实现由 PluginManager 注入（它同时拥有 DockManager 与 OopHost）；
+// 测试桩不需要实现它（不注入 = 只支持同进程插件，即批次 117 之前的行为）。
+struct DockRemote {
+    virtual ~DockRemote() = default;
+    // hClient 是不是"本编辑器自己的代理承载的插件对话框"（DMM 注册时登记过）。
+    // DockManager 只按它放行跨进程 hClient。
+    virtual bool IsTrustedClient(HWND hClient) const = 0;
+    // 送 `WM_NOTIFY{idFrom, code}`（由代理在它自己进程里发），返回插件应答。
+    // `DMN_CLOSE` 的 **veto** 靠这个返回值（TRUE = 别关）。
+    virtual LRESULT SendNotify(HWND hClient, UINT_PTR idFrom, int code) = 0;
+    // 送 `DMM_*` 动作请求（由代理转发；wp/lp 恒 0）。
+    virtual void SendAction(HWND hClient, UINT action) = 0;
+};
+
 // 可停靠对话框宿主抽象（插件系统设计笔记 §5.8 4d）。
 // 生产实现绑定 MainWindow 的 DockManager；单测注入假实现断言转发契约。
 // 非拥有指针，虚拟析构。所有方法只在 UI 线程调用。
@@ -73,6 +99,9 @@ struct DockHost {
     // NPPM_DMMGETPLUGINHWNDBYNAME：windowName==NULL 时按 moduleName 取首个
     virtual HWND FindHwndByName(const wchar_t* windowName,
                                 const wchar_t* moduleName) = 0;
+    // 注入进程外插件的停靠通道（v2.8）。nullptr = 只支持同进程插件。
+    // 默认空实现：不关心进程外停靠的宿主（含测试桩）无需实现。
+    virtual void SetRemoteDock(DockRemote* /*remote*/) {}
 };
 
 class Workspace;
@@ -184,13 +213,20 @@ public:
     // handled=false 表示编号不在支持子集内，调用方必须继续默认处理，
     // 绝不吞未知消息。契约细则：插件系统设计笔记 §5.6 + NppMessages.h。
     LRESULT ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp, bool& handled);
+    // 指针参数不可用而拒答的累计次数（诊断 + 测试断言）。
+    // NPPM_* 编号在 WM_USER 之上 ⇒ Windows **不做参数封送**，进程外插件
+    // 传来的指针是它自己地址空间的地址。解引用它 = 访问违例（宿主无 SEH）；
+    // 现在这些分支先过 npp/NppPointerGuard.h 的判据，不通过就返回契约的
+    // 失败值（FALSE/0）并在这里记账。
+    unsigned PointerRefusalCount() const { return pointerRefusals_; }
     // 测试注入口（非拥有，虚拟析构；attach 后优先于 Workspace 生效）
     void AttachNppDocSource(NppDocSource* src) { nppSrc_ = src; }
     NppDocSource* NppSourcePtr() const { return nppSrc_; }
 
     // 可停靠对话框宿主（4d）：NPPM_DMM* 消息的落地端。MainWindow 注入
     // DockManager；单测注入假实现。空指针时 NPPM_DMM* 明确拒答（FALSE）。
-    void SetDockHost(DockHost* h) { dockHost_ = h; }
+    // v2.8 起这里还负责把进程外通道（DockRemote）接上 —— 见 .cpp 的 SyncDockRemote。
+    void SetDockHost(DockHost* h);
     DockHost* DockHostPtr() const { return dockHost_; }
 
     // handle → 已发布命令的宿主 id（NPP 兼容通道回填 FuncItem.cmdID 用；
@@ -256,7 +292,7 @@ private:
 
     HWND hostWnd_ = nullptr;
     HMENU pluginMenu_ = nullptr;    // "Plugins" 子菜单（NPPM_GETMENUHANDLE 0）
-    HMENU mainMenu_ = nullptr;      // 主菜单栏（NPPM_GETMENUHANDLE 1 / GETMENUBAR）
+    HMENU mainMenu_ = nullptr;      // 主菜单栏（NPPM_GETMENUHANDLE 1）
     std::vector<Loaded> loaded_;
     std::deque<PluginCommand> commands_;
     std::vector<PluginLoadFailure> failures_;   // LoadAll 失败记录（每次扫描重置）
@@ -270,7 +306,14 @@ private:
     Workspace* workspace_ = nullptr;
     NppDocSource* nppSrc_ = nullptr;            // 非拥有；UnloadAll 置空
     DockHost* dockHost_ = nullptr;              // 非拥有；MainWindow 生命周期长于本类
+    // 进程外停靠通道（v2.8）：本类拥有，注入给 dockHost_。只在 oopHost_ 存在时
+    // 才注入 —— 没有代理就只支持同进程插件（= 批次 117 之前的行为）。
+    std::unique_ptr<DockRemote> dockRemote_;
+    // 把 dockHost_/oopHost_ 的当前状态同步给 dockHost_->SetRemoteDock()。
+    // 两者由不同调用方在不同时刻注入 ⇒ 谁后到谁调它（幂等）。
+    void SyncDockRemote();
     unsigned nextAllocCmdId_ = 10501;           // ALLOCATECMDID 动态池起点
+    unsigned pointerRefusals_ = 0;              // 指针判据拒答次数（见上）
     std::unique_ptr<OopHost> oopOwned_;         // EnableOopHost() 创建
     OopHost* oopHost_ = nullptr;                // = oopOwned_.get()（空 = 未启用）
 

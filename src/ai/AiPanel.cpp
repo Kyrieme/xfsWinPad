@@ -269,6 +269,26 @@ void AiPanel::Layout(int w, int h) {
     }
 }
 
+// 批次 138b：跨屏换 dpi 后重建标题条与按钮字体（先建新的、换、再删旧的）。
+// 输入框/transcript 用的 mono_ 由 Layout 现取 dpi 幂等重建 —— 宿主随后的
+// LayoutChildren 会走到那里，所以这里不重复处理，也不给 input_ 设 font_。
+void AiPanel::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (!nf) return;
+    HFONT old = font_;
+    font_ = nf;
+    if (label_)      ::SendMessageW(label_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (closeBtn_)   ::SendMessageW(closeBtn_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (modelCombo_) ::SendMessageW(modelCombo_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (histBtn_)    ::SendMessageW(histBtn_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (sendBtn_)    ::SendMessageW(sendBtn_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (old) ::DeleteObject(old);
+}
+
 // --------------------------------------------------------------- 连接与会话
 
 bool AiPanel::EnsureReady(const std::wstring& workDir) {

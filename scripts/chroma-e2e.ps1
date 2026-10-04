@@ -875,13 +875,19 @@ try {
   Write-Output "P9B-OK"
 
   # ------------ P10: STATIC DIAGNOSTICS (batch 87) ------------------------------
-  # Rule 8 (argument count, .pln) wired to the real UI: the status bar gains an
-  # 8th part and the editor draws squiggles with indicator 10 (error) / 11
+  # Rule 8 (argument count, .pln) wired to the real UI: the status bar gains a
+  # part of its own and the editor draws squiggles with indicator 10 (error) / 11
   # (warning). The minimal PLN-010 case below is lifted verbatim from
   # tests/test_chromadiag.cpp, so unit and e2e guard the same input.
   # The squiggle covers ONLY the statement name (12 chars at line offset 0),
   # which is exactly what the kernel reports.
-  Write-Output "[P10] rule-8 violation draws the error squiggle + fills status part 7"
+  #
+  # 【段号会随状态栏插段而平移，别再写死】批次 87 加的是第 8 段 [7]；批次 106
+  #   在它前面插了「定义」提示 [7]，静态检查随之移到 [8]（见 src/app/StatusBar.cpp
+  #   的段语义注释与头文件里的索引表）。本脚本当时没跟着改，于是 P10/P11 一直在
+  #   读「定义」那一格——该格在这两个夹具里本就为空，表现为"有告警却读不到文本"，
+  #   看起来像诊断没接到 UI，其实是探针站错了格子。段号以 StatusBar.h 为准。
+  Write-Output "[P10] rule-8 violation draws the error squiggle + fills status part 8"
   $p10 = Join-Path $work "p10.pln"
   Write-Fixture $p10 @(
     'TEST_PRO {'
@@ -911,14 +917,14 @@ try {
   if ([CH]::IndicatorAt($g_ed, $ls10, 11) -ne 0) {
     Fail "indicator 11 (warning) set for an Error-severity finding" }
   if ($g_sb -eq [IntPtr]::Zero) { Fail "status bar not found" }
-  $len7 = [CH]::StatusPartLen($g_sb, 7)
-  if ($len7 -le 0) { Fail "status part 7 (diagnostics) is EMPTY with 1 finding" }
-  Write-Output ("  OK squiggle on line 1 name + status part 7 len={0}" -f $len7)
+  $lenDiag = [CH]::StatusPartLen($g_sb, 8)
+  if ($lenDiag -le 0) { Fail "status part 8 (diagnostics) is EMPTY with 1 finding" }
+  Write-Output ("  OK squiggle on line 1 name + status part 8 len={0}" -f $lenDiag)
   Write-Output "P10-OK"
 
   # P10B negative control: a syntactically clean call must leave indicator 10
   # and 11 silent everywhere while the status part still shows "no findings".
-  Write-Output "[P10B] clean .pln: no squiggle anywhere, status part 7 says clean"
+  Write-Output "[P10B] clean .pln: no squiggle anywhere, status part 8 says clean"
   $p10b = Join-Path $work "p10b.pln"
   Write-Fixture $p10b @(
     'TEST_PRO {'
@@ -936,9 +942,9 @@ try {
   }
   if ($hits10b -ne 0) {
     Fail ("clean line 1 has {0} indicator hits - false positives in the UI" -f $hits10b) }
-  $len7b = [CH]::StatusPartLen($g_sb, 7)
-  if ($len7b -le 0) { Fail "status part 7 empty for a clean Chroma file (clean text missing)" }
-  Write-Output ("  OK 0 squiggle hits on the clean call + status part 7 len={0}" -f $len7b)
+  $lenDiagB = [CH]::StatusPartLen($g_sb, 8)
+  if ($lenDiagB -le 0) { Fail "status part 8 empty for a clean Chroma file (clean text missing)" }
+  Write-Output ("  OK 0 squiggle hits on the clean call + status part 8 len={0}" -f $lenDiagB)
   Write-Output "P10B-OK"
 
   # ------------ P11: CROSS-FILE RULE 3 (batch 88) -------------------------------
@@ -982,9 +988,9 @@ try {
     Fail "indicator 11 on the clean STOP vector line - false positive" }
   if ([CH]::IndicatorAt($g_ed, 0, 11) -ne 0) {
     Fail "indicator 11 on the SET_DEC_FILE line - over-marking" }
-  $len7c = [CH]::StatusPartLen($g_sb, 7)
-  if ($len7c -le 0) { Fail "status part 7 empty with 1 cross-file finding" }
-  Write-Output ("  OK warning squiggle on IMATCH + status part 7 len={0}" -f $len7c)
+  $lenDiagC = [CH]::StatusPartLen($g_sb, 8)
+  if ($lenDiagC -le 0) { Fail "status part 8 empty with 1 cross-file finding" }
+  Write-Output ("  OK warning squiggle on IMATCH + status part 8 len={0}" -f $lenDiagC)
   Write-Output "P11-OK"
 
   # P11B negative control: same .pat but the referenced .dec declares nothing ->

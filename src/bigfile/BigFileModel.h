@@ -38,7 +38,20 @@ public:
 
     enum class Enc { Utf8, Ansi };
     Enc Encoding() const { return enc_; }
-    const std::wstring& Error() const { return error_; }
+
+    // 打开失败的原因。本层**只说"是哪一类"，不产出人类可读文本** ——
+    // 文案由展示层按语言键取（Tr），内核不依赖 I18n（与 language/ 各内核同口径）。
+    // 失败类别是**枚举而不是字符串**，否则换语言时这里的中文会跟着漏进界面。
+    enum class Err {
+        None = 0,   // 未失败
+        OpenFile,   // CreateFileW 失败
+        FileSize,   // GetFileSizeEx 失败
+        MapFailure, // CreateFileMappingW 失败
+        Utf16,      // 文件头探测到 UTF-16，v1 不支持
+    };
+    Err Error() const { return err_; }
+    // 语言无关的诊断名（写日志、基准工具用；不进界面）
+    static const char* ErrName(Err e);
 
     // line count discovered so far; final once ScanDone()
     unsigned long long LineCount() const;
@@ -68,7 +81,7 @@ private:
     void ScanLoop();
 
     std::wstring path_;
-    std::wstring error_;
+    Err err_ = Err::None;
     void* fileH_ = nullptr;         // HANDLE
     void* mapping_ = nullptr;       // HANDLE
     unsigned long long fileSize_ = 0;

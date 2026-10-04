@@ -76,7 +76,10 @@ add_executable(test_workshop test_workshop.cpp stub_workspace.cpp
     ../src/plugin/Workshop.cpp
     ../src/plugin/PluginManager.cpp
     ../src/plugin/npp/NppCompat.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp
     ../src/plugin/oop/OopHost.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/oop/DmmMarshal.cpp
     ../src/core/Util.cpp
     ../src/core/I18n.cpp
     ../src/core/JsonLite.cpp
@@ -317,6 +320,21 @@ endif()
 
 add_test(NAME lineops COMMAND test_lineops)
 
+# 悬停气泡折行（批次 118）：把批次 103 写在 Editor.cpp 里、抓着 HDC 的折行算法抽成
+# 纯函数 src/editor/BalloonWrap.cpp，这里喂一把等宽量尺把它钉住 —— 重点是那条
+# 「超长词硬切」防御分支：对当前手册语料走不到（最长 token 64 字符 < 阈值 ~87），
+# 但"手册改版"正是它存在的理由，所以必须真的被走一遍，不能靠"没触发过"当已验证。
+# 另含一份批次 103 算法的冻结副本，用同一把量尺做重构等价对撞。
+add_executable(test_balloon_wrap test_balloon_wrap.cpp
+    ../src/editor/BalloonWrap.cpp)
+
+target_compile_definitions(test_balloon_wrap PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_balloon_wrap PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME balloon_wrap COMMAND test_balloon_wrap)
+
 # 自动补全词汇扫描（批次 31）：lexer 注释/字符串风格过滤表 + 纯/风格两路扫描
 add_executable(test_wordscan test_wordscan.cpp
     ../src/editor/Wordscan.cpp)
@@ -502,7 +520,10 @@ set_target_properties(test_npp_dock PROPERTIES
 add_executable(test_plugin test_plugin.cpp stub_workspace.cpp
     ../src/plugin/PluginManager.cpp
     ../src/plugin/npp/NppCompat.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp
     ../src/plugin/oop/OopHost.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/oop/DmmMarshal.cpp
     ../src/core/Log.cpp
     ../src/core/Util.cpp
     ../src/core/I18n.cpp
@@ -526,7 +547,10 @@ add_test(NAME plugin COMMAND test_plugin
 add_executable(test_npp_msgs test_npp_msgs.cpp stub_workspace.cpp
     ../src/plugin/PluginManager.cpp
     ../src/plugin/npp/NppCompat.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp
     ../src/plugin/oop/OopHost.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/oop/DmmMarshal.cpp
     ../src/core/Log.cpp
     ../src/core/Util.cpp
     ../src/core/I18n.cpp
@@ -542,10 +566,155 @@ target_link_libraries(test_npp_msgs PRIVATE shlwapi user32)
 
 add_test(NAME npp_msgs COMMAND test_npp_msgs)
 
+# ---- 外来指针判据（NPPM_* 参数不封送 ⇒ 宿主解引用前必须验指针）-------------
+# 纯模块：只依赖 windows.h，不拉 PluginManager（新增纯逻辑一律新开测试目标，
+# 折进既有目标会让"忘了注册"伪装成 100% 通过）。
+add_executable(test_ptrguard test_ptrguard.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp)
+target_compile_definitions(test_ptrguard PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_ptrguard PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME ptrguard COMMAND test_ptrguard)
+
+# ---- NPPM 过桥分类表守卫（批次 111）：两侧唯一事实源 --------------------------
+# 头文件内联（NppmMarshal.h），无需额外源文件 —— 但**必须**单开目标：
+# 折进别的目标里，一旦忘了注册，缺测会伪装成 100% 通过。
+add_executable(test_nppm_marshal test_nppm_marshal.cpp)
+target_compile_definitions(test_nppm_marshal PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_nppm_marshal PRIVATE /utf-8 /W3)
+endif()
+add_test(NAME nppm_marshal COMMAND test_nppm_marshal)
+
+# ---- 停靠族载荷布局守卫（批次 117）：两侧唯一事实源 --------------------------
+# 与 nppm_marshal 分开一个目标：那张表管"哪条消息走哪种形状"，这张管
+# "结构体/双串怎么展平成字节"。失败信号要能分开定位（形状错 vs 布局错）。
+add_executable(test_dmm_marshal test_dmm_marshal.cpp
+    ../src/plugin/oop/DmmMarshal.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp)
+target_compile_definitions(test_dmm_marshal PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_dmm_marshal PRIVATE /utf-8 /W3)
+endif()
+add_test(NAME dmm_marshal COMMAND test_dmm_marshal)
+
+# ---- SCI 通道形状表守卫（批次 112）：哪些 SCI_* 能跨进程直发的唯一判据 --------
+# 表本体是生成文件（src/plugin/oop/SciMarshalTable.inc，由
+# scripts/gen-sci-marshal.py 从 Scintilla.iface 生成）⇒ 本守卫负责"表内部自洽
+# + 与生成器自报计数一致"；"表 ↔ iface"由那条脚本的 --check 负责。
+add_executable(test_sci_marshal test_sci_marshal.cpp)
+target_compile_definitions(test_sci_marshal PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_sci_marshal PRIVATE /utf-8 /W3)
+endif()
+add_test(NAME sci_marshal COMMAND test_sci_marshal)
+
+# ---- SCI 入参指针布局表守卫（批次 113）：指针在 wp 还是 lp、长度从哪来 --------
+# 与 sci_marshal 分开一个目标：两张表的判据不同（形状 vs 布局），失败信号要能
+# 分开定位。表本体是生成物（src/plugin/oop/SciBridgeTable.inc）⇒ 本守卫负责
+# "表内部自洽 + 与生成器自报计数一致 + 布局↔形状一致"；"表 ↔ iface"由
+# scripts/gen-sci-marshal.py --check 负责。
+# 另：SciHostArgs 是**纯函数**（wire 值 + 本地缓冲 → 宿主 wp/lp），在这里把
+# 6 种布局全枚举对撞 —— 它是编辑器侧重建指针的唯一判据，错了就是"把 0 当指针
+# 发出去"或"串落在错误的参数槽"。
+#
+# ★ 批次 116 起本目标**需要 Scintilla.dll**：加了判据 [10]「把串过桥送进**真**
+#   控件再读回来」。理由见测试文件头 —— 批次 113 的"空参数槽被压掉"让 12 条
+#   判成 kStrInWp，而当时**所有**守卫都是绿的（桶计数只数条数、e2e 夹具与错表
+#   自洽、A/B 对撞只比"带不带指针"）。只有厂商编译过的控件能证伪它。
+#   exe 与 Scintilla.dll 同在 build/bin/Release/，按 exe 目录找到它。
+add_executable(test_sci_bridge test_sci_bridge.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp)
+target_compile_definitions(test_sci_bridge PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_sci_bridge PRIVATE /utf-8 /W3)
+endif()
+target_include_directories(test_sci_bridge PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/src)
+add_dependencies(test_sci_bridge Scintilla)
+add_test(NAME sci_bridge COMMAND test_sci_bridge)
+
+# ---- SCI 出参指针容量/NUL 分类表守卫（批次 114）：宿主该分配多大、回传多少 -----
+# 与 sci_bridge 分开一个目标：判据不同（出参容量/NUL 语义 vs 入参布局），失败信号
+# 要能分开定位。表本体是生成物（src/plugin/oop/SciOutTable.inc）。
+#
+# ★ 本目标**需要 Scintilla.dll**：它建一个真 Scintilla 窗口，对 30 条逐一走一遍
+#   产品代码的出参过桥（判据 B）—— "分类错了就必然被拒答"这条性质只有在真
+#   Scintilla 上才能验。exe 与 Scintilla.dll 同在 build/bin/Release/，运行时按
+#   exe 所在目录（DLL 搜索顺序第一位）找到它，所以这里只需保证它先被构建。
+#   ⚠ 找不到 DLL 时本测试**报失败而不是跳过** —— 跳过等于判据 B 静默消失。
+add_executable(test_sci_out test_sci_out.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp)
+target_compile_definitions(test_sci_out PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_sci_out PRIVATE /utf-8 /W3)
+endif()
+target_include_directories(test_sci_out PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/src)
+add_dependencies(test_sci_out Scintilla)
+add_test(NAME sci_out COMMAND test_sci_out)
+
+# ---- SCI 出入参族守卫（批次 115）：入参串 + 出参缓冲**同时**存在 -------------
+# 与 sci_out 分开一个目标：sci_out 钉的是"桶语义"（30 条 kOutStr 的容量/NUL），
+# 本目标钉的是"哪 5 条属于出入参族 + 它们的入参串怎么搬"（SciOutNeedsInStr 与
+# wire 的 inBytes 契约）。表本体是生成物（src/plugin/oop/SciInOutTable.inc）。
+#
+# ★ 本目标**需要 Scintilla.dll 与 Lexilla.dll**：三条 kNul 消息要装一个词法器
+#   才有非空的属性值（Scintilla 5.x 里没装词法器时 PropGet 恒返回 nullptr ⇒
+#   三条用例全部退化成 need=0，测试照样全绿却什么都没验到）。exe 与两个 DLL 同在
+#   build/bin/Release/，按 exe 所在目录（DLL 搜索顺序第一位）找到它们，所以这里
+#   只需保证它们先被构建。找不到时报**失败而不是跳过** —— 跳过等于判据 B 静默消失。
+add_executable(test_sci_inout test_sci_inout.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp)
+target_compile_definitions(test_sci_inout PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_sci_inout PRIVATE /utf-8 /W3)
+endif()
+target_include_directories(test_sci_inout PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/src)
+add_dependencies(test_sci_inout Scintilla Lexilla)
+add_test(NAME sci_inout COMMAND test_sci_inout)
+
+# ---- SCI 结构族守卫（批次 116）：展平结构 + 内联串 + **条件回写** -------------
+# 与 sci_inout 分开一个目标：判据不同（结构体展平 vs 入参串在 wp），失败信号要能
+# 分开定位。表本体是生成物（src/plugin/oop/SciStructTable.inc）。
+#
+# ★ 本目标有**两条独立判据**，缺一不可：
+#   ① **ABI 镜像对撞**：SciBridge.h 里的 abi::* 是"代理侧不 include Scintilla 头"
+#      的必然产物 ⇒ 尺寸/字段偏移必须与真 Scintilla.h 逐条 static_assert 相等。
+#      只在本文件写 static_assert（核对我自己写的常量）是不够的。
+#   ② **真 Scintilla 对撞**：6 条可桥接的逐条真过桥一次，再对**同一个真 Scintilla**
+#      进程内直调一次，两份字节 + 返回值 + chrgText 必须一致。
+# 需要 Scintilla.dll（exe 与它同在 build/bin/Release/，按 exe 目录找到）。
+# ⚠ 找不到 DLL 时**报失败而不是跳过** —— 跳过等于判据 B 静默消失。
+add_executable(test_sci_struct test_sci_struct.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp)
+target_compile_definitions(test_sci_struct PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_sci_struct PRIVATE /utf-8 /W3)
+endif()
+target_include_directories(test_sci_struct PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/src)
+add_dependencies(test_sci_struct Scintilla)
+add_test(NAME sci_struct COMMAND test_sci_struct)
+
 # ---- 进程外插件桥 e2e（真实代理进程 + 真实 NPP 形态测试 DLL）-----------------
-# 六个自持契约的测试插件（好插件 / setInfo-exit / 命令回调 AV / 第二好插件 /
-# 装载卡死 / messageProc 桥），独立输出目录。
-foreach(oopdll oop_good oop_killer oop_crasher oop_multi oop_hang oop_msg)
+# 十三个自持契约的测试插件（好插件 / setInfo-exit / 命令回调 AV / 第二好插件 /
+# 装载卡死 / messageProc 桥 / NPPM 指针参数过桥 / SCI 值类型直发 /
+# SCI 入参指针过桥 / SCI 出参指针过桥 / SCI 出入参过桥 / SCI 结构族过桥 /
+# NPPM_DMM* 停靠族过桥），独立输出目录。
+foreach(oopdll oop_good oop_killer oop_crasher oop_multi oop_hang oop_msg oop_nppm
+        oop_sci oop_scibridge oop_sciout oop_sciinout oop_scistruct oop_dmm)
     add_library(${oopdll} SHARED oop_plugins/${oopdll}.cpp)
     target_compile_definitions(${oopdll} PRIVATE UNICODE _UNICODE NOMINMAX)
     if(MSVC)
@@ -559,8 +728,12 @@ endforeach()
 
 add_executable(test_oop test_oop.cpp stub_workspace.cpp
     ../src/plugin/PluginManager.cpp
+    ../src/plugin/DockManager.cpp
     ../src/plugin/npp/NppCompat.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp
     ../src/plugin/oop/OopHost.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/oop/DmmMarshal.cpp
     ../src/core/Log.cpp
     ../src/core/Util.cpp
     ../src/core/I18n.cpp
@@ -575,6 +748,7 @@ target_include_directories(test_oop PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/scintilla/src)
 target_link_libraries(test_oop PRIVATE shlwapi user32 shell32)
 add_dependencies(test_oop oop_good oop_killer oop_crasher oop_multi oop_hang oop_msg
+    oop_nppm oop_sci oop_scibridge oop_sciout oop_sciinout oop_scistruct oop_dmm
     xfsWinPadPluginHost)
 add_test(NAME oop COMMAND test_oop
     $<TARGET_FILE_DIR:oop_good>)
@@ -584,7 +758,10 @@ set_tests_properties(oop PROPERTIES TIMEOUT 180)
 add_executable(test_dock test_dock.cpp stub_workspace.cpp
     ../src/plugin/PluginManager.cpp
     ../src/plugin/npp/NppCompat.cpp
+    ../src/plugin/npp/NppPointerGuard.cpp
     ../src/plugin/oop/OopHost.cpp
+    ../src/plugin/oop/SciBridge.cpp
+    ../src/plugin/oop/DmmMarshal.cpp
     ../src/plugin/DockManager.cpp
     ../src/core/Log.cpp
     ../src/core/Util.cpp
@@ -602,6 +779,20 @@ target_link_libraries(test_dock PRIVATE shlwapi user32)
 
 add_test(NAME dock COMMAND test_dock
     $<TARGET_FILE_DIR:test_npp_dock>)
+
+# 批次 119：DockedWidgetData.uMask 的解码（纯函数，header-only，不建窗口）。
+# 钉住位编码的两个坑（kDwsDfContLeft==0 与"未指定"重合；floating 与容器位可同时置
+# ⇒ 取 floating），以及"降级判据的两半"（右/上/浮动会降级；未指定/显式底部不会）。
+# 新开目标而不是折进 test_dock：折进去会让"忘了注册"伪装成全绿，而且这条判据
+# 完全不需要窗口/插件 DLL，单独跑更快也更早暴露。
+add_executable(test_dock_mask test_dock_mask.cpp)
+
+target_compile_definitions(test_dock_mask PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_dock_mask PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME dock_mask COMMAND test_dock_mask)
 
 # 临时诊断：dump NppExec getFuncsArray 返回内存（不入 add_test）
 add_executable(dump_nppexec dump_nppexec.cpp)
@@ -641,3 +832,31 @@ if(MSVC)
 endif()
 target_link_libraries(test_git PRIVATE shell32)
 add_test(NAME git COMMAND test_git)
+
+# 批次 138a：per-monitor DPI 的换算与 WM_DPICHANGED 建议矩形钳制。
+# 纯函数（src/core/Dpi.h，仅头文件），不需要链接任何实现文件。
+add_executable(test_dpi test_dpi.cpp)
+target_compile_definitions(test_dpi PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_dpi PRIVATE /utf-8 /W3)
+endif()
+target_link_libraries(test_dpi PRIVATE user32)
+add_test(NAME dpi COMMAND test_dpi)
+
+# 批次 140：弹窗（命令面板 / 查找框）的字体所有权 —— 字体不得活得比它的窗口更久。
+# 走真实窗口：创建真宿主窗 → Show/Close → 从控件读 WM_GETFONT → GetObjectW 判活。
+add_executable(test_popupfont test_popupfont.cpp
+    ../src/app/CommandPalette.cpp
+    ../src/app/FindDialog.cpp
+    ../src/core/I18n.cpp
+    ../src/core/JsonLite.cpp
+    ../src/core/Log.cpp
+    ../src/core/Util.cpp)
+target_compile_definitions(test_popupfont PRIVATE UNICODE _UNICODE NOMINMAX)
+target_include_directories(test_popupfont PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/scintilla/include)   # FindDialog.h 经 Editor.h 拉进 Scintilla.h
+if(MSVC)
+    target_compile_options(test_popupfont PRIVATE /utf-8 /W3)
+endif()
+target_link_libraries(test_popupfont PRIVATE user32 comctl32 shell32 ole32)
+add_test(NAME popupfont COMMAND test_popupfont)

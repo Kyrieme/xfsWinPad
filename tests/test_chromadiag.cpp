@@ -128,7 +128,9 @@ static void RunSetDecFile(ChromaFileKind kind) {
         CHECK(d[0].length == 1);
         CHECK(d[0].severity == DiagSeverity::Error);
         CHECK(d[0].manualPage == 41);
-        CHECK(!d[0].message.empty());
+        // 批次 134：文案移到 UI 语言键，内核只说"是哪一条"（无参数）
+        CHECK(d[0].msgId == DiagMsgId::SetDecFileNoSemicolon);
+        CHECK(d[0].args.empty());
     }
     // 小写 / 前面有缩进 / 分号后还有空白 —— 都要能认出来
     CHECK(CountCode(ValidateChromaSource("   set_dec_file \"a.dec\";\n", kind),
@@ -148,8 +150,8 @@ static void RunPinList() {
     const std::vector<Diagnostic> man =
         ValidateChromaSource(kManualDecExample, ChromaFileKind::Dec);
     for (const Diagnostic& d : man) {
-        std::printf("    unexpected: line %d  %s  %s\n", d.line + 1,
-                    d.code ? d.code : "?", d.message.c_str());
+        std::printf("    unexpected: line %d  %s  (msgId=%d)\n", d.line + 1,
+                    d.code ? d.code : "?", (int)d.msgId);
     }
     CHECK(man.empty());
 
@@ -384,9 +386,15 @@ static void RunArgumentCount() {
         CHECK(d[0].start == 0);                    // 高亮范围 = 语句名
         CHECK(d[0].length == 12);                  // strlen("MEAS_I_MLDPS")
         CHECK(d[0].severity == DiagSeverity::Warning);   // 取证较弱 → Warning
-        CHECK(d[0].manualPage == 0);               // 0 = 无单一页码，章节号在 message 里
-        CHECK(d[0].message.find("4.3") != std::string::npos);
-        CHECK(d[0].message.find("2") != std::string::npos);
+        CHECK(d[0].manualPage == 0);               // 0 = 无单一页码，章节号在文案参数里
+        CHECK(d[0].msgId == DiagMsgId::TooFewArgs);
+        CHECK(d[0].args.size() == 4);
+        if (d[0].args.size() == 4) {
+            CHECK(d[0].args[0] == "MEAS_I_MLDPS");
+            CHECK(d[0].args[1].find("4.3") != std::string::npos);
+            CHECK(d[0].args[2] == "2");            // 必填个数
+            CHECK(d[0].args[3] == "1");            // 实给个数
+        }
     }
     // 少一个也算（6 个必填，给了 5 个）
     CHECK(CountCode(ValidateChromaSource("FORCE_I_PMU(PMU, 1mA, @1mA, @6V, 6V, ON);\n", P),
@@ -406,7 +414,9 @@ static void RunArgumentCount() {
         CHECK(CountCode(d, "C3380-PLN-010") == 1);
         CHECK(d[0].severity == DiagSeverity::Error);     // 手册没定义过这种形式
         CHECK(d[0].length == 12);
-        CHECK(d[0].message.find("5") != std::string::npos);
+        CHECK(d[0].msgId == DiagMsgId::TooManyArgs);
+        CHECK(d[0].args.size() == 4);
+        if (d[0].args.size() == 4) CHECK(d[0].args[2] == "5");   // 签名上限
     }
     CHECK(CountCode(ValidateChromaSource("FORCE_I_PMU(PMU, 1mA, @1mA, @6V, 6V, ON, 3mS, 3mS);\n", P),
                     "C3380-PLN-010") == 1);
@@ -940,7 +950,33 @@ SPM_PATTERN(m)
             CHECK(d[0].length == 3);
             CHECK(d[0].severity == DiagSeverity::Warning);
             CHECK(d[0].manualPage == 41);
-            CHECK(d[0].message.find("HEADER") != std::string::npos);
+            // 本 fixture 有 2 条不符 → 走"多行"变体；参数=宽度, HEADER 行, pin 数, 共几行
+            CHECK(d[0].msgId == DiagMsgId::VectorWidthMismatchMany);
+            CHECK(d[0].args.size() == 4);
+            if (d[0].args.size() == 4) {
+                CHECK(d[0].args[0] == "3");     // 向量宽度
+                CHECK(d[0].args[1] == "2");     // HEADER 所在行（1-based）
+                CHECK(d[0].args[2] == "4");     // HEADER 声明的 pin 数
+                CHECK(d[0].args[3] == "2");     // 不符的行数
+            }
+        }
+    }
+
+    // ---- 只有一条不符 → 单行变体（无第 4 个参数）
+    {
+        static const char* kOneBad = R"PAT(HEADER A,B,C,D;
+SPM_PATTERN(m)
+{
+  *0101*;
+  *010*;
+}
+)PAT";
+        const std::vector<Diagnostic> d =
+            ValidateChromaSource(kOneBad, ChromaFileKind::Pattern);
+        CHECK(d.size() == 1);
+        if (d.size() == 1) {
+            CHECK(d[0].msgId == DiagMsgId::VectorWidthMismatch);
+            CHECK(d[0].args.size() == 3);
         }
     }
 
@@ -1179,7 +1215,8 @@ static void RunRptCount() {
             CHECK(d[0].severity == DiagSeverity::Warning);   // 硬件容量，非语法错误
             CHECK(d[0].manualPage == 44);
             CHECK(d[0].length == (int)std::string(v).size()); // 高亮覆盖整个数字
-            CHECK(d[0].message.find(v) != std::string::npos);
+            CHECK(d[0].msgId == DiagMsgId::RptOutOfRange);
+            CHECK(d[0].args.size() == 1 && d[0].args[0] == v);
         }
     }
 
@@ -1293,8 +1330,8 @@ static int ScanFile(int argc, char** argv) {
     std::printf("%s  kind=%d  bytes=%zu  decs=%zu  diagnostics=%zu\n", path, (int)kind,
                 text.size(), decTexts.size(), d.size());
     for (const Diagnostic& x : d) {
-        std::printf("  line %d col %d  %s [p%d]  %s\n", x.line + 1, x.start + 1,
-                    x.code ? x.code : "?", x.manualPage, x.message.c_str());
+        std::printf("  line %d col %d  %s [p%d]  msgId=%d\n", x.line + 1, x.start + 1,
+                    x.code ? x.code : "?", x.manualPage, (int)x.msgId);
     }
     return d.empty() ? 0 : 1;
 }

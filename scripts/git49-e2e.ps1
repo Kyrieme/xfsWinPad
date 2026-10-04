@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"))
 # Batch 49 e2e: tracking ahead/behind warning in the title bar. Builds a
 # bare origin, a pushed work clone and a second clone that is 1 commit
 # ahead AND 1 commit behind, opens a file there and asserts:

@@ -27,20 +27,31 @@ const unsigned char* RawMapView(void* mapping, unsigned long long off, size_t le
 
 } // namespace
 
+const char* BigFileModel::ErrName(Err e) {
+    switch (e) {
+        case Err::None:       return "none";
+        case Err::OpenFile:   return "createfile";
+        case Err::FileSize:   return "getfilesize";
+        case Err::MapFailure: return "createmapping";
+        case Err::Utf16:      return "utf16";
+    }
+    return "?";
+}
+
 bool BigFileModel::Open(const std::wstring& path) {
     Close();
-    error_.clear();
+    err_ = Err::None;
 
     fileH_ = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (fileH_ == INVALID_HANDLE_VALUE) {
         fileH_ = nullptr;
-        error_ = L"无法打开文件 (CreateFile)";
+        err_ = Err::OpenFile;
         return false;
     }
     LARGE_INTEGER sz{};
     if (!::GetFileSizeEx(fileH_, &sz)) {
-        error_ = L"无法读取文件大小";
+        err_ = Err::FileSize;
         Close();
         return false;
     }
@@ -61,7 +72,7 @@ bool BigFileModel::Open(const std::wstring& path) {
     mapping_ = ::CreateFileMappingW(static_cast<HANDLE>(fileH_), nullptr,
                                     PAGE_READONLY, 0, 0, nullptr);
     if (!mapping_) {
-        error_ = L"创建文件映射失败";
+        err_ = Err::MapFailure;
         Close();
         return false;
     }
@@ -77,7 +88,7 @@ bool BigFileModel::Open(const std::wstring& path) {
             if (det == encoding::EncodingType::UTF16LE ||
                 det == encoding::EncodingType::UTF16BE) {
                 ::UnmapViewOfFile(probe);
-                error_ = L"大文件查看器 v1 暂不支持 UTF-16，请先转换为 UTF-8 或 ANSI";
+                err_ = Err::Utf16;
                 Close();
                 return false;
             }

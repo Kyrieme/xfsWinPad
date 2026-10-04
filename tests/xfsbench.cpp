@@ -321,7 +321,8 @@ int main(int argc, char** argv) {
         xfs::BigFileModel model;
         model.Open(textPath);
         if (!model.IsValid()) {
-            fprintf(stderr, "[FAIL] BigFileModel open: %ls\n", model.Error().c_str());
+            fprintf(stderr, "[FAIL] BigFileModel open: %s\n",
+                    xfs::BigFileModel::ErrName(model.Error()));
             return 1;
         }
         while (!model.ScanDone()) Sleep(10);

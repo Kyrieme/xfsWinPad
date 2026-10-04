@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"))
 # Batch 44 e2e: CSV panel print table (ID_CTX_PRINT=1396). On Win11 24H2 the
 # legacy PrintDlgW is redirected to the modern print flyout hosted in ANOTHER
 # process as an ApplicationFrameWindow (title = "Printing from a Win32 app"),

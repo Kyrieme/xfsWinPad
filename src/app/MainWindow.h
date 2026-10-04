@@ -117,6 +117,14 @@ private:
     void BuildAccelerators();
     void ApplyLanguage();
     void CreateToolbar();
+    // 批次 138a：按当前 DPI 重建工具栏图标位图。
+    // 抽出来是因为它要被两处调用：CreateToolbar（首建）与 WM_DPICHANGED（重建）。
+    // ImageList 是一次性资源——缩放后的位图不会自己变。
+    void RebuildToolbarIcons();
+    // 批次 138b：DPI 变化的"重建一次性资源"扇出点。
+    // 布局会自愈（各面板 WM_SIZE 现取 GetDpiForWindow），字体不会——
+    // 它们是创建期一次成型的，必须在这里挨个点名重建。
+    void NotifyDpiChanged(int dpi);
     void LayoutChildren();
     void UpdateTitleBar();
     void UpdateStatusBar();

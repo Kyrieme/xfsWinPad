@@ -3,7 +3,9 @@ $ErrorActionPreference = 'Stop'
 Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 
-$exe = 'D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe'
+# Derive the editor from THIS script's own location so the probe works from any
+# checkout / drive (the host's D:\ does not exist inside a VM - see chroma-e2e).
+$exe = Join-Path (Split-Path -Parent $PSScriptRoot) 'build\bin\Release\xfsWinPad.exe'
 $rand = Get-Random -Minimum 100 -Maximum 999
 $branch = "e2e47z$rand"
 $repo = Join-Path $env:TEMP "xfsGitTest47"

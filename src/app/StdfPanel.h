@@ -48,6 +48,9 @@ public:
     void ApplyTheme(const ThemeDef& t);
     void Retranslate();
     void Layout(int w, int h);
+    // 批次 138b：DPI 变化后重建字体并重新交给所有子控件（含 Tab 页里那些
+    // EnsureTabs 惰性建出来的：它们此刻已有 hwnd，一起重设）。
+    void OnDpiChanged(int dpi);
 
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);

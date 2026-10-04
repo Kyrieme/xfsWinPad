@@ -51,6 +51,8 @@ public:
     void ApplyTheme(const ThemeDef& t);
     void Retranslate();
     void Layout(int w, int h);
+    // 批次 138b：DPI 变化后重建字体并重新交给所有子控件。
+    void OnDpiChanged(int dpi);
 
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);

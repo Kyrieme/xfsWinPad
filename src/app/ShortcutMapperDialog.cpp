@@ -70,15 +70,10 @@ void Refill(State& st) {
                 continue;
         }
         // 单串格式：名称（快捷键）——避免 ListBox 制表单位的 DPI 折腾
-        std::wstring display = e.name;
         const ShortcutInfo info = GlobalShortcuts().Get(e.id);
-        if (info.Valid()) {
-            display += L"（";
-            display += info.ToString();
-            display += L"）";
-        } else {
-            display += Tr(L"sc.none");
-        }
+        std::wstring display = info.Valid()
+            ? I18n::Instance().Fmt(L"sc.itemfmt", {e.name, info.ToString()})
+            : e.name + Tr(L"sc.none");
         int idx = (int)::SendMessageW(st.hList, LB_ADDSTRING, 0, (LPARAM)display.c_str());
         ::SendMessageW(st.hList, LB_SETITEMDATA, idx, e.id);
         if (prevSel && e.id == prevSel) selIdx = idx;

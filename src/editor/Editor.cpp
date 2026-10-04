@@ -11,6 +11,7 @@
 #include "../theme/Styler.h"
 #include "LineOps.h"
 #include "Wordscan.h"
+#include "BalloonWrap.h"                 // 批次 118：气泡折行（纯函数，可单测）
 #include <commctrl.h>
 
 #include <ILexer.h>
@@ -320,6 +321,14 @@ void Editor::SetupMargins(int dpi) {
     DefineMarkMarker();
 
     lastLineCountDigits_ = 0;
+}
+
+// 批次 138b：见 Editor.h。SetupMargins 末尾已把行号栏宽度的位数缓存清掉
+// （跨屏后字号变大、同样位数要更宽），所以这里紧跟一次重量即可。
+void Editor::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    SetupMargins(dpi);
+    UpdateLineNumberWidth();
 }
 
 void Editor::UpdateLineNumberWidth() {
@@ -1354,6 +1363,22 @@ void Editor::CancelSignatureHint() {
 // 【为什么按像素而不是按字符数】
 //   字符数只有在等宽字体下才等于像素。气泡用的是系统 tooltip 字体，它随 DPI 缩放；
 //   按字符数折，换个 DPI 就重新出现裁切。量一次宽最稳，代价是几行 GDI。
+// ---- 批次 118：折行算法已搬到 src/editor/BalloonWrap.cpp（纯函数）--------------
+//
+// 这里只剩"取气泡自己的字体 + 喂一把 GDI 量尺"，算法本体与不变量清单见 BalloonWrap.h。
+// 搬家的理由：算法里的「超长词硬切」分支一旦抓着 HDC 就没法单测，而它恰恰是对当前
+// 手册语料**走不到**的防御分支（最长 token 64 字符 < 阈值 ~87）——留着防手册改版，
+// 却没有任何实测覆盖。本项目纪律：没实测覆盖的防御分支等于未验证的断言。
+namespace {
+struct GdiMeasureCtx { HDC hdc; };
+
+int GdiMeasure(void* p, const wchar_t* s, std::size_t n) {
+    SIZE sz{};
+    if (!::GetTextExtentPoint32W(static_cast<GdiMeasureCtx*>(p)->hdc, s, (int)n, &sz)) return 0;
+    return (int)sz.cx;
+}
+} // namespace
+
 static std::wstring WrapBalloonText(HWND tip, const std::wstring& text, int maxPx)
 {
     if (maxPx <= 0) return text;
@@ -1362,44 +1387,9 @@ static std::wstring WrapBalloonText(HWND tip, const std::wstring& text, int maxP
     HFONT font = (HFONT)::SendMessageW(tip, WM_GETFONT, 0, 0);
     HGDIOBJ oldFont = font ? ::SelectObject(hdc, font) : nullptr;
 
-    auto width = [&](const std::wstring& s) -> int {
-        SIZE sz{};
-        if (!::GetTextExtentPoint32W(hdc, s.c_str(), (int)s.size(), &sz)) return 0;
-        return (int)sz.cx;
-    };
+    GdiMeasureCtx ctx{hdc};
+    std::wstring out = xfs::balloon::WrapByWidth(text, maxPx, &GdiMeasure, &ctx);
 
-    std::wstring out, line;
-    std::size_t i = 0;
-    while (i < text.size()) {
-        std::size_t j = i;
-        while (j < text.size() && text[j] != L' ') ++j;
-        std::wstring word = text.substr(i, j - i);
-        i = j;
-        while (i < text.size() && text[i] == L' ') ++i;   // 吃掉词间空格
-
-        // 整段没有空格的超长"词"（例如一串参数）：按像素硬切，别让它撑破屏幕。
-        while (width(word) > maxPx && word.size() > 1) {
-            std::size_t k = word.size();
-            while (k > 1 && width(word.substr(0, k)) > maxPx) --k;
-            if (!line.empty()) { out += line; out += L"\r\n"; line.clear(); }
-            out += word.substr(0, k);
-            out += L"\r\n";
-            word = word.substr(k);
-        }
-        if (word.empty()) continue;
-
-        if (line.empty()) {
-            line = word;
-        } else if (width(line + L" " + word) > maxPx) {
-            out += line;
-            out += L"\r\n";
-            line = word;
-        } else {
-            line += L" ";
-            line += word;
-        }
-    }
-    out += line;
     if (oldFont) ::SelectObject(hdc, oldFont);
     ::ReleaseDC(tip, hdc);
     return out;

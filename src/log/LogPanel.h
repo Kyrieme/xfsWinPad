@@ -81,6 +81,10 @@ public:
     void ApplyTheme(const ThemeDef& t);
     void Layout(int w, int h);
 
+    // 批次 138b：DPI 变化后重建工具栏字体并重新交给所有子控件；已打开的
+    // 每个 LogSession 的 Scintilla 也要按新 dpi 重设字号与行号边距。
+    void OnDpiChanged(int dpi);
+
     // re-apply localized texts after a language switch
     void Retranslate();
 

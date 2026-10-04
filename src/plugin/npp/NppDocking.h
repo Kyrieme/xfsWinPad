@@ -21,6 +21,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <cstddef>
 
 namespace xfs {
 namespace npp {
@@ -39,7 +40,8 @@ constexpr BOOL kCaptionBottom = FALSE;
 // ---- DWS_* 掩码（uMask 低 4 位是特性位，高 4 位是默认容器）-----------------
 constexpr UINT kDwsIconTab       = 0x00000001u;  // 标签页显示图标（未启用）
 constexpr UINT kDwsIconBar       = 0x00000002u;  // 图标条（上游已不支持）
-constexpr UINT kDwsAddInfo       = 0x00000004u;  // 使用附加信息文本
+constexpr UINT kDwsAddInfo       = 0x00000004u;  // 使用附加信息文本（上游 Docking.h = 4；曾误抄 5，
+                                                  //  1|2|5 与 1|2|4 同为 7 掩盖了错值）
 constexpr UINT kDwsUseOwnDarkMode = 0x00000008u; // 插件自带深色模式
 constexpr UINT kDwsParamsAll     = kDwsIconTab | kDwsIconBar | kDwsAddInfo;
 
@@ -64,6 +66,29 @@ struct DockedWidgetData {
     int iPrevCont = 0;                 // 上次容器（内部数据，我们不使用）
     const wchar_t* pszModuleName = nullptr; // 插件 DLL 文件名（重启恢复用）
 };
+
+// ---- 布局断言（Win64）------------------------------------------------------
+// 字段顺序已由 scripts/check-npp-abi-contract.py 对着上游 Docking.h 核对；
+// 这里再把**字节偏移**钉死，两边合起来才等价于"布局正确"：
+// 守卫证明"顺序跟着上游走"，断言证明"顺序 ⇒ 偏移"在我们的声明上成立。
+// ★ 在此之前，产品侧一条偏移断言都没有，而测试夹具
+//   tests/oop_plugins/oop_dmm.cpp 反而自带了 5 条 —— 守卫比被守卫的对象还严，
+//   这是反的。夹具是"另一个实现"，它自证不能替产品自证。
+static_assert(sizeof(void*) == 8 && sizeof(wchar_t) == 2 && sizeof(int) == 4,
+              "下面的偏移按 Win64 写死；换架构必须重新对着上游核对");
+static_assert(offsetof(DockedWidgetData, hClient) == 0, "DockedWidgetData.hClient");
+static_assert(offsetof(DockedWidgetData, pszName) == 8, "DockedWidgetData.pszName");
+static_assert(offsetof(DockedWidgetData, dlgID) == 16, "DockedWidgetData.dlgID");
+static_assert(offsetof(DockedWidgetData, uMask) == 20, "DockedWidgetData.uMask");
+static_assert(offsetof(DockedWidgetData, hIconTab) == 24, "DockedWidgetData.hIconTab");
+static_assert(offsetof(DockedWidgetData, pszAddInfo) == 32,
+              "DockedWidgetData.pszAddInfo");
+static_assert(offsetof(DockedWidgetData, rcFloat) == 40, "DockedWidgetData.rcFloat");
+static_assert(offsetof(DockedWidgetData, iPrevCont) == 56,
+              "DockedWidgetData.iPrevCont");
+static_assert(offsetof(DockedWidgetData, pszModuleName) == 64,
+              "DockedWidgetData.pszModuleName");
+static_assert(sizeof(DockedWidgetData) == 72, "DockedWidgetData 尾部无额外填充");
 
 // ---- DMN_* 通知码（宿主 → 插件对话框的 WM_NOTIFY code）-----------------------
 constexpr int kDmnFirst = 1050;        // 上游宏 DMN_FIRST

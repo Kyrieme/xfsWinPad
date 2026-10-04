@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"))
 # Batch 108 e2e: multi-window session slots, close disposition, fan-out, and the
 # two tab-context-menu moves that share the window machinery.
 #
@@ -19,6 +19,7 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 #   T4  ViewMoveToNewView (457)   - move the tab into a NEW window, item 1007
 #   T5  ViewMoveToOtherView (456) - in-process split, tab menu item 1006
 #   T6  File > New Window (112)   - one more blank process
+#   T7  Active() after a 456 move - must still be the MOVED document
 #
 # T4/T5 exist because the tab context menu wires ids 1006/1007 straight to
 # Workspace::MoveActiveToOtherView / MainWindow::MoveCurrentToNewWindow, and the
@@ -27,6 +28,18 @@ param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
 # synthesised in this sandbox; the ids are parsed out of CommandIds.h, never
 # hardcoded. T1/T2 pin the close ORDER on purpose: the rule is order-dependent
 # by design, so the test must not leave it to Get-Process ordering.
+#
+# T7 is the batch 109 regression. ViewMoveToOtherView leaves a fresh blank
+# document on the left when the moved tab was the last one there, and Scintilla
+# hands every newly constructed Editor a pending Update::Content (Editor.cxx:195),
+# so that blank editor emits one SCN_UPDATEUI on its first paint - which happens
+# AFTER the command handler returned, while currentView_ is already the moved
+# document. MainWindow's SCN_UPDATEUI handler used to read any such notification
+# as "the user focused the other view" and call SetActiveDoc(), flipping
+# currentView_ back to the blank document; both the title and a following 457 then
+# pointed at the blank one. T5 leaves the run in exactly that state, so T7 reads it
+# there instead of building a second fixture. Measured timing of the flip on the
+# unfixed build: the title is still correct 1 ms after 456 and wrong by 56 ms.
 #
 # The real profile is snapshotted/restored by scripts\_profile-guard.ps1: the app
 # resolves its data directory via SHGetKnownFolderPath, so pointing $env:APPDATA
@@ -230,10 +243,9 @@ try {
     # Driven here through the View menu command, which reaches the same handler.
     # Observable: a new xfsWinPad process whose main window title names the file
     # that was moved out (T3 already proved that technique on this same app).
-    # MUST run while the document sits in the view that is current - after a 456
-    # move the workspace keeps a fresh blank doc on the left and the title (and
-    # currentView_) follow THAT doc, so a following 457 would move the blank one.
-    # That is pre-existing behaviour in Workspace, unrelated to the session work.
+    # MUST run while the document sits in the view that is current: 457 acts on
+    # Workspace::Active(), so a preceding 456 would have moved this document into
+    # the other view. T7 pins what Active() must be after such a move.
     $before = @(Get-Process xfsWinPad -ErrorAction SilentlyContinue).Count
     [void][MI]::PostMessageW($frame, [MI]::WM_COMMAND, [IntPtr]$ids['ViewMoveToNewView'], [IntPtr]::Zero)
     $dl = (Get-Date).AddSeconds(40)
@@ -271,6 +283,40 @@ try {
         Die "T5: ViewMoveToOtherView did not open the split (tab menu 1006 is dead)"
     }
     Say "T5-OK MoveActiveToOtherView still splits the view"
+
+    # ---- T7: Active() after a 456 move must still be the MOVED document ----
+    # Batch 109 regression; see the header for the mechanism. $p6 is already in the
+    # right state (f2 was the only tab on the left when T5 moved it, so the split
+    # holds a fresh blank document there). Settle first: the flip this guards
+    # against is ASYNC - it rides the blank editor's first paint/idle, measured at
+    # ~56 ms after the command - and T5 returns as soon as the divider appears.
+    Start-Sleep -Milliseconds 1500
+    $p6.Refresh()
+    $t7 = $p6.MainWindowTitle
+    Say ("T7: title after the 456 move = [" + $t7 + "]")
+    if ($t7 -notmatch 'beta2') {
+        Die ("T7: after ViewMoveToOtherView the title must still name the moved " +
+             "document beta2.txt, got [" + $t7 + "] - Active() fell back to the " +
+             "blank document the workspace left on the left")
+    }
+    # The same Active() decides what a following 457 hands to the new window, which
+    # is the user-visible half of the bug.
+    $before7 = @(Get-Process xfsWinPad -ErrorAction SilentlyContinue).Count
+    [void][MI]::PostMessageW($frame6, [MI]::WM_COMMAND, [IntPtr]$ids['ViewMoveToNewView'], [IntPtr]::Zero)
+    $dl = (Get-Date).AddSeconds(40)
+    $movedB = $false
+    while (-not $movedB -and (Get-Date) -lt $dl) {
+        $now = @(Get-Process xfsWinPad -ErrorAction SilentlyContinue)
+        if (@($now | Where-Object { $_.MainWindowTitle -match 'beta2\.txt' }).Count -gt 0) { $movedB = $true }
+        if (-not $movedB) { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $movedB) {
+        $dump = @(Get-Process xfsWinPad -ErrorAction SilentlyContinue |
+                  ForEach-Object { "pid=$($_.Id) title=[$($_.MainWindowTitle)]" }) -join ' ; '
+        Say ("T7 dump: before=$before7 | " + $dump)
+        Die "T7: ViewMoveToNewView after a 456 move did not open beta2.txt in a new window"
+    }
+    Say "T7-OK Active() stayed on the moved document across a 456 move"
 
     # ---- T6: File > New Window (112) ---------------------------------------
     $before = @(Get-Process xfsWinPad -ErrorAction SilentlyContinue).Count

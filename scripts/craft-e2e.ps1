@@ -1,5 +1,5 @@
 param(
-    [string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe",
+    [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"),
     [string]$Stub = "",
     [int]$AttachPid = 0,
     [switch]$FixtureOnly,
@@ -407,6 +407,10 @@ Write-Bytes (Join-Path $smpDir "patcmp.txt") (($s_patcmp -join $CRLF) + $CRLF)
 # accepted, and the location points at the .pdt intermediate - the parser rewrites
 # it to .pat. The absolute prefix is re-pointed at this fixture so the
 # absolute-path branch of JumpToCompileLocation resolves for real.
+# NOTE: this verbatim literal is the ONLY frozen exemption in
+# scripts/check-hardcoded-paths.py. Only its .Length is used (see the byte-count
+# assertion below) - the value must stay as the real tool printed it, so it
+# cannot be derived from $PSScriptRoot like the other probes' -Exe default.
 $ORIG_PREFIX = 'Z:\AI_Work\codex\xfsPad\temp\_vmcheck\badpat_label'
 $s_link = @(
     'Start time of compilation : Sun Sep 20 05:24:14 2026',

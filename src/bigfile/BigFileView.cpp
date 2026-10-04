@@ -38,6 +38,23 @@ std::wstring ExpandTabs(const std::wstring& in) {
     return out;
 }
 
+// BigFileModel 只报"失败类别"，文案在本层按语言键取（内核零 I18n 依赖）。
+// 写成表而不是 switch：这样 check-lang-keys 的 R1 能扫到这些 id ——
+// 散在 switch 里的裸字面量它看不见，键名打错就会静默显示 "bigfile.err.size"。
+struct OpenErrKey { const wchar_t* id; BigFileModel::Err err; };
+constexpr OpenErrKey kOpenErrKeys[] = {
+    {L"bigfile.openfail",    BigFileModel::Err::OpenFile},
+    {L"bigfile.err.size",    BigFileModel::Err::FileSize},
+    {L"bigfile.err.map",     BigFileModel::Err::MapFailure},
+    {L"bigfile.notsupported", BigFileModel::Err::Utf16},
+};
+
+const wchar_t* OpenErrId(BigFileModel::Err e) {
+    for (const OpenErrKey& k : kOpenErrKeys)
+        if (k.err == e) return k.id;
+    return L"bigfile.openfail";
+}
+
 } // namespace
 
 bool BigFileView::Create(HWND parent, HINSTANCE hInst) {
@@ -119,9 +136,9 @@ bool BigFileView::LoadFile(const std::wstring& path) {
     topLine_ = 0;
     hChar_ = 0;
     if (!model_->Open(path)) {
-        ::SetWindowTextW(label_, model_->Error().c_str());
+        ::SetWindowTextW(label_, Tr(OpenErrId(model_->Error())));
         Logger::Error("BigFileView open failed: " + WideToUtf8(path) + " - " +
-                      WideToUtf8(model_->Error()));
+                      BigFileModel::ErrName(model_->Error()));
         return false;
     }
     Logger::Info("BigFileView opened bytes=" +
@@ -130,7 +147,7 @@ bool BigFileView::LoadFile(const std::wstring& path) {
     SyncScrollbars();
     SyncProgress();
     ::ShowWindow(hwnd_, SW_SHOW);
-    UINT ms = ::SetTimer(hwnd_, kTimerId, 250, nullptr);
+    UINT_PTR ms = ::SetTimer(hwnd_, kTimerId, 250, nullptr);
     (void)ms;
     return true;
 }
@@ -144,6 +161,17 @@ void BigFileView::EnsureFont() {
                           CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
     ::SendMessageW(render_, WM_SETFONT, (WPARAM)font_, TRUE);
     UpdateMetrics();
+}
+
+// 批次 138b：跨屏换 dpi 后重建正文字体。EnsureFont 本来就是"现取 render_ 的
+// dpi 重算字号 + 重排行高/字符宽"，直接复用它即可（dpi 参数由它自己取，
+// 不依赖宿主传进来的那个，两者本应一致）。
+// 工具行用的是 DEFAULT_GUI_FONT 库存字体，由系统负责缩放，无需重建。
+void BigFileView::OnDpiChanged(int dpi) {
+    (void)dpi;
+    if (!hwnd_) return;
+    EnsureFont();
+    ::InvalidateRect(render_, nullptr, TRUE);
 }
 
 void BigFileView::UpdateMetrics() {

@@ -73,6 +73,9 @@ private:
     HWND hwnd_ = nullptr;
     HWND parent_ = nullptr;
     HINSTANCE inst_ = nullptr;
+    // 批次 140：本对话框自己的字体（按本窗口 dpi 建，Close 时释放）。原来借的是
+    // 一个与跳转框共用的进程级单例，首个调用者的 dpi 一锤定音且永不释放。
+    HFONT font_ = nullptr;
     FindState* state_ = nullptr;
     int page_ = 0;
     FindInFilesUi fif_;

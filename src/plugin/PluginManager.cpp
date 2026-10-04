@@ -1,5 +1,6 @@
 #include "PluginManager.h"
 #include "npp/NppCompat.h"
+#include "npp/NppPointerGuard.h"
 #include "oop/OopHost.h"
 #include "../core/Log.h"
 #include "../core/Util.h"
@@ -479,11 +480,48 @@ int PluginManager::LoadNewFrom(const std::wstring& dir) {
 PluginManager::PluginManager() = default;
 PluginManager::~PluginManager() { UnloadAll(); }
 
+namespace {
+// DockManager 的进程外通道（v2.8，批次 117）：转给 OopHost —— 代理的窗口、
+// "受信任代理承载"白名单、以及"请代理本进程内转发"的实现都在它那里。
+// 放在 .cpp 的匿名命名空间：PluginManager.h 只需要看见 DockRemote 抽象。
+class OopDockRemote final : public DockRemote {
+public:
+    explicit OopDockRemote(OopHost* host) : host_(host) {}
+    bool IsTrustedClient(HWND hClient) const override {
+        return host_ && host_->IsTrustedDmmClient(hClient);
+    }
+    LRESULT SendNotify(HWND hClient, UINT_PTR idFrom, int code) override {
+        return host_ ? host_->RelayDmmNotify(hClient, idFrom, code) : 0;
+    }
+    void SendAction(HWND hClient, UINT action) override {
+        if (host_) host_->RelayDmmAction(hClient, action);
+    }
+private:
+    OopHost* host_;
+};
+} // namespace
+
+// 停靠通道的注入是**两件事的合流**：DockManager 由 MainWindow 注入（SetDockHost），
+// OopHost 由 EnableOopHost 建。两者到达顺序不固定 ⇒ 两边都调本函数（幂等）。
+void PluginManager::SyncDockRemote() {
+    if (oopHost_ && !dockRemote_)
+        dockRemote_ = std::make_unique<OopDockRemote>(oopHost_);
+    if (dockHost_)
+        dockHost_->SetRemoteDock(oopHost_ ? dockRemote_.get() : nullptr);
+}
+
+void PluginManager::SetDockHost(DockHost* h) {
+    dockHost_ = h;
+    SyncDockRemote();
+}
+
 void PluginManager::EnableOopHost() {
     if (!oopOwned_) {
         oopOwned_ = std::make_unique<OopHost>();
         oopHost_ = oopOwned_.get();
         Logger::Info("PluginManager: out-of-process plugin host enabled");
+        // 停靠族（NPPM_DMM*）的进程外通道随之可用（若 dockHost_ 已注入）。
+        SyncDockRemote();
     }
 }
 
@@ -746,6 +784,10 @@ void PluginManager::UnloadAll(bool freeDlls) {
     g_handleToCmd.clear();
     g_active = nullptr;
     nppSrc_ = nullptr;   // 非拥有指针（生产适配器随进程消亡/测试自管）
+    // 先把停靠通道摘掉再放手 dockHost_：DockManager 里存的是 dockRemote_ 的裸指针，
+    // 而 dockRemote_ 是本类拥有的 ⇒ 不摘就是悬垂（v2.8）。
+    if (dockHost_) dockHost_->SetRemoteDock(nullptr);
+    dockRemote_.reset();
     dockHost_ = nullptr; // 非拥有指针（MainWindow 的 DockManager 生命周期更长）
 
 }
@@ -824,15 +866,26 @@ int IndexByBufferId(NppDocSource& src, UINT_PTR id) {
     return -1;
 }
 
+// 参数路径/名称的读取上界：实参字符串必须在这么多 wchar_t 之内自终止，
+// 否则按"指针不可用"拒答（避免对未终止缓冲做无界扫描）。
+constexpr std::size_t kMaxArgChars = 32768;
+
 // 上游字符串族两段式回复：第一段 lp==NULL 返回所需 wchar_t 数（不含 NUL）；
 // 第二段 wp=调用方按"返回值+1"分配的容量，拷入并返回 TRUE/FALSE(截断)。
-LRESULT WideStrTwoCall(const std::wstring& s, WPARAM wp, LPARAM lp) {
+// 写入前过指针判据：NPPM_* 不封送参数，进程外插件的缓冲在宿主地址空间里
+// 不可用 —— 那时必须拒答（FALSE），否则 memcpy 直接访问违例。
+LRESULT WideStrTwoCall(const std::wstring& s, WPARAM wp, LPARAM lp,
+                       unsigned& refusals) {
     const unsigned need = (unsigned)s.size();
     wchar_t* buf = reinterpret_cast<wchar_t*>(lp);
     if (!buf) return (LRESULT)need;
     if (wp == 0) return FALSE;
     const unsigned cap = (unsigned)wp;
     const unsigned n = need < cap - 1 ? need : cap - 1;
+    if (!npp::LocalWritable(buf, ((std::size_t)n + 1) * sizeof(wchar_t))) {
+        ++refusals;
+        return FALSE;
+    }
     if (n) memcpy(buf, s.data(), n * sizeof(wchar_t));
     buf[n] = L'\0';
     return n == need ? (LRESULT)TRUE : (LRESULT)FALSE;
@@ -858,10 +911,36 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
     NppDocSource& src = nppSrc_ ? *nppSrc_
                                 : static_cast<NppDocSource&>(sink);
 
+    // ---- 外来指针防护 --------------------------------------------------------
+    // NPPM_* 编号在 WM_USER 之上 ⇒ Windows **不封送参数**。进程外插件
+    // （OOP 代理进程）把 NPPM_* 发给宿主主窗口时，wp/lp 里的指针是**它自己
+    // 地址空间**的地址；宿主解引用 = 读写"同一数值地址在本进程里的内容"，
+    // 大概率未映射 ⇒ 访问违例，而这里没有任何 SEH ⇒ 宿主当场死亡。
+    // 所以每个解引用 lp/wp 的分支都必须先过 npp/NppPointerGuard.h 的判据，
+    // 不通过就返回契约的失败值（FALSE/0）并记账。进程内插件传的合法指针
+    // 必然通过 ⇒ 不产生误报。
+    auto twoCall = [this](const std::wstring& s, WPARAM wp, LPARAM lp) {
+        return WideStrTwoCall(s, wp, lp, pointerRefusals_);
+    };
+    // 读取 lp 处的宽字符串（须自终止）；不可用返回 nullptr，调用方必须拒答。
+    auto readArgStr = [this](LPARAM lp) -> const wchar_t* {
+        const wchar_t* s = reinterpret_cast<const wchar_t*>(lp);
+        if (!s || npp::LocalWideStrChars(s, kMaxArgChars) == 0) {
+            ++pointerRefusals_;
+            return nullptr;
+        }
+        return s;
+    };
+
     switch (msg) {
     case nn::NPPM_GETCURRENTSCINTILLA: {
         auto* out = reinterpret_cast<int*>(lp);
-        if (out) *out = 0;                        // 单视图模型 ⇒ Main View
+        if (!out) return (LRESULT)TRUE;           // 上游允许 lp==NULL
+        if (!npp::LocalWritable(out, sizeof(int))) {
+            ++pointerRefusals_;
+            return FALSE;
+        }
+        *out = 0;                                 // 单视图模型 ⇒ Main View
         return (LRESULT)TRUE;
     }
     case nn::NPPM_GETNBOPENFILES:
@@ -872,13 +951,29 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
     case nn::NPPM_GETOPENFILENAMESPRIMARY_DEPRECATED: {
         auto** arr = reinterpret_cast<wchar_t**>(wp);
         const int cap = (int)lp;
+        if (!arr || cap <= 0) return 0;
+        // 只校验"这次真的会碰到的"那些槽位（cap 常常大于实际文档数）
+        const int slots = src.DocCount() < cap ? src.DocCount() : cap;
+        if (slots > 0 &&
+            !npp::LocalReadable(arr, (std::size_t)slots * sizeof(wchar_t*))) {
+            ++pointerRefusals_;
+            return 0;
+        }
         int copied = 0;
-        if (arr)
+        if (slots > 0)
             for (int i = 0; i < src.DocCount() && copied < cap; ++i) {
                 Document* d = src.DocAt(i);
                 if (!d) continue;
                 // 调用方惯例为每项 MAX_PATH 缓冲；超长按 _TRUNCATE 截断
-                wcsncpy_s(arr[copied], 260, d->path.c_str(), _TRUNCATE);
+                const std::wstring p = d->path.wstring();
+                wchar_t* dst = arr[copied];
+                const std::size_t wrote = (p.size() < 259 ? p.size() : 259) + 1;
+                if (!dst ||
+                    !npp::LocalWritable(dst, wrote * sizeof(wchar_t))) {
+                    ++pointerRefusals_;
+                    break;                        // 部分拷贝：返回已拷贝条数
+                }
+                wcsncpy_s(dst, 260, p.c_str(), _TRUNCATE);
                 ++copied;
             }
         return (LRESULT)copied;
@@ -887,12 +982,14 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
         return 0;                                 // 无副视图
 
     case nn::NPPM_SWITCHTOFILE: {
-        if (!lp) return FALSE;
-        return src.SwitchTo(reinterpret_cast<const wchar_t*>(lp)) ? TRUE : FALSE;
+        const wchar_t* p = readArgStr(lp);
+        if (!p) return FALSE;
+        return src.SwitchTo(p) ? TRUE : FALSE;
     }
     case nn::NPPM_DOOPEN: {
-        if (!lp) return FALSE;
-        return src.OpenNew(reinterpret_cast<const wchar_t*>(lp)) ? TRUE : FALSE;
+        const wchar_t* p = readArgStr(lp);
+        if (!p) return FALSE;
+        return src.OpenNew(p) ? TRUE : FALSE;
     }
     case nn::NPPM_SAVECURRENTFILE:
         return src.SaveCurrent() ? TRUE : FALSE;
@@ -911,7 +1008,9 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
     }
     case nn::NPPM_RELOADFILE: {
         if (nppSrc_ || !lp) return FALSE;
-        std::wstring target = NormalizePath(reinterpret_cast<const wchar_t*>(lp));
+        const wchar_t* arg = readArgStr(lp);
+        if (!arg) return FALSE;
+        std::wstring target = NormalizePath(arg);
         for (int i = 0; i < src.DocCount(); ++i) {
             Document* d = src.DocAt(i);
             if (d && d->path.wstring() == target)
@@ -945,7 +1044,13 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
         if (!d) return -1;
         const std::wstring p = d->path.wstring();
         if (lp) {
-            wcsncpy_s(reinterpret_cast<wchar_t*>(lp), p.size() + 1, p.c_str(), _TRUNCATE);
+            const std::size_t need = p.size() + 1;   // 真实容量（见上）
+            if (!npp::LocalWritable(reinterpret_cast<wchar_t*>(lp),
+                                    need * sizeof(wchar_t))) {
+                ++pointerRefusals_;
+                return -1;
+            }
+            wcsncpy_s(reinterpret_cast<wchar_t*>(lp), need, p.c_str(), _TRUNCATE);
         }
         return (LRESULT)p.size();
     }
@@ -958,7 +1063,7 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
     case nn::NPPM_GETPLUGINSCONFIGDIR: {
         std::error_code ec;
         std::filesystem::create_directories(ConfigDir(), ec);
-        return WideStrTwoCall(ConfigDir(), wp, lp);
+        return twoCall(ConfigDir(), wp, lp);
     }
 
     // ---- 菜单/命令句柄族 -----------------------------------------------------
@@ -969,8 +1074,12 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
         if (wp == nn::NppMainMenu)   return reinterpret_cast<LRESULT>(mainMenu_);
         return 0;                     // 未知 menuChoice：明确拒答
     }
-    case nn::NPPM_GETMENUBAR:
-        return reinterpret_cast<LRESULT>(mainMenu_);
+    case nn::NPPM_ISTABBARHIDDEN:
+        // 我们未实现 NPPM_HIDETABBAR(+51) ⇒ 标签栏恒不隐藏。返回 BOOL。
+        // ★ 批次 120 修正：这里原先挂的是 `NPPM_GETMENUBAR`（上游不存在的宏），
+        //   返回主菜单栏句柄 —— 而 NPPMSG+52 是上游真实的 NPPM_ISTABBARHIDDEN，
+        //   于是插件问"标签栏隐藏了吗"会拿到非空 HMENU 读成 TRUE。
+        return FALSE;
     case nn::NPPM_SETMENUITEMCHECK: {
         const UINT cmd = (UINT)wp;
         HMENU target = (cmd >= PluginCmdFirst) ? pluginMenu_ : mainMenu_;
@@ -984,6 +1093,10 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
         // 见 NppCompat.h）。只在插件命令上应答；无快捷键/未知命令返回 FALSE。
         auto* sk = reinterpret_cast<npp::ShortcutKey*>(lp);
         if (!sk) return FALSE;
+        if (!npp::LocalWritable(sk, sizeof(npp::ShortcutKey))) {
+            ++pointerRefusals_;
+            return FALSE;
+        }
         const unsigned cmd = (unsigned)wp;
         for (const auto& c : commands_) {
             if (c.id != cmd) continue;
@@ -1004,17 +1117,17 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
     case nn::NPPM_GETNAMEPART:
     case nn::NPPM_GETEXTPART: {
         Document* d = src.Current();
-        if (!d) return WideStrTwoCall(L"", wp, lp);
+        if (!d) return twoCall(L"", wp, lp);
         const std::filesystem::path& P = d->path;
         switch (msg) {
-        case nn::NPPM_GETFULLCURRENTPATH:   return WideStrTwoCall(P.wstring(), wp, lp);
-        case nn::NPPM_GETCURRENTDIRECTORY:  return WideStrTwoCall(P.parent_path().wstring(), wp, lp);
-        case nn::NPPM_GETFILENAME:          return WideStrTwoCall(P.filename().wstring(), wp, lp);
-        case nn::NPPM_GETNAMEPART:          return WideStrTwoCall(P.stem().wstring(), wp, lp);
+        case nn::NPPM_GETFULLCURRENTPATH:   return twoCall(P.wstring(), wp, lp);
+        case nn::NPPM_GETCURRENTDIRECTORY:  return twoCall(P.parent_path().wstring(), wp, lp);
+        case nn::NPPM_GETFILENAME:          return twoCall(P.filename().wstring(), wp, lp);
+        case nn::NPPM_GETNAMEPART:          return twoCall(P.stem().wstring(), wp, lp);
         default: { // EXTPART：上游语义不含点
             std::wstring ext = P.extension().wstring();
             if (!ext.empty() && ext[0] == L'.') ext.erase(0, 1);
-            return WideStrTwoCall(ext, wp, lp);
+            return twoCall(ext, wp, lp);
         }
         }
     }
@@ -1032,13 +1145,18 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
                     sel.resize((size_t)bytes);
                 }
             }
-            return WideStrTwoCall(Utf8ToWide(sel), wp, lp);
+            return twoCall(Utf8ToWide(sel), wp, lp);
         }
 
     case nn::NPPM_ALLOCATECMDID: {
         const int n = (int)wp;
         auto* out = reinterpret_cast<int*>(lp);
         if (n <= 0 || !out) return FALSE;
+        // 先验可写再扣池：拒答时**不消耗** id（外来指针 = 进程外插件）
+        if (!npp::LocalWritable(out, sizeof(int))) {
+            ++pointerRefusals_;
+            return FALSE;
+        }
         // 动态命令 id 池：位于静态插件池上限之后、WORD 菜单 id 安全区内
         constexpr unsigned kPoolEnd = 16000u;
         if (nextAllocCmdId_ + (unsigned)n - 1 > kPoolEnd) return FALSE;
@@ -1049,11 +1167,27 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
 
     // ---- 可停靠对话框族（4d）------------------------------------------------
     // 落地端 DockHost 由 MainWindow 注入（DockManager）；无宿主时明确拒答。
+    // ★ 这一族是"外来指针"最典型的现场：DockedWidgetData 里有 4 个指针。
+    //   进程外插件把 lp 指向**代理进程**的地址空间 —— 旧代码直接
+    //   *reinterpret_cast<const DockedWidgetData*>(lp) 会先崩在**结构体本身**
+    //   上，连 DockManager 里那条"拒绝跨进程 hClient"的守卫都到不了
+    //   （那条守卫因此一直是不可达的死代码）。现在结构体与其中每个字符串
+    //   都先过判据：不可用 ⇒ 返回 FALSE（记账），于是守卫真的会被走到。
     case nn::NPPM_DMMREGASDCKDLG: {
         if (!dockHost_ || !lp) return FALSE;
-        return dockHost_->DockWidget(
-                   *reinterpret_cast<const npp::DockedWidgetData*>(lp))
-                   ? TRUE : FALSE;
+        const auto* dw = reinterpret_cast<const npp::DockedWidgetData*>(lp);
+        if (!npp::LocalReadable(dw, sizeof(npp::DockedWidgetData))) {
+            ++pointerRefusals_;
+            return FALSE;
+        }
+        const wchar_t* strs[3] = { dw->pszName, dw->pszAddInfo, dw->pszModuleName };
+        for (const wchar_t* s : strs) {
+            if (s && npp::LocalWideStrChars(s, kMaxArgChars) == 0) {
+                ++pointerRefusals_;
+                return FALSE;
+            }
+        }
+        return dockHost_->DockWidget(*dw) ? TRUE : FALSE;
     }
     case nn::NPPM_DMMSHOW:
         return (dockHost_ && lp) && dockHost_->Show((HWND)lp) ? TRUE : FALSE;
@@ -1065,13 +1199,22 @@ LRESULT PluginManager::ForwardNppMessage(UINT msg, WPARAM wp, LPARAM lp,
     }
     case nn::NPPM_DMMVIEWOTHERTAB: {
         if (!dockHost_ || !lp) return FALSE;
-        return dockHost_->ShowByName(
-                   reinterpret_cast<const wchar_t*>(lp)) ? TRUE : FALSE;
+        const wchar_t* name = readArgStr(lp);
+        if (!name) return FALSE;
+        return dockHost_->ShowByName(name) ? TRUE : FALSE;
     }
     case nn::NPPM_DMMGETPLUGINHWNDBYNAME: {
         if (!dockHost_) return 0;
         const wchar_t* winName = wp ? reinterpret_cast<const wchar_t*>(wp) : nullptr;
         const wchar_t* modName = lp ? reinterpret_cast<const wchar_t*>(lp) : nullptr;
+        if (winName && npp::LocalWideStrChars(winName, kMaxArgChars) == 0) {
+            ++pointerRefusals_;
+            return 0;
+        }
+        if (modName && npp::LocalWideStrChars(modName, kMaxArgChars) == 0) {
+            ++pointerRefusals_;
+            return 0;
+        }
         return reinterpret_cast<LRESULT>(
             dockHost_->FindHwndByName(winName, modName));
     }

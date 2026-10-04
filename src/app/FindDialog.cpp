@@ -52,19 +52,10 @@ constexpr wchar_t kDlgClass[] = L"xfsWinPadFindDlg";
 
 namespace {
 
-HFONT g_dlgFont = nullptr;
-
-HFONT DlgFont(HWND refWindow) {
-    if (!g_dlgFont) {
-        int dpi = ::GetDpiForWindow(refWindow);
-        g_dlgFont = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL,
-                                  FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                  OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                                  L"Segoe UI");
-    }
-    return g_dlgFont;
-}
+// 批次 140：这里原来有一个进程级单例 `g_dlgFont`，被**查找框与跳转框两个窗口**
+// 共用（首次调用者的 dpi 建一次，之后既不重建也不释放）。两个窗口都可能各自
+// Show/Close，于是「先开哪个就用哪个的 dpi」+ 换屏后永不更新。已改为各窗口
+// 自建自有：查找框存 font_（见 Show/Close），跳转框用局部字体（见 Run）。
 
 HWND MakeControl(HWND parent, HINSTANCE inst, const wchar_t* cls, const wchar_t* text,
                  DWORD style, DWORD exStyle, int x, int y, int w, int h, WORD id, HFONT font) {
@@ -218,7 +209,6 @@ void FindDialog::Show(HWND parent, HINSTANCE hInst, int pageIndex) {
 
     int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return MulDiv(px, dpi, 96); };
-    HFONT font = DlgFont(parent);
 
     const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
     const DWORD exStyle = WS_EX_DLGMODALFRAME;
@@ -249,6 +239,16 @@ void FindDialog::Show(HWND parent, HINSTANCE hInst, int pageIndex) {
                               style, x, y, dlgW, dlgH,
                               nullptr, nullptr, hInst, this);
     if (!hwnd_) { hwnd_ = nullptr; return; }
+
+    // 批次 140：字体改由本对话框自己持有（原来借进程级单例，首个调用者的 dpi
+    // 一锤定音）。取**本窗口**所在监视器的 dpi —— 对话框是 Show 时按父窗口位置
+    // 摆的，落在哪块屏就以哪块屏为准；父窗口跨屏时这比用父窗口的 dpi 准。
+    // 每次 Show 都重读 ⇒ 换屏后重开即自愈。控件位置用的 u() 仍是父窗口 dpi。
+    font_ = ::CreateFontW(-MulDiv(9, ::GetDpiForWindow(hwnd_), 96), 0, 0, 0, FW_NORMAL,
+                          FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = font_;
 
     // tab strip — five pages like Notepad++.
     // NOTE: created here but pushed to the BOTTOM of the child Z-order right
@@ -428,6 +428,8 @@ void FindDialog::Close() {
         hwnd_ = nullptr;
         ::DestroyWindow(h);
     }
+    // 批次 140：控件随窗口一起没了，字体才能安全释放（仍被控件持有的字体不能删）。
+    if (font_) { ::DeleteObject(font_); font_ = nullptr; }
 }
 
 void FindDialog::Retranslate() {
@@ -630,7 +632,13 @@ int GotoDialog::Run(HWND parent, HINSTANCE hInst, int maxLine) {
                                  parent, nullptr, hInst, &st);
     if (!dlg) return -1;
 
-    HFONT font = DlgFont(parent);
+    // 批次 140：跳转框是**每次 Run 新建、用完销毁**的，字体就地建、就地收
+    // （原来借的是与查找框共用的进程级单例）。按父窗口 dpi 建 —— 它固定摆在
+    // 父窗口正上方。
+    HFONT font = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                               FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     HWND lbl = ::CreateWindowExW(0, L"STATIC", Tr(L"goto.line"),
         WS_CHILD | WS_VISIBLE, u(12), u(15), u(80), u(16),
         dlg, (HMENU)(UINT_PTR)2002, hInst, nullptr);
@@ -663,6 +671,12 @@ int GotoDialog::Run(HWND parent, HINSTANCE hInst, int maxLine) {
         }
     }
     ::EnableWindow(parent, TRUE);
+
+    // 批次 140：子控件必须**先随 dlg 销毁**才能删字体（仍被控件持有的字体不能删）。
+    // 循环也可能因 WM_QUIT 提前退出、此时 dlg 还在（那是原本就有的泄漏），
+    // 这里顺手补掉，顺带让下面的释放有可靠的时序。
+    if (::IsWindow(dlg)) ::DestroyWindow(dlg);
+    ::DeleteObject(font);
 
     if (st.result < 1) return -1;
     if (maxLine > 0 && st.result > maxLine) return maxLine;

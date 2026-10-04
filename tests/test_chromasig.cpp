@@ -3,6 +3,8 @@
 //                     批次 78：追加"接受语句名后要不要补 `(`"的书写形态判定。
 //                     批次 79：签名抽取取页窗口/标题前瞻修好后，翻面 RELAY_ON 等绊线。
 //                     批次 103：追加悬停气泡文案（手册签名 + 手册说明）的断言。
+//                     批次 130：散文枚举与 clamp 档位的冻结名单；池尺寸精确化；
+//                               kValues 孤儿值断言（池里有、无人引用 = 档位被改过）。
 //
 // 【为什么这段逻辑值得单独钉测试】
 //   它最容易出的是**静默错**：少算一个逗号，下拉框就会把 A 参数的档位表挂到 B
@@ -523,9 +525,13 @@ static void RunWantsParen() {
 }
 
 static void RunDataIntegrity() {
-    CHECK(kStatementCount > 300);
-    CHECK(kParamCount > 1000);
-    CHECK(kValueCount > 100);
+    // 三个池的**精确**尺寸（批次 130 由松断言收紧）。
+    // 松断言（> 300 / > 1000 / > 100）对「悄悄膨胀」完全无感，而池膨胀恰恰是
+    // 「某条参数的档位被改动过」的唯一信号——改动必须在这里显式同步，逼作者
+    // 交代一句为什么。数值来源：语言包数据源的生成器运行输出（私密侧）。
+    CHECK(kStatementCount == 309);
+    CHECK(kParamCount == 1265);
+    CHECK(kValueCount == 227);
 
     // 语句 → 参数区间必须在池内
     for (int i = 0; i < kStatementCount; ++i) {
@@ -553,7 +559,26 @@ static void RunDataIntegrity() {
             CHECK(std::strchr(v, ' ') == nullptr);
         }
     }
-    CHECK(enumSlots > 100);
+    CHECK(enumSlots == 162);   // 带候选值的槽数（批次 130 精确化）
+
+    // 取值池覆盖率（批次 130）：kValues 的每个下标都必须被某个参数槽引用。
+    // 【为什么单独查这个】kValues 只增不减。某条参数的档位被改小 / 改名 / 删项后，
+    //   旧值会**留在池子里**：编译照样过，每个 valStart/valCount 仍然自洽，下拉框
+    //   看着也正常——但池子在悄悄膨胀，意味着「有档位被改过而没人在意」。
+    //   批次 130 的现场反例：FORCE_I_UVI.v_clamp 曾多挂一个从邻参数串入的 OFF。
+    {
+        std::vector<char> used((size_t)kValueCount, 0);
+        for (int i = 0; i < kParamCount; ++i) {
+            const ParamDef& p = kParams[i];
+            for (int k = 0; k < p.valCount; ++k) {
+                const int idx = p.valStart + k;
+                CHECK(idx >= 0 && idx < kValueCount);
+                if (idx >= 0 && idx < kValueCount) used[(size_t)idx] = 1;
+            }
+        }
+        for (int k = 0; k < kValueCount; ++k)
+            CHECK(used[(size_t)k] == 1);   // 孤儿值 = 池里有、没有任何槽引用
+    }
 
     // 每条语句名可反查（FindStatement 大小写不敏感）
     for (int i = 0; i < kStatementCount; ++i) {
@@ -621,6 +646,88 @@ static void RunFamilyRanges() {
         }
         CHECK(found);   // 语句里必须真的有这个参数名（改名时要同步这里）
     }
+}
+
+// ---- 批次 130：散文枚举与 clamp 档位（用户实测 MEAS_V_PMU.judge_mode 无下拉）--
+//
+// 【这一批修的是什么】
+//   手册里有两类参数**有固定候选值**却拿不到下拉框，两类都「语法合法、不报错」：
+//     ① 散文枚举：取值直接写在参数注释的散文里（`judge_mode : IFVM (...)`;
+//        `LOW: ...` / `HIGH: ...` / `NORM: ...` 三段说明）。行内启发式看得见，
+//        但按设计**一律丢弃**（会把邻参数的表格串过来）。
+//     ② `*_clamp`：档位表被归因规则判给了相邻的 i_range/v_range，参数自身
+//        一条也拿不到；而 Example 里写的是具体值（`2V`），也不成表。
+//
+// 【为什么必须连参数名一起钉】
+//   EnumOf 是按名查槽的，而且 PMU 族的手册名带大写（`V_range` / `I_clamp`）。
+//   参数改名而这里没跟，断言会以「语句里没有这个参数名」失败——正是我们要的提醒。
+
+static void RunProseClampEnums() {
+    struct Case { const char* stmt; const char* param; const char* want; };
+    static const Case kCases[] = {
+        // ① 散文枚举。judge_mode 的取值**随语句族而变**，串族即错：
+        //    UVI/PREF 只有 IFVM；PMU 多出 VMM；SET_JUDGE_MODE 是另一组。
+        {"MEAS_V_UVI",       "judge_mode",     "IFVM"},
+        {"JUDGE_V_UVI",      "judge_mode",     "IFVM"},
+        {"JUDGE_V_PREF",     "judge_mode",     "IFVM"},
+        {"MEAS_V_PREF",      "judge_mode",     "IFVM"},
+        {"JUDGE_V_PMU",      "judge_mode",     "IFVM VMM"},
+        {"MEAS_V_PMU",       "judge_mode",     "IFVM VMM"},   // ← 用户报的入口
+        {"SET_JUDGE_MODE",   "judge_mode",     "NORM DBL DBL_2X"},
+        {"INIT_DRIVE_STATE", "drv_init",       "LOW HIGH NORM"},
+        {"LOAD_AWG_PAT",     "rpt_mode",       "NORM RPT CONT STEP_TRIG"},
+        {"SET_WG_WORK_MODE", "cont_stop_mode", "MODE_A MODE_B"},
+        // ② clamp 档位：全部**不带 `@`**（手册表格印 @6V，代码里写 6V；
+        //    依据是各节 Example，不是表格——见 build_param_enums 的 AT_PARAMS 说明）
+        {"FORCE_I_MLDPS", "v_clamp", "6V 12V"},
+        {"FORCE_I_DPS",   "v_clamp", "4V 8V 12V 16V"},
+        {"FORCE_I_PREF",  "v_clamp", "6V 12V 24V 48V"},
+        {"FORCE_I_UVI",   "v_clamp", "2V 4V 6V 12V"},   // 曾多挂一个串入的 OFF
+        {"FORCE_V_DPS",   "I_clamp", "1uA 10uA 100uA 1mA 10mA 100mA 1A 2A"},
+        {"FORCE_V_UVI",   "i_clamp", "1uA 10uA 100uA 1mA 10mA 100mA 1A"},
+        {"FORCE_V_PREF",  "i_clamp", "1uA 10uA 100uA 1mA 10mA 100mA 250mA"},
+        {"FORCE_I_PMU",   "V_clamp", "6V 12V 24V 48V"},
+        {"FORCE_V_PMU",   "I_clamp", "1uA 10uA 100uA 1mA 10mA 100mA 250mA"},
+        // ③ 手册明确**没有**档位表 → 必须保持为空。补上反而是误导：
+        //    PPMU 不支持 I-clamp；pv/nv_clamp 手册给的是连续 Range（0V~+6V）。
+        {"FORCE_V_PPMU",  "I_clamp",  ""},
+        {"FORCE_I_PPMU",  "pv_clamp", ""},
+        {"FORCE_I_PPMU",  "nv_clamp", ""},
+    };
+
+    for (const Case& c : kCases) {
+        const StatementDef* st = FindStatement(c.stmt, (int)std::strlen(c.stmt));
+        CHECK(st != nullptr);
+        if (!st) continue;
+        bool found = false;
+        for (int k = 0; k < st->paramCount && !found; ++k) {
+            const ParamDef& p = kParams[st->paramStart + k];
+            if (std::strcmp(p.name, c.param) != 0) continue;
+            found = true;
+            CHECK(EnumOf(&p) == c.want);
+        }
+        CHECK(found);   // 语句里必须真的有这个参数名（改名时要同步这里）
+    }
+
+    // 用户报的原始症状（端到端）：在 MEAS_V_PMU 的第 2 个实参处应当弹下拉。
+    // 前面的逐槽断言只证明「数据挂对了」，这一条证明「签名提示确实会用它」。
+    SignatureHint h;
+    CHECK(ResolveAtEnd("MEAS_V_PMU(PMU1, ", h));
+    CHECK(h.stmt && std::strcmp(h.stmt->name, "MEAS_V_PMU") == 0);
+    CHECK(h.paramIndex == 1);
+    CHECK(h.positional);
+    CHECK(h.hasEnum);
+    CHECK(EnumOf(h.param) == "IFVM VMM");
+
+    // 同理：SET_WG_WORK_MODE 的**最后一个可选参数** cont_stop_mode 也要弹。
+    // 这一条同时盖住「尾部可选参数（`[, cont_stop_mode ]`）的槽位对不齐」——
+    // 它是最容易被 `[` 记号整体挪位的位置（见 RunArgRange 的同类教训）。
+    SignatureHint h2;
+    CHECK(ResolveAtEnd("SET_WG_WORK_MODE(P1, DM, @6V, @RNG0, 50, LP, ON, ", h2));
+    CHECK(h2.stmt && std::strcmp(h2.stmt->name, "SET_WG_WORK_MODE") == 0);
+    CHECK(h2.paramIndex == 7);
+    CHECK(h2.hasEnum);
+    CHECK(EnumOf(h2.param) == "MODE_A MODE_B");
 }
 
 // ---- 批次 103：悬停气泡文案 --------------------------------------------------
@@ -770,6 +877,7 @@ int main() {
     RunArgRange();
     RunDisplayName();
     RunFamilyRanges();
+    RunProseClampEnums();       // 批次 130
     RunStatementCandidates();   // 批次 77
     RunStatementStart();        // 批次 77
     RunExtraWords();            // 批次 77

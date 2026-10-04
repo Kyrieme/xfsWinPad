@@ -7,6 +7,7 @@
 #include "ResultsPanel.h"
 #include "WindowsListDialog.h"
 #include "../core/CommandIds.h"
+#include "../core/Dpi.h"          // 批次 138：ScalePx / ClampSuggestedRect（纯函数，有单测）
 #include "../core/I18n.h"
 #include "../core/JsonLite.h"
 #include "../core/Log.h"
@@ -472,7 +473,7 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
     plugins_ = std::make_unique<PluginManager>();
     plugins_->SetWorkspace(workspace_.get());
     plugins_->SetHostWindow(hwnd_);
-    // 菜单句柄：NppExec 等 NPP 插件通过 NPPM_GETMENUHANDLE/GETMENUBAR 拿主
+    // 菜单句柄：NppExec 等 NPP 插件通过 NPPM_GETMENUHANDLE(NppMainMenu, 0) 拿主
     // 菜单栏句柄后自行 ModifyMenu/CheckMenuItem（BuildMenus 已先于本处完成）
     plugins_->SetPluginMenus(pluginMenu_, menu_);
     // 4d: 插件可停靠对话框宿主（NPPM_DMM* 的落地端）
@@ -1167,6 +1168,81 @@ HBITMAP PngResourceToBitmap(HINSTANCE inst, UINT resId, int px) {
     return hb;
 }
 
+namespace {
+
+// 工具栏按钮表（CreateToolbar 与 RebuildToolbarIcons 共用，批次 138）。
+// labelKey 存的是 i18n **键**而不是译文：这张表要活过 ApplyLanguage()，
+// 译名必须在用到的地方现取 Tr(...)，否则切语言后表里留的是旧语言的串。
+// resId == 0 且 labelKey == nullptr ⇒ 分隔符（与既有 TBSTYLE 逻辑同口径）。
+struct ToolbarBtnDef {
+    const wchar_t* labelKey;
+    unsigned int   cmd;
+    UINT           resId;
+};
+const ToolbarBtnDef kToolbarDefs[] = {
+    {L"cmd.new",     Cmd::FileNew,        IDR_TB_NEW},
+    {L"cmd.open",    Cmd::FileOpen,       IDR_TB_OPEN},
+    {L"cmd.save",    Cmd::FileSave,       IDR_TB_SAVE},
+    {L"cmd.saveall", Cmd::FileSaveAll,    IDR_TB_SAVEALL},
+    {nullptr,        0,                   0},                  // sep
+    {L"cmd.close",   Cmd::FileClose,      IDR_TB_CLOSE},
+    {nullptr,        0,                   0},                  // sep
+    {L"cmd.undo",    Cmd::EditUndo,       IDR_TB_UNDO},
+    {L"cmd.redo",    Cmd::EditRedo,       IDR_TB_REDO},
+    {nullptr,        0,                   0},                  // sep
+    {L"cmd.cut",     Cmd::EditCut,        IDR_TB_CUT},
+    {L"cmd.copy",    Cmd::EditCopy,       IDR_TB_COPY},
+    {L"cmd.paste",   Cmd::EditPaste,      IDR_TB_PASTE},
+    {nullptr,        0,                   0},                  // sep
+    {L"cmd.find",    Cmd::SearchFind,     IDR_TB_FIND},
+    {L"cmd.replace", Cmd::SearchReplace,  IDR_TB_REPLACE},
+    {nullptr,        0,                   0},                  // sep
+    {L"cmd.zoomin",  Cmd::ViewZoomIn,     IDR_TB_ZOOMIN},
+    {L"cmd.zoomout", Cmd::ViewZoomOut,    IDR_TB_ZOOMOUT},
+    {nullptr,        0,                   0},                  // sep
+    {L"cmd.wrap",    Cmd::ViewWordWrap,   0},                  // caption-only
+};
+constexpr int kToolbarDefCount =
+    static_cast<int>(sizeof(kToolbarDefs) / sizeof(kToolbarDefs[0]));
+
+} // namespace
+
+// 批次 138：按当前 DPI 重建工具栏图标位图。
+// ImageList 是"一次性资源"——CreateToolbar 只在启动时建一次，缩放后的位图
+// 不会自己变；跨屏换 DPI 后必须按新的目标像素重新解码 PNG 并替换整张列表。
+// ⚠ 旧列表要自己销毁：TB_SETIMAGELIST **不**接管旧列表的释放（它只把新表挂上，
+//   返回旧表句柄），漏掉这一句每次换屏都漏一张 ImageList。
+void MainWindow::RebuildToolbarIcons() {
+    if (!toolbar_) return;
+    const int dpi = ::GetDpiForWindow(hwnd_);
+    const int iconPx = ScalePx(16, dpi);
+    HIMAGELIST il = ImageList_Create(iconPx, iconPx, ILC_COLOR32,
+                                     kToolbarDefCount, 8);
+    if (!il) {
+        Logger::Error("RebuildToolbarIcons: ImageList_Create failed");
+        return;
+    }
+    int added = 0, want = 0;
+    for (int i = 0; i < kToolbarDefCount; ++i) {
+        if (!kToolbarDefs[i].resId) continue;
+        ++want;
+        if (HBITMAP hb = PngResourceToBitmap(inst_, kToolbarDefs[i].resId, iconPx)) {
+            ImageList_Add(il, hb, nullptr);
+            ++added;
+            DeleteObject(hb);
+        } else {
+            Logger::Error("Toolbar icon load FAILED resId=" +
+                          std::to_string(kToolbarDefs[i].resId));
+        }
+    }
+    HIMAGELIST old = (HIMAGELIST)::SendMessageW(toolbar_, TB_SETIMAGELIST, 0,
+                                                (LPARAM)il);
+    if (old && old != il) ImageList_Destroy(old);
+    Logger::Info("Toolbar icons rebuilt: dpi=" + std::to_string(dpi) +
+                 " px=" + std::to_string(iconPx) +
+                 " loaded=" + std::to_string(added) + "/" + std::to_string(want));
+}
+
 void MainWindow::CreateToolbar() {
     toolbar_ = ::CreateWindowExW(0, TOOLBARCLASSNAMEW, nullptr,
         WS_CHILD | WS_VISIBLE | TBSTYLE_FLAT | TBSTYLE_LIST |
@@ -1184,57 +1260,13 @@ void MainWindow::CreateToolbar() {
                                     0, 0, 0, 0, toolbar_, nullptr, inst_, nullptr);
 
     // ---- buttons: icon-only (labels live in the hover tooltip) ----
-    struct BtnDefX { const wchar_t* label; unsigned int cmd; UINT resId; };
-    const BtnDefX defs[] = {
-        {Tr(L"cmd.new"), Cmd::FileNew, IDR_TB_NEW},
-        {Tr(L"cmd.open"), Cmd::FileOpen, IDR_TB_OPEN},
-        {Tr(L"cmd.save"), Cmd::FileSave, IDR_TB_SAVE},
-        {Tr(L"cmd.saveall"), Cmd::FileSaveAll, IDR_TB_SAVEALL},
-        {nullptr, 0, 0},                                    // sep
-        {Tr(L"cmd.close"), Cmd::FileClose, IDR_TB_CLOSE},
-        {nullptr, 0, 0},                                    // sep
-        {Tr(L"cmd.undo"), Cmd::EditUndo, IDR_TB_UNDO},
-        {Tr(L"cmd.redo"), Cmd::EditRedo, IDR_TB_REDO},
-        {nullptr, 0, 0},                                    // sep
-        {Tr(L"cmd.cut"), Cmd::EditCut, IDR_TB_CUT},
-        {Tr(L"cmd.copy"), Cmd::EditCopy, IDR_TB_COPY},
-        {Tr(L"cmd.paste"), Cmd::EditPaste, IDR_TB_PASTE},
-        {nullptr, 0, 0},                                    // sep
-        {Tr(L"cmd.find"), Cmd::SearchFind, IDR_TB_FIND},
-        {Tr(L"cmd.replace"), Cmd::SearchReplace, IDR_TB_REPLACE},
-        {nullptr, 0, 0},                                    // sep
-        {Tr(L"cmd.zoomin"), Cmd::ViewZoomIn, IDR_TB_ZOOMIN},
-        {Tr(L"cmd.zoomout"), Cmd::ViewZoomOut, IDR_TB_ZOOMOUT},
-        {nullptr, 0, 0},                                    // sep
-        {Tr(L"cmd.wrap"), Cmd::ViewWordWrap, 0},             // caption-only
-    };
-    constexpr int N = sizeof(defs) / sizeof(defs[0]);
+    // 按钮表已提到文件作用域（kToolbarDefs）：DPI 变化时要按同一张表重建图标，
+    // 两处各留一份表必然会漂移。这里只负责把 labelKey 现取成译文。
+    constexpr int N = kToolbarDefCount;
 
-    int dpi = ::GetDpiForWindow(hwnd_);
-    int iconPx = MulDiv(16, dpi, 96);
-    HIMAGELIST il = ImageList_Create(iconPx, iconPx, ILC_COLOR32, N, 8);
-    int added = 0;
-    if (il) {
-        for (int i = 0; i < N; ++i) {
-            if (!defs[i].resId) continue;
-            if (HBITMAP hb = PngResourceToBitmap(inst_, defs[i].resId, iconPx)) {
-                ImageList_Add(il, hb, nullptr);
-                ++added;
-                DeleteObject(hb);
-            } else {
-                Logger::Error("Toolbar icon load FAILED resId=" +
-                              std::to_string(defs[i].resId));
-            }
-        }
-        ::SendMessageW(toolbar_, TB_SETIMAGELIST, 0, (LPARAM)il);
-    } else {
-        Logger::Error("ImageList_Create failed");
-    }
-    Logger::Info("Toolbar icons: dpi=" + std::to_string(dpi) +
-                 " px=" + std::to_string(iconPx) +
-                 " loaded=" + std::to_string(added) + "/" +
-                 std::to_string(std::count_if(defs, defs + N,
-                     [](const BtnDefX& d){ return d.resId != 0; })));
+    // 图标位图：按当前 dpi 解码 PNG（批次 138 抽成可重复调用的成员函数）
+    RebuildToolbarIcons();
+    const int iconPx = ScalePx(16, ::GetDpiForWindow(hwnd_));
 
     // empty string pool entry shared by icon-only buttons (no caption)
     wchar_t emptyStr[2] = L"";
@@ -1245,19 +1277,20 @@ void MainWindow::CreateToolbar() {
     TBBUTTON tb[N] = {};
     int iconIdx = 0;
     for (int i = 0; i < N; ++i) {
-        bool isSep = (defs[i].label == nullptr);
-        tb[i].idCommand = defs[i].cmd;
+        const ToolbarBtnDef& d = kToolbarDefs[i];
+        bool isSep = (d.labelKey == nullptr);
+        tb[i].idCommand = d.cmd;
         tb[i].fsState = TBSTATE_ENABLED;
         tb[i].fsStyle = isSep ? BTNS_SEP : (BTNS_BUTTON | BTNS_AUTOSIZE);
         if (isSep) {
             tb[i].iBitmap = 0;
             tb[i].iString = 0;
-        } else if (defs[i].resId) {
+        } else if (d.resId) {
             tb[i].iBitmap = iconIdx++;
             tb[i].iString = emptyIdx;
         } else {
             tb[i].iBitmap = I_IMAGENONE;          // word wrap: caption only
-            std::wstring lbl = defs[i].label;
+            std::wstring lbl = Tr(d.labelKey);
             int si = (int)::SendMessageW(toolbar_, TB_ADDSTRINGW,
                                          0, (LPARAM)lbl.c_str());
             tb[i].iString = si >= 0 ? si : 0;
@@ -1272,9 +1305,9 @@ void MainWindow::CreateToolbar() {
     toolbarTipTexts_.reserve(N);
     if (toolbarTip_) {
         for (int i = 0; i < N; ++i) {
-            if (!defs[i].label) continue;
-            toolbarTipTexts_.push_back(std::wstring(defs[i].label) +
-                                       CmdShortcut(defs[i].cmd));
+            if (!kToolbarDefs[i].labelKey) continue;
+            toolbarTipTexts_.push_back(std::wstring(Tr(kToolbarDefs[i].labelKey)) +
+                                       CmdShortcut(kToolbarDefs[i].cmd));
             RECT br{};
             ::SendMessageW(toolbar_, TB_GETITEMRECT, i, (LPARAM)&br);
             TOOLINFOW ti{};
@@ -1395,6 +1428,32 @@ LRESULT CALLBACK MainWindow::ToolbarMouseProc(HWND h, UINT msg, WPARAM wp,
     return DefSubclassProc(h, msg, wp, lp);
 }
 
+// 批次 138b：DPI 变化后重建各子面板的一次性资源（字体 / 缩放位图）。
+// 【为什么逐一点名而不搞通知机制】面板类没有公共基类（11 个各写各的），
+//   硬凑一层接口要动的面比这份清单还大。代价是**新增面板时必须回来登记**——
+//   漏了不会编译失败（少一次调用而已），所以只能靠这条注释提醒：
+//   新增面板时照抄这一段邻居，并在自己的类里加同签名的 OnDpiChanged(int)。
+// 【StatusBar 为什么不在这里】它自己不存字体（用系统状态栏的默认字体），
+//   段宽由 LayoutChildren → StatusBar::Layout(w, dpi) 现算，天然自愈。
+void MainWindow::NotifyDpiChanged(int dpi) {
+    if (results_)   results_->OnDpiChanged(dpi);
+    if (explorer_)  explorer_->OnDpiChanged(dpi);
+    if (hex_)       hex_->OnDpiChanged(dpi);
+    if (stdf_)      stdf_->OnDpiChanged(dpi);
+    if (csv_)       csv_->OnDpiChanged(dpi);
+    if (diag_)      diag_->OnDpiChanged(dpi);
+    if (compile_)   compile_->OnDpiChanged(dpi);
+    if (bigfile_)   bigfile_->OnDpiChanged(dpi);
+    if (logPanel_)  logPanel_->OnDpiChanged(dpi);
+    if (terminal_)  terminal_->OnDpiChanged(dpi);
+    if (ai_)        ai_->OnDpiChanged(dpi);
+    // 左右两视图的标签条与编辑器挂在工作区里，由它统一转发。
+    if (workspace_) workspace_->OnDpiChanged(dpi);
+    // 插件停靠面板 wrapper 的标题条是 96dpi 逻辑常量（kHeaderH / 关闭钮尺寸），
+    // 子控件尺寸在创建时算过一次，要按新 dpi 重排。
+    if (dockMgr_)   dockMgr_->OnDpiChanged(dpi);
+}
+
 void MainWindow::LayoutChildren() {
     RECT rc; GetClientRect(hwnd_, &rc);
     int dpi = GetDpiForWindow(hwnd_);
@@ -1431,12 +1490,16 @@ void MainWindow::LayoutChildren() {
     int cplH = (compile_ && compile_->Visible()) ? MulDiv(compileHLogical_, dpi, 96) : 0;
     int aiW = (ai_ && ai_->Visible()) ? MulDiv(aiWLogical_, dpi, 96) : 0;
     int dockH = (dockMgr_ && !dockMgr_->Empty()) ? dockMgr_->TotalHeight(dpi) : 0;
+    // 批次 122：插件面板的右列 / 顶条是真实容器（不再一律降级到底部）
+    const int rightDockW = (dockMgr_ && !dockMgr_->Empty()) ? dockMgr_->TotalWidth(dpi) : 0;
+    const int topDockH = (dockMgr_ && !dockMgr_->Empty()) ? dockMgr_->TopTotalHeight(dpi) : 0;
     int feW = (explorer_ && explorer_->Visible()) ? MulDiv(260, dpi, 96) : 0;
-    int top = tbH;
-    // AI 右栏占据最右整列（编辑器同高），dock 链与编辑器都止步于它的左缘
+    int top = tbH + topDockH;
+    // AI 右栏占据最右整列（编辑器同高），dock 链与编辑器都止步于它的左缘；
+    // 插件右列再进一层（在 AI 左缘与编辑器右缘之间）
     int rightEdge = rc.right - aiW;
     int hostH = rc.bottom - sbH - rpH - hxH - sdH - cvH - bfH - lgH - termH - dgH - cplH - dockH - top;
-    int edW = rightEdge - feW;
+    int edW = rightEdge - feW - rightDockW;
     bool split = workspace_ && workspace_->SplitActive();
     int leftW = edW;   // left view width (full when not split)
     if (split) {
@@ -1457,6 +1520,9 @@ void MainWindow::LayoutChildren() {
     }
     if (explorer_ && explorer_->Visible())
         MoveWindow(explorer_->Hwnd(), 0, top, feW, hostH, TRUE);
+    // 批次 122：插件顶条（工具栏正下方、编辑器上方；与底部 dock 链同宽口径）
+    if (topDockH > 0)
+        dockMgr_->LayoutTop(feW, tbH, rightEdge - feW, dpi);
     int dockY = hostH + top;
     int dockW = rightEdge - feW;
     if (results_ && rpH > 0) {
@@ -1519,6 +1585,9 @@ void MainWindow::LayoutChildren() {
         MoveWindow(ai_->Hwnd(), rightEdge, top, aiW, hostH, TRUE);
         ai_->Layout(aiW, hostH);
     }
+    // 批次 122：插件右列（编辑器右缘与 AI 左缘之间；无面板时 TotalWidth=0 跳过）
+    if (rightDockW > 0)
+        dockMgr_->LayoutRight(rightEdge - rightDockW, top, hostH, dpi);
 }
 
 void MainWindow::Relayout() { LayoutChildren(); }
@@ -4196,6 +4265,47 @@ void MainWindow::NavForward() {
         SetTransientStatus(I18n::Instance().Fmt(L"msg.nav.openfail", {p.path}));
 }
 
+namespace {
+
+// 诊断文案 id → 语言键（批次 134）。内核（src/language/Chroma3380Diagnostics）只报
+// id + 参数，文案在这里按语言键取 —— 与 CraftRunner::RunNote / BigFileModel::Err 同口径。
+// 写成表而不是 switch：check-lang-keys 的 R1 只认宽串字面量的调用与表项花括号两种形态，
+// 散在 switch 里的裸字面量它看不见，键名打错就会静默显示 "panel.diag.msg.dec001"。
+struct DiagMsgKey { const wchar_t* id; chroma3380::DiagMsgId msg; };
+constexpr DiagMsgKey kDiagMsgKeys[] = {
+    {L"panel.diag.msg.com001",     chroma3380::DiagMsgId::SetDecFileNoSemicolon},
+    {L"panel.diag.msg.dec001",     chroma3380::DiagMsgId::DuplicatePinName},
+    {L"panel.diag.msg.dec002",     chroma3380::DiagMsgId::DuplicateAteChannel},
+    {L"panel.diag.msg.dec003",     chroma3380::DiagMsgId::DuplicateDutPin},
+    {L"panel.diag.msg.dec004",     chroma3380::DiagMsgId::DuplicatePinGroup},
+    {L"panel.diag.msg.pln010",     chroma3380::DiagMsgId::TooManyArgs},
+    {L"panel.diag.msg.pln011",     chroma3380::DiagMsgId::TooFewArgs},
+    {L"panel.diag.msg.pat001",     chroma3380::DiagMsgId::VectorWidthMismatch},
+    {L"panel.diag.msg.pat001many", chroma3380::DiagMsgId::VectorWidthMismatchMany},
+    {L"panel.diag.msg.pat003",     chroma3380::DiagMsgId::RptOutOfRange},
+    {L"panel.diag.msg.xfile001",   chroma3380::DiagMsgId::ImatchApasConflict},
+};
+
+// 内核给的 id + 参数 → 当前语言的短句。参数个数 0..4（见 DiagMsgId 注释）；
+// I18n::Fmt 只吃 initializer_list，所以按个数分级。
+std::wstring DiagText(const chroma3380::Diagnostic& d) {
+    const wchar_t* id = nullptr;
+    for (const DiagMsgKey& e : kDiagMsgKeys) {
+        if (e.msg == d.msgId) { id = e.id; break; }
+    }
+    if (!id) return Utf8ToWide(d.code ? d.code : "");   // 未知 id → 退回规则码
+    std::vector<std::wstring> a;
+    a.reserve(d.args.size());
+    for (const std::string& s : d.args) a.push_back(Utf8ToWide(s));
+    if (a.empty())     return Tr(id);
+    if (a.size() == 1) return I18n::Instance().Fmt(id, {a[0]});
+    if (a.size() == 2) return I18n::Instance().Fmt(id, {a[0], a[1]});
+    if (a.size() == 3) return I18n::Instance().Fmt(id, {a[0], a[1], a[2]});
+    return I18n::Instance().Fmt(id, {a[0], a[1], a[2], a[3]});
+}
+
+} // namespace
+
 void MainWindow::RefreshDiagnostics() {
     Document* d = workspace_ ? workspace_->Active() : nullptr;
     if (!d) {
@@ -4271,7 +4381,7 @@ void MainWindow::RefreshDiagnostics() {
             it.length = g.length;
             it.error = isErr;
             it.code = Utf8ToWide(g.code ? g.code : "");
-            it.message = Utf8ToWide(g.message);
+            it.message = DiagText(g);
             items.push_back(std::move(it));
         }
     }
@@ -4349,6 +4459,20 @@ namespace {
 // 面板上的步骤标签："1/4"
 std::wstring StepLabel(std::size_t idx, std::size_t total) {
     return std::to_wstring(idx + 1) + L"/" + std::to_wstring(total);
+}
+
+// "编译没跑起来"的原因 → 语言键。写成表而不是 switch：check-lang-keys 的 R1
+// 只认宽串字面量的调用与表项花括号两种形态，散在 switch 里的裸字面量它看不见。
+struct NoteKey { const wchar_t* id; craft::RunNote note; };
+constexpr NoteKey kNoteKeys[] = {
+    {L"craft.note.nosteps",    craft::RunNote::NoSteps},
+    {L"craft.note.launchfail", craft::RunNote::LaunchFail},
+};
+
+const wchar_t* NoteIdOf(craft::RunNote n) {
+    for (const NoteKey& e : kNoteKeys)
+        if (e.note == n) return e.id;
+    return nullptr;
 }
 
 // 一步的结局。写进分隔行，让人一眼看出**哪一步**挂了、**为什么** ——
@@ -4561,8 +4685,8 @@ void MainWindow::OnCompileDone(CompileJob* job) {
     // 与我们自建的静态检查不是一回事（硬约束 ②）。
     std::wstring summary;
     if (!br.launched) {
-        summary = br.note.empty() ? Tr(L"panel.compile.notlaunched")
-                                  : std::wstring(br.note);
+        const wchar_t* id = NoteIdOf(br.note);
+        summary = Tr(id ? id : L"panel.compile.notlaunched");
     } else if (br.allOk) {
         summary = I18n::Instance().Fmt(
             L"panel.compile.summary.ok",
@@ -6043,6 +6167,65 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             LayoutChildren();
             return 0;
 
+        case WM_DPICHANGED: {
+            // 批次 138：跨屏拖动 / 改缩放比例。进程在 manifest 里就是 PerMonitorV2，
+            // 所以这条消息**一定**会来（此前全仓没人接，等于白给）。
+            //
+            // 【为什么不能直接用系统给的建议矩形】它是系统按自己的口径算的：
+            //   可能被推到工作区外——**负坐标的左屏**上这一步是真实风险，也是
+            //   本批唯一无法靠"看屏幕"验证的一段。钳制判据在 core/Dpi.h
+            //   （纯函数、有单测）。
+            //   下界取 WM_GETMINMAXINFO 的 ptMinTrackSize：本程序**没有**自设最小
+            //   尺寸，拿到的就是系统的默认跟踪下界。留着它是为了不把窗口钳成
+            //   比用户手动能拖到的还小——不是新加一条产品策略。
+            // 【wm_param 是 dpi，lParam 是 RECT*】lParam 带指针 ⇒ 按 OOP 桥的
+            //   现行红线（wp/lp 皆整数才过桥）**不进广播白名单**。
+            // 【进程外插件为什么不另造通道（批次 139 的侦察结论，别再来补一条）】
+            //   ① 插件停靠窗在两种进程模型下都是本 wrapper 的子窗口（批次 117 的
+            //      SetParent；批次 136 已断言 GetParent == wrapper）⇒ 系统按既定
+            //      契约给子窗口发 WM_DPICHANGED_AFTERPARENT，插件拿到的还是它**自己
+            //      窗口**的 dpi，比我们代传的准；而 wrapper 会按新 dpi 重排，把
+            //      hClient 挪到新的标题条高度之下（见 DockManager::OnDpiChanged）。
+            //   ② NPP 生态**没有** DPI 通知码（src/plugin/npp 全目录无 DPI 命中）
+            //      ⇒ 能在 Notepad++ 下工作的插件不可能依赖它。自造一个只有本编辑器
+            //      认识的 code，是零消费者的扩展，还会与①构成重复通知。
+            //   ⚠ 未测：①里「系统会给**跨进程**子窗口发 AFTERPARENT」无法在 CI 里
+            //      实测 —— 需真实跨屏 + 两进程同时观察。
+            const int newDpi = DpiXFromWParam(wp);
+            const RECT* sugg = reinterpret_cast<const RECT*>(lp);
+            if (sugg && newDpi > 0) {
+                MINMAXINFO mmi{};
+                ::SendMessageW(hwnd_, WM_GETMINMAXINFO, 0, (LPARAM)&mmi);
+                const int minW = mmi.ptMinTrackSize.x;
+                const int minH = mmi.ptMinTrackSize.y;
+                RECT work{};
+                HMONITOR mon = ::MonitorFromRect(sugg, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi{ sizeof(MONITORINFO) };
+                if (mon && ::GetMonitorInfoW(mon, &mi)) {
+                    work = mi.rcWork;
+                } else {
+                    // 拿不到工作区（几乎不可达）：退化成"只保证不小于最小尺寸"，
+                    // 不去动系统给的位置——比按错误的屏幕钳制安全。
+                    work = *sugg;
+                    if (work.right - work.left < minW) work.right = work.left + minW;
+                    if (work.bottom - work.top < minH) work.bottom = work.top + minH;
+                }
+                const RECT r = ClampSuggestedRect(*sugg, minW, minH, work);
+                ::SetWindowPos(hwnd_, nullptr, r.left, r.top,
+                               r.right - r.left, r.bottom - r.top,
+                               SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            // 一次性资源（工具栏图标位图 / 各面板字体）不会自己变，必须重建。
+            // 顺序：先重建字体、再排几何 —— 部分面板是量着字号算行高/列宽的，
+            // 反序会用旧字号先量一遍（虽然紧接着会再排一次，但会闪一帧旧尺寸）。
+            RebuildToolbarIcons();
+            NotifyDpiChanged(::GetDpiForWindow(hwnd_));
+            LayoutChildren();
+            Logger::Info("WM_DPICHANGED: newDpi=" + std::to_string(newDpi) +
+                         " now=" + std::to_string(::GetDpiForWindow(hwnd_)));
+            return 0;
+        }
+
         case WM_DISPLAYCHANGE:
             // 显示器拓扑变化（拔插屏/改分辨率）：若窗口已不在任何显示器上
             // （或只剩边缘相交），把它拉回最近显示器的可视工作区，避免
@@ -6230,7 +6413,24 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                         break;
                     case SCN_UPDATEUI: {
                         // focus in the other split view? track it for title/status
-                        if (workspace_->CurrentView() != d->view) {
+                        // ★ 批次 109：这里**必须**确认编辑器真的持有焦点，光看
+                        //   "来了一条 UPDATEUI 而它属于别的视图"是不够的。
+                        //   Scintilla 给每个新建的 Editor 预置了一条待发的
+                        //   Update::Content（Editor.cxx:195，构造函数里的
+                        //   ContainerNeedsUpdate），所以一个**从未被点过**的编辑器
+                        //   也会在自己的首次 Paint/Idle 上发一次 SCN_UPDATEUI。
+                        //   左边视图在 MoveActiveToOtherView 里新建的那张空白文档
+                        //   正是这种情况：它的首帧晚于命令处理函数返回，此时
+                        //   currentView_ 已经是 1、而它的 view 是 0 ⇒ 旧条件会把
+                        //   currentView_ 打回 0，Active() 随即返回**那张空白文档**，
+                        //   于是紧随其后的 457（在新窗口打开）搬走的是空白文档。
+                        //   实测时序：456 之后 2 ms 标题仍正确，72 ms 已被翻成
+                        //   new 1 —— 是异步翻转，与"同步写错"区分得开。
+                        //   SCI_GETFOCUS 读的就是 hasFocus（由 WM_SETFOCUS /
+                        //   WM_KILLFOCUS 维护）：用户真的点进另一个分栏时为真，
+                        //   刚建出来还没人点过的文档为假。
+                        if (ed.Send(SCI_GETFOCUS) &&
+                            workspace_->CurrentView() != d->view) {
                             workspace_->SetActiveDoc(d);
                             UpdateTitleBar();
                             // refresh the Language menu / status bar for the

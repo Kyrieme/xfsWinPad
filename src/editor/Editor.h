@@ -236,6 +236,10 @@ public:
         onContextMenu_ = std::move(cb);
     }
 
+    // 批次 138b：跨屏换 dpi 后重排边距。边距宽度里的像素值是 dpi 派生的，
+    // 创建期一次成型不会自愈。正文字体是点值 + 用户偏好，不在这里动。
+    void OnDpiChanged(int dpi);
+
 private:
     void SetupMargins(int dpi);
     void UpdateLineNumberWidth();

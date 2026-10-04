@@ -18,6 +18,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,27 @@ struct FuncItem {
     bool initCheck;            // 初始勾选态
     ShortcutKey* shortcut;     // 可空
 };
+
+// ---- 布局断言（Win64）------------------------------------------------------
+// 字段顺序已由 scripts/check-npp-abi-contract.py 对着上游 PluginInterface.h
+// 核对（注意上游把 _cmdID 排在第三、_init2Check 第四 —— 与"cmdID 收尾"的直觉
+// 相反，所以这一族特别值得钉死）；这里再把字节偏移与步长钉死。
+// 步长 152 同时也是 src/plugin/oop/PluginHostMain.cpp 里 kStride 的来源。
+static_assert(sizeof(void*) == 8 && sizeof(wchar_t) == 2 && sizeof(int) == 4,
+              "下面的偏移按 Win64 写死；换架构必须重新对着上游核对");
+static_assert(offsetof(FuncItem, itemName) == 0, "FuncItem.itemName");
+static_assert(offsetof(FuncItem, func) == 128, "FuncItem.func");
+static_assert(offsetof(FuncItem, cmdID) == 136, "FuncItem.cmdID");
+static_assert(offsetof(FuncItem, initCheck) == 140, "FuncItem.initCheck");
+static_assert(offsetof(FuncItem, shortcut) == 144, "FuncItem.shortcut");
+static_assert(sizeof(FuncItem) == 152, "FuncItem 步长必须是 152（代理按步长寻址）");
+static_assert(offsetof(ShortcutKey, ctrl) == 0 && offsetof(ShortcutKey, alt) == 1 &&
+                  offsetof(ShortcutKey, shift) == 2 && offsetof(ShortcutKey, key) == 3 &&
+                  sizeof(ShortcutKey) == 4,
+              "ShortcutKey 必须无填充：顺序错位会把 key 误读成 modifier");
+static_assert(offsetof(NppData, npp) == 0 && offsetof(NppData, scintillaMain) == 8 &&
+                  offsetof(NppData, scintillaSecond) == 16 && sizeof(NppData) == 24,
+              "NppData 是三个连续指针");
 
 class NppAdapter {
 public:

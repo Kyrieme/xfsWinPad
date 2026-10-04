@@ -63,6 +63,25 @@ bool FileExplorer::Create(HWND parent, HINSTANCE hInst) {
     return true;
 }
 
+// 批次 138b：跨屏换 dpi 后重建树字体（创建期一次成型，不会自愈）。
+void FileExplorer::OnDpiChanged(int dpi) {
+    if (!tree_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL,
+                             FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                             L"Segoe UI");
+    if (!nf) return;
+    HFONT old = font_;
+    font_ = nf;
+    ::SendMessageW(tree_, WM_SETFONT, (WPARAM)font_, TRUE);
+    if (old) ::DeleteObject(old);
+    // 树是 WM_SIZE 里铺满客户区的（同尺寸换屏时不会自发 WM_SIZE），补一次。
+    RECT rc{};
+    ::GetClientRect(hwnd_, &rc);
+    ::SendMessageW(hwnd_, WM_SIZE, 0, MAKELPARAM(rc.right, rc.bottom));
+}
+
 void FileExplorer::Destroy() {
     if (hwnd_) { ::DestroyWindow(hwnd_); hwnd_ = nullptr; }
     tree_ = nullptr;

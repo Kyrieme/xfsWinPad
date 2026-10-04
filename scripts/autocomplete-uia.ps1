@@ -30,7 +30,10 @@ public class E {
     }
 }
 "@
-$pad = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe"
+# Derive everything from THIS script's own location: a hardcoded checkout path
+# only works on one machine (see scripts/check-hardcoded-paths.py).
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$pad = Join-Path $repoRoot "build\bin\Release\xfsWinPad.exe"
 $testFile = "$env:TEMP\autoc_probe.txt"
 Set-Content -Path $testFile -Value "" -Encoding ASCII
 Get-Process xfsWinPad -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -67,7 +70,9 @@ $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size)
-$bmp.Save("D:\AI_Work\codex\xfsPad\out\autoc_popup.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$pngOut = Join-Path $repoRoot "out\autoc_popup.png"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $pngOut) | Out-Null
+$bmp.Save($pngOut, [System.Drawing.Imaging.ImageFormat]::Png)
 $g.Dispose(); $bmp.Dispose()
 Write-Host "screenshot saved"
 # accept with REAL Enter (WM_KEYDOWN)

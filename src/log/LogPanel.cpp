@@ -706,6 +706,31 @@ static void SyncSelFlags(LogSession* s, LogPanel* p) {
     s->highlight_ = ::IsDlgButtonChecked(p->Hwnd(), ID_HL) == BST_CHECKED;
 }
 
+// 批次 138b：跨屏换 dpi 后重建工具栏字体（先建新的、换、再删旧的）。
+void LogPanel::OnDpiChanged(int dpi) {
+    if (!hwnd_) return;
+    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (!nf) return;
+    HFONT old = font_;
+    font_ = nf;
+    for (HWND h : { tabs_, addBtn_, label_, closeBtn_, openBtn_, followChk_,
+                    hlChk_, filterEdit_, excludeChk_, regexChk_, applyBtn_,
+                    clearBtn_, gotoEdit_, gotoBtn_, presetLbl_, presetCombo_,
+                    presetSave_, presetDel_ })
+        if (h) ::SendMessageW(h, WM_SETFONT, (WPARAM)font_, TRUE);
+    // 各会话的 Scintilla 正文字号是点值（不吃 font_ 的字号），但行号边距宽
+    // 是按字体量出来的 —— 重设一次让 UpdateLineNumberMargin 按新字号重算。
+    for (auto& s : sessions_) {
+        if (!s) continue;
+        ::SendMessageW(s->Sci(), WM_SETFONT, (WPARAM)font_, TRUE);
+        s->UpdateLineNumberMargin();
+    }
+    if (old) ::DeleteObject(old);
+}
+
 void LogPanel::Retranslate() {
     if (openBtn_)    ::SetWindowTextW(openBtn_, Tr(L"panel.log.open"));
     if (followChk_)  ::SetWindowTextW(followChk_, Tr(L"log.follow"));

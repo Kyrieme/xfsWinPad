@@ -1,0 +1,141 @@
+{
+  "_comment": [
+    "上游 Notepad++ 插件 ABI 契约的冻结事实表。",
+    "由 scripts/check-npp-abi-contract.py --refresh <目录> 生成，**不要手改**。",
+    "接口数值与结构体字段序属于事实；本表只记录事实，不含上游代码或注释。",
+    "守卫 check-npp-abi-contract.py 用本表核对 src/plugin/npp/NppDocking.h",
+    "与 src/plugin/npp/NppCompat.h。"
+  ],
+  "provenance": {
+    "repo": "notepad-plus-plus/notepad-plus-plus",
+    "files": {
+      "docking": {
+        "path": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+        "url": "https://raw.githubusercontent.com/notepad-plus-plus/notepad-plus-plus/master/PowerEditor/src/WinControls/DockingWnd/Docking.h",
+        "file_sha256": "7aa49d5fb1a9e5dbf62a30c5698866a4e6b1922a44d15867e054ff7cd0396477"
+      },
+      "iface": {
+        "path": "PowerEditor/src/MISC/PluginsManager/PluginInterface.h",
+        "url": "https://raw.githubusercontent.com/notepad-plus-plus/notepad-plus-plus/master/PowerEditor/src/MISC/PluginsManager/PluginInterface.h",
+        "file_sha256": "33615003d321a654191d22d4e39a2188c9d42a3d837144f6f2039cc58cd7e1f4"
+      },
+      "resource": {
+        "path": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+        "url": "https://raw.githubusercontent.com/notepad-plus-plus/notepad-plus-plus/master/PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+        "file_sha256": "dac081ac77d88d1376b12a150fe78ceb2e3fd93f1f439576393a9daba260cddc"
+      }
+    },
+    "counts": {
+      "constants": 36,
+      "structs": 4
+    },
+    "func_item_name_size": 64
+  },
+  "constants": {
+    "CAPTION_BOTTOM": 0,
+    "CAPTION_TOP": 1,
+    "CONT_BOTTOM": 3,
+    "CONT_LEFT": 0,
+    "CONT_RIGHT": 1,
+    "CONT_TOP": 2,
+    "DMM_CANCEL_MOVE": 20492,
+    "DMM_CLOSE": 20481,
+    "DMM_DOCK": 20482,
+    "DMM_DOCKALL": 20484,
+    "DMM_DROPDATA": 20490,
+    "DMM_FLOAT": 20483,
+    "DMM_FLOATALL": 20485,
+    "DMM_LBUTTONUP": 20493,
+    "DMM_MOVE": 20486,
+    "DMM_MOVE_SPLITTER": 20491,
+    "DMM_MSG": 20480,
+    "DMM_UPDATEDISPINFO": 20487,
+    "DMN_CLOSE": 1051,
+    "DMN_DOCK": 1052,
+    "DMN_FIRST": 1050,
+    "DMN_FLOAT": 1053,
+    "DMN_FLOATDROPPED": 1056,
+    "DMN_SWITCHIN": 1054,
+    "DMN_SWITCHOFF": 1055,
+    "DOCKCONT_MAX": 4,
+    "DWS_ADDINFO": 4,
+    "DWS_DF_CONT_BOTTOM": 805306368,
+    "DWS_DF_CONT_LEFT": 0,
+    "DWS_DF_CONT_RIGHT": 268435456,
+    "DWS_DF_CONT_TOP": 536870912,
+    "DWS_DF_FLOATING": 2147483648,
+    "DWS_ICONBAR": 2,
+    "DWS_ICONTAB": 1,
+    "DWS_PARAMSALL": 7,
+    "DWS_USEOWNDARKMODE": 8
+  },
+  "constant_origin": {
+    "CAPTION_BOTTOM": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "CAPTION_TOP": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "CONT_BOTTOM": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "CONT_LEFT": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "CONT_RIGHT": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "CONT_TOP": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DMM_CANCEL_MOVE": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_CLOSE": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_DOCK": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_DOCKALL": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_DROPDATA": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_FLOAT": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_FLOATALL": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_LBUTTONUP": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_MOVE": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_MOVE_SPLITTER": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_MSG": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMM_UPDATEDISPINFO": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_CLOSE": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_DOCK": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_FIRST": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_FLOAT": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_FLOATDROPPED": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_SWITCHIN": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DMN_SWITCHOFF": "PowerEditor/src/WinControls/DockingWnd/dockingResource.h",
+    "DOCKCONT_MAX": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_ADDINFO": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_DF_CONT_BOTTOM": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_DF_CONT_LEFT": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_DF_CONT_RIGHT": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_DF_CONT_TOP": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_DF_FLOATING": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_ICONBAR": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_ICONTAB": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_PARAMSALL": "PowerEditor/src/WinControls/DockingWnd/Docking.h",
+    "DWS_USEOWNDARKMODE": "PowerEditor/src/WinControls/DockingWnd/Docking.h"
+  },
+  "structs": {
+    "DockedWidgetData": [
+      "hClient",
+      "pszName",
+      "dlgID",
+      "uMask",
+      "hIconTab",
+      "pszAddInfo",
+      "rcFloat",
+      "iPrevCont",
+      "pszModuleName"
+    ],
+    "FuncItem": [
+      "_itemName",
+      "_pFunc",
+      "_cmdID",
+      "_init2Check",
+      "_pShKey"
+    ],
+    "NppData": [
+      "_nppHandle",
+      "_scintillaMainHandle",
+      "_scintillaSecondHandle"
+    ],
+    "ShortcutKey": [
+      "_isCtrl",
+      "_isAlt",
+      "_isShift",
+      "_key"
+    ]
+  }
+}

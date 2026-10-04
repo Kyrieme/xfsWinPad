@@ -25,61 +25,24 @@ jobs:
         uses: actions/checkout@v4
 
       # Fast, dependency-free guards that run before the slow MSVC build.
+      # The LIST lives in scripts/run-guards.py - one source of truth for CI and
+      # for local runs, so "CI runs a guard the local recipe doesn't" (or the
+      # reverse) cannot happen again. That drift is exactly what had left
+      # gen-sci-marshal.py --check, the lang-keys self-test and the profile-guard
+      # self-test written but never executed. The list covers .py and .ps1 guards.
+      # Each guard's rationale is a comment above its entry there.
       # The public repo may only contain code plus three .md files; private
       # notes/samples stay local and are excluded via .gitignore.
       # PYTHONIOENCODING: the guards print Chinese; without it a Windows runner
       # encodes via the local code page and dies with UnicodeEncodeError, which
       # would report a *passing* rule check as a CI failure.
-      - name: Public surface guard
+      - name: Guards
         shell: pwsh
         env:
           PYTHONIOENCODING: utf-8
         run: |
           $ErrorActionPreference = 'Stop'
-          python scripts/check-public-surface.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # Every language id the code asks for must exist in the language files:
-      # Tr() falls back to printing the raw id, so a missing key is a visible
-      # defect ("panel.compile.title" shown to the user), not a build error.
-      - name: Language key guard
-        shell: pwsh
-        env:
-          PYTHONIOENCODING: utf-8
-        run: |
-          $ErrorActionPreference = 'Stop'
-          python scripts/check-lang-keys.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # CommandIds.h is hand-assigned and mixes single values with reserved
-      # ranges used as `Cmd::XxxFirst + i`. A range colliding with another
-      # range or with a single value makes a menu item fire the wrong action
-      # silently (happened in batch 39), and neither the compiler nor the
-      # linker will complain.
-      - name: Command ID guard
-        shell: pwsh
-        env:
-          PYTHONIOENCODING: utf-8
-        run: |
-          $ErrorActionPreference = 'Stop'
-          python scripts/check-command-ids.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # PowerShell 5.1 decodes a .ps1 that has no BOM using the *system ANSI
-      # code page*, not UTF-8. A UTF-8 comment can then shift byte parity and
-      # swallow the line's newline, merging the next line into the comment -
-      # which surfaces as a phantom syntax error reported on a line that does
-      # not contain the offending token (batch 101: "unexpected }" on a line
-      # with no brace, fixed only by making the comments ASCII again).
-      # Rule enforced: a script with any non-ASCII byte must start with a
-      # UTF-8 BOM (or be pure ASCII).
-      - name: Script encoding guard
-        shell: pwsh
-        env:
-          PYTHONIOENCODING: utf-8
-        run: |
-          $ErrorActionPreference = 'Stop'
-          python scripts/check-script-encoding.py
+          python scripts/run-guards.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # The sensitive word list is deliberately NOT stored in this repo, so the

@@ -54,6 +54,10 @@ public:
     // re-apply localized texts after a language switch
     void Retranslate();
 
+    // 批次 138b：DPI 变化后重建标题条字体并重新交给子控件（sci_ 的正文字体
+    // 走 SCI_STYLESETFONT，与 font_ 无关，这里不动它）。
+    void OnDpiChanged(int dpi);
+
     // internal layout inside the panel rect
     void Layout(int w, int h);
 

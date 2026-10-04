@@ -52,6 +52,9 @@ public:
     void Layout(int w, int h);
     // change the terminal monospace font (output + input line), DPI-aware.
     void SetFont(const std::wstring& name, int size);
+    // 批次 138b：DPI 变化后重建标题条字体 + 按新 dpi 重算终端等宽字体
+    // （复走 SetFont：它已经是从父窗口现取 dpi 的那条路径）。
+    void OnDpiChanged(int dpi);
     // read back the current terminal font (for settings persistence)
     std::wstring FontName() const { return fontName_; }
     int FontSize() const { return fontSize_; }

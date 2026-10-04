@@ -44,6 +44,7 @@ set(XFS_APP_SOURCES
     hex/HexPanel.cpp
     log/LogPanel.cpp
     macro/MacroRecorder.cpp
+    editor/BalloonWrap.cpp
     editor/Editor.cpp
     editor/LineOps.cpp
     editor/Wordscan.cpp
@@ -70,7 +71,10 @@ set(XFS_APP_SOURCES
     plugin/PluginAdminDialog.cpp
     plugin/Workshop.cpp
     plugin/npp/NppCompat.cpp
+    plugin/npp/NppPointerGuard.cpp
     plugin/oop/OopHost.cpp
+    plugin/oop/SciBridge.cpp
+    plugin/oop/DmmMarshal.cpp
     plugin/DockManager.cpp
     search/SearchService.cpp
     search/SearchAll.cpp
@@ -139,7 +143,12 @@ add_custom_command(TARGET xfsWinPad POST_BUILD
 
 # ---- 进程外插件代理（xfsWinPadPluginHost.exe）--------------------------------
 # 极简 win32 exe：不链接宿主任何代码（自持契约镜像），只依赖 user32/shell32。
-add_executable(xfsWinPadPluginHost WIN32 plugin/oop/PluginHostMain.cpp)
+# SciBridge.cpp 两侧共用（同一张布局表两个方向），见该文件头。
+# DmmMarshal.cpp 同理（停靠族的载荷布局，v2.8）。
+add_executable(xfsWinPadPluginHost WIN32 plugin/oop/PluginHostMain.cpp
+    plugin/oop/SciBridge.cpp
+    plugin/oop/DmmMarshal.cpp
+    plugin/npp/NppPointerGuard.cpp)
 target_compile_definitions(xfsWinPadPluginHost PRIVATE UNICODE _UNICODE NOMINMAX)
 target_compile_options(xfsWinPadPluginHost PRIVATE /W3 /permissive- /utf-8)
 target_link_libraries(xfsWinPadPluginHost PRIVATE user32 shell32)

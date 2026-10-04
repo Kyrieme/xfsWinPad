@@ -1,4 +1,4 @@
-param([string]$Exe = "D:\AI_Work\codex\xfsPad\build\bin\Release\xfsWinPad.exe")
+param([string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "build\bin\Release\xfsWinPad.exe"))
 # Batch 46 e2e: Git integration v1. Creates a throwaway git repo with a
 # unique branch name, opens one tracked file through the CLI, and asserts:
 #   A1 the main window title gains "[branch]" (async git rev-parse result)
