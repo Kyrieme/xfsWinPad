@@ -1,4 +1,5 @@
 #include "FindDialog.h"
+#include "../core/UiFont.h"
 #include "../core/Log.h"
 #include "../core/Util.h"
 #include "../core/I18n.h"
@@ -244,10 +245,7 @@ void FindDialog::Show(HWND parent, HINSTANCE hInst, int pageIndex) {
     // 一锤定音）。取**本窗口**所在监视器的 dpi —— 对话框是 Show 时按父窗口位置
     // 摆的，落在哪块屏就以哪块屏为准；父窗口跨屏时这比用父窗口的 dpi 准。
     // 每次 Show 都重读 ⇒ 换屏后重开即自愈。控件位置用的 u() 仍是父窗口 dpi。
-    font_ = ::CreateFontW(-MulDiv(9, ::GetDpiForWindow(hwnd_), 96), 0, 0, 0, FW_NORMAL,
-                          FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(::GetDpiForWindow(hwnd_));
     HFONT font = font_;
 
     // tab strip — five pages like Notepad++.
@@ -635,10 +633,7 @@ int GotoDialog::Run(HWND parent, HINSTANCE hInst, int maxLine) {
     // 批次 140：跳转框是**每次 Run 新建、用完销毁**的，字体就地建、就地收
     // （原来借的是与查找框共用的进程级单例）。按父窗口 dpi 建 —— 它固定摆在
     // 父窗口正上方。
-    HFONT font = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                               FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
     HWND lbl = ::CreateWindowExW(0, L"STATIC", Tr(L"goto.line"),
         WS_CHILD | WS_VISIBLE, u(12), u(15), u(80), u(16),
         dlg, (HMENU)(UINT_PTR)2002, hInst, nullptr);

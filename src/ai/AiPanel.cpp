@@ -1,4 +1,5 @@
 #include "AiPanel.h"
+#include "../core/UiFont.h"
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include "../core/Util.h"
@@ -74,9 +75,7 @@ bool AiPanel::Create(HWND parent, HINSTANCE hInst) {
         return false;
 
     int dpi = ::GetDpiForWindow(parent);
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
     mono_ = nullptr;   // Layout 时按 DPI 建
 
     hwnd_ = ::CreateWindowExW(0, kPanelClass, nullptr, WS_CHILD | WS_CLIPSIBLINGS,
@@ -236,11 +235,7 @@ void AiPanel::Layout(int w, int h) {
                  u(72), inH, TRUE);
 
     // mono 字体按 DPI 重建（低频，Layout 时幂等重建）
-    HFONT nf = ::CreateFontW(-MulDiv(10, dpi, 96), 0, 0, 0, FW_NORMAL,
-                             FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                             L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (nf) {
         if (mono_) ::DeleteObject(mono_);
         mono_ = nf;
@@ -274,10 +269,7 @@ void AiPanel::Layout(int w, int h) {
 // LayoutChildren 会走到那里，所以这里不重复处理，也不给 input_ 设 font_。
 void AiPanel::OnDpiChanged(int dpi) {
     if (!hwnd_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;
     HFONT old = font_;
     font_ = nf;

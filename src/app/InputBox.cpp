@@ -1,4 +1,5 @@
 #include "InputBox.h"
+#include "../core/UiFont.h"
 #include "../core/I18n.h"
 #include <commctrl.h>
 #include <windowsx.h>
@@ -80,11 +81,7 @@ bool InputBox(HWND parent, HINSTANCE hInst, const std::wstring& title,
     st.initial = value;
     st.result = value;
 
-    HFONT font = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL,
-                               FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                               CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                               L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
 
     RECT wr{}; ::GetWindowRect(parent, &wr);
     const DWORD gstyle = WS_POPUP | WS_CAPTION | WS_SYSMENU;

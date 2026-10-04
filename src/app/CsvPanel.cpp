@@ -1,5 +1,6 @@
 // xfsWinPad - CsvPanel 实现（批次 32/33）
 #include "CsvPanel.h"
+#include "../core/UiFont.h"
 
 #include <windowsx.h>
 
@@ -73,9 +74,7 @@ bool CsvPanel::Create(HWND parent, HINSTANCE hInst) {
         return false;
 
     int dpi = ::GetDpiForWindow(parent);
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
 
     hwnd_ = ::CreateWindowExW(0, kCsvPanelClass, nullptr, WS_CHILD | WS_CLIPSIBLINGS,
                               0, 0, 600, 240, parent,
@@ -126,10 +125,7 @@ bool CsvPanel::Create(HWND parent, HINSTANCE hInst) {
 // cellEdit_ 是就地编辑时才存在的临时控件，存在也一并跟上。
 void CsvPanel::OnDpiChanged(int dpi) {
     if (!hwnd_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;
     HFONT old = font_;
     font_ = nf;

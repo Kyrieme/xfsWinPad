@@ -1,3 +1,8 @@
+// 批次 145：字体口径改为系统「消息字体」（src/core/UiFont.h）——原先写死的
+// 9/10pt 像素口径已废。本测试随之把「字号」判据改为对照 SystemParametersInfoForDpi
+// 取到的消息字体高度，并新增一条「不得退回旧口径」的反向判据；字体**所有权**
+// 判据（批次 140）保持不变。
+//
 // 批次 140：弹窗字体所有权 —— 命令面板 / 查找框。
 //
 // 背景：这两处的字体原先是**进程级单例**（首个调用者的 dpi 建一次，此后既不重建
@@ -11,7 +16,15 @@
 //
 // 诚实标注：**"换屏后重开即自愈"这一条无法在本测试里证明** —— 进程内改不了监视器
 // dpi（GetDpiForWindow 只报真实环境）。本测试证明的是它的两个前提：
-//   ①字号确实按**本窗口当前** dpi 折出来；②字体生命周期不越过窗口。
+//   ①字号确实取到**本窗口当前** dpi 的系统消息字体；②字体生命周期不越过窗口。
+
+#ifndef WINVER
+#define WINVER 0x0A00
+#endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
+
 #include "../src/app/CommandPalette.h"
 #include "../src/app/FindDialog.h"
 #include "../src/search/SearchService.h"   // FindState（Show 会解引用它）
@@ -33,6 +46,22 @@ static LONG FontHeight(HFONT f) {
     LOGFONTW lf{};
     if (::GetObjectW(f, sizeof(lf), &lf) != sizeof(lf)) return 0;
     return lf.lfHeight;
+}
+
+// 目标 dpi 下的系统「消息字体」字高 —— 即 UiFont::CreateUiFont 期望的来源。
+// 与产品侧同取法：优先 ForDpi 变体，老系统退回当前 dpi 版本。
+static LONG SystemMessageHeight(int dpi) {
+    if (dpi <= 0) dpi = 96;
+    NONCLIENTMETRICSW ncm{};
+    ncm.cbSize = sizeof(ncm);
+    if (::SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0,
+                                     static_cast<UINT>(dpi)))
+        return ncm.lfMessageFont.lfHeight;
+    ncm = NONCLIENTMETRICSW{};
+    ncm.cbSize = sizeof(ncm);
+    if (::SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0))
+        return ncm.lfMessageFont.lfHeight;
+    return 0;
 }
 
 // 两处的字体句柄都从**子控件**取：命令面板挂字的是 edit_ / list_ 两个子控件；
@@ -73,7 +102,7 @@ int main() {
     ::ShowWindow(host, SW_SHOW);
     printf("info: host dpi = %u\n", (unsigned)::GetDpiForWindow(host));
 
-    // ---- 命令面板（10pt Segoe UI）------------------------------------------
+    // ---- 命令面板（系统消息字体）------------------------------------------
     CommandPalette pal;
     pal.Show(host, inst);
     HWND pw = pal.Hwnd();
@@ -82,8 +111,12 @@ int main() {
         const int pdpi = (int)::GetDpiForWindow(pw);
         HFONT f1 = FirstChildFont(pw);
         CHECK(f1 != nullptr);
-        // [1] 字号 = **本窗口** dpi 折出来的 10pt
-        CHECK(FontHeight(f1) == -::MulDiv(10, pdpi, 96));
+        // [1] 字号 = **本窗口** dpi 对应的系统消息字体高度（自适应口径）
+        const LONG wantH1 = SystemMessageHeight(pdpi);
+        CHECK(wantH1 != 0);
+        CHECK(FontHeight(f1) == wantH1);
+        // ★ 不得退回旧的「10 当像素」口径（100% 缩放下只有 10px，又小又糊）
+        CHECK(FontHeight(f1) != -::MulDiv(10, pdpi, 96));
         pal.Close();
         CHECK(pal.Hwnd() == nullptr);
         // ★ [2] 窗口关了，它自己的字体也必须跟着没了
@@ -97,7 +130,9 @@ int main() {
         if (pw2) {
             HFONT f2 = FirstChildFont(pw2);
             CHECK(f2 != nullptr);
-            CHECK(FontHeight(f2) == -::MulDiv(10, (int)::GetDpiForWindow(pw2), 96));
+            const int pdpi2 = (int)::GetDpiForWindow(pw2);
+            CHECK(FontHeight(f2) == SystemMessageHeight(pdpi2));
+            CHECK(FontHeight(f2) != -::MulDiv(10, pdpi2, 96));
             pal.Close();
             CHECK(FontHeight(f2) == 0);
         }
@@ -105,7 +140,7 @@ int main() {
         pal.Close();
     }
 
-    // ---- 查找框（9pt Segoe UI）---------------------------------------------
+    // ---- 查找框（系统消息字体）---------------------------------------------
     FindState st{};     // Show 内部会无保护地解引用 state_，必须先绑定
     FindDialog fd;
     fd.BindState(&st);
@@ -116,8 +151,12 @@ int main() {
         const int fdpi = (int)::GetDpiForWindow(fw);
         HFONT g1 = FirstChildFont(fw);   // 自定义窗口类 WM_GETFONT 恒回 0，须问子控件
         CHECK(g1 != nullptr);
-        // [4] 字号 = **本窗口** dpi 折出来的 9pt
-        CHECK(FontHeight(g1) == -::MulDiv(9, fdpi, 96));
+        // [4] 字号 = **本窗口** dpi 对应的系统消息字体高度（自适应口径）
+        const LONG wantH4 = SystemMessageHeight(fdpi);
+        CHECK(wantH4 != 0);
+        CHECK(FontHeight(g1) == wantH4);
+        // ★ 不得退回旧的「9 当像素」口径
+        CHECK(FontHeight(g1) != -::MulDiv(9, fdpi, 96));
         fd.Close();
         // ★ [5] 同上：旧写法里它与跳转框共用一个进程级单例，必然存活
         CHECK(FontHeight(g1) == 0);

@@ -1,4 +1,5 @@
 #include "PluginAdminDialog.h"
+#include "../core/UiFont.h"
 #include "PluginCatalog.h"
 #include "PluginRegistry.h"
 #include "PluginInstaller.h"
@@ -606,10 +607,7 @@ void PluginAdminDialog::Run(HWND parent, HINSTANCE hInst, PluginManager* mgr) {
     LoadPluginCatalog(PluginManager::PluginDir(), st->catalog, usedDefaults);
     st->registry.Refresh();
 
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
 
     const int W = u(700), H = u(560);
     RECT rc{0, 0, W, H};

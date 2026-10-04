@@ -3,6 +3,7 @@
 // (view, index) 在 Refill 时捕获；Save/Close 批量操作从后往前执行避免索引位移，
 // 每轮操作后重新收集快照再刷新列表。
 #include "WindowsListDialog.h"
+#include "../core/UiFont.h"
 #include "MainWindow.h"
 #include "../workspace/Workspace.h"
 #include "../document/Document.h"
@@ -260,10 +261,7 @@ bool WindowsListDialog::Run(HWND parent, HINSTANCE inst, MainWindow& host) {
 
     const int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
     const int W = u(kDlgW), H = u(kDlgH);
     RECT rc{0, 0, W, H};
     const DWORD gstyle = WS_POPUP | WS_CAPTION | WS_SYSMENU;

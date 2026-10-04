@@ -1,4 +1,5 @@
 #include "TabBar.h"
+#include "../core/UiFont.h"
 #include "../core/Log.h"
 #include <windowsx.h>
 
@@ -26,9 +27,7 @@ bool TabBar::Create(HWND parent, HINSTANCE hInst, int id) {
     ::SetWindowSubclass(hwnd_, WndProcThunk, kTabSubclassId, (DWORD_PTR)this);
 
     int dpi = ::GetDpiForWindow(hwnd_);
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
     ::SendMessageW(hwnd_, WM_SETFONT, (WPARAM)font_, TRUE);
     ::SendMessageW(hwnd_, TCM_SETPADDING, 0, MAKELPARAM(16, 6));
 
@@ -61,9 +60,7 @@ bool TabBar::Create(HWND parent, HINSTANCE hInst, int id) {
 // 也随字号等比放大，无需逐项重写文本）。几何由宿主的 Layout 走 HeightForDpi。
 void TabBar::OnDpiChanged(int dpi) {
     if (!hwnd_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;
     HFONT old = font_;
     font_ = nf;

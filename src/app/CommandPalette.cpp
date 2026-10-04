@@ -1,4 +1,5 @@
 #include "CommandPalette.h"
+#include "../core/UiFont.h"
 #include "../core/CommandIds.h"
 #include "../core/Log.h"
 #include "../core/I18n.h"
@@ -225,10 +226,7 @@ void CommandPalette::Show(HWND parent, HINSTANCE hInst) {
     // 批次 140：字号按**本窗口当前 dpi** 现场建（面板是按父窗口位置摆的，落在
     // 哪块屏就以哪块屏为准）。每次 Show 都重读 ⇒ 换屏后重开即自愈。
     const int fdpi = ::GetDpiForWindow(hwnd_);
-    font_ = ::CreateFontW(-MulDiv(10, fdpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                          FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(fdpi);
 
     edit_ = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | WS_TABSTOP,

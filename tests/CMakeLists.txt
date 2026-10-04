@@ -851,7 +851,8 @@ add_executable(test_popupfont test_popupfont.cpp
     ../src/core/I18n.cpp
     ../src/core/JsonLite.cpp
     ../src/core/Log.cpp
-    ../src/core/Util.cpp)
+    ../src/core/Util.cpp
+    ../src/core/UiFont.cpp)
 target_compile_definitions(test_popupfont PRIVATE UNICODE _UNICODE NOMINMAX)
 target_include_directories(test_popupfont PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/scintilla/include)   # FindDialog.h 经 Editor.h 拉进 Scintilla.h
@@ -860,3 +861,15 @@ if(MSVC)
 endif()
 target_link_libraries(test_popupfont PRIVATE user32 comctl32 shell32 ole32)
 add_test(NAME popupfont COMMAND test_popupfont)
+
+# 批次 145：UI 字体自适应 —— CreateUiFont 必须来自系统「消息字体」（零写死字号），
+# 且高度随 dpi 成比例。旧写法把 9 当像素（100% 下只有 9px）正是本次修的 bug，
+# 所以单测里有一条专门钉住"不得退回 9px"。
+add_executable(test_uifont test_uifont.cpp
+    ../src/core/UiFont.cpp)
+target_compile_definitions(test_uifont PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_uifont PRIVATE /utf-8 /W3)
+endif()
+target_link_libraries(test_uifont PRIVATE user32 gdi32)
+add_test(NAME uifont COMMAND test_uifont)

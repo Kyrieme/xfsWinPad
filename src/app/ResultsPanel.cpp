@@ -1,4 +1,5 @@
 #include "ResultsPanel.h"
+#include "../core/UiFont.h"
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include <commctrl.h>
@@ -28,9 +29,7 @@ bool ResultsPanel::Create(HWND parent, HINSTANCE hInst) {
         return false;
 
     int dpi = ::GetDpiForWindow(parent);
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
 
     hwnd_ = ::CreateWindowExW(0, kClass, nullptr, WS_CHILD | WS_CLIPSIBLINGS,
                               0, 0, 600, 180, parent,
@@ -124,10 +123,7 @@ void ResultsPanel::Retranslate() {
 // 子控件在两次 WM_SETFONT 之间会短暂持有一个已销毁的 HFONT。
 void ResultsPanel::OnDpiChanged(int dpi) {
     if (!hwnd_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;   // 建不出来就维持原状，比换成默认字体更接近"什么都没发生"
     HFONT old = font_;
     font_ = nf;

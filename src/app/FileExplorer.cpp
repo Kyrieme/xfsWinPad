@@ -1,4 +1,5 @@
 #include "FileExplorer.h"
+#include "../core/UiFont.h"
 #include "InputBox.h"
 #include "../core/Log.h"
 #include "../core/Util.h"
@@ -46,11 +47,7 @@ bool FileExplorer::Create(HWND parent, HINSTANCE hInst) {
     if (!hwnd_) return false;
     ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, (LONG_PTR)this);
 
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL,
-                          FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                          L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
     hInst_ = hInst;
 
     tree_ = ::CreateWindowExW(0, WC_TREEVIEWW, nullptr,
@@ -66,11 +63,7 @@ bool FileExplorer::Create(HWND parent, HINSTANCE hInst) {
 // 批次 138b：跨屏换 dpi 后重建树字体（创建期一次成型，不会自愈）。
 void FileExplorer::OnDpiChanged(int dpi) {
     if (!tree_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL,
-                             FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                             L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;
     HFONT old = font_;
     font_ = nf;

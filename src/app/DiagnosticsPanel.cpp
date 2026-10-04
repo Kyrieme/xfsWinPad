@@ -1,4 +1,5 @@
 #include "DiagnosticsPanel.h"
+#include "../core/UiFont.h"
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include <commctrl.h>
@@ -31,9 +32,7 @@ bool DiagnosticsPanel::Create(HWND parent, HINSTANCE hInst) {
         return false;
 
     int dpi = ::GetDpiForWindow(parent);
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
 
     hwnd_ = ::CreateWindowExW(0, kClass, nullptr, WS_CHILD | WS_CLIPSIBLINGS,
                               0, 0, 600, 200, parent,
@@ -99,10 +98,7 @@ void DiagnosticsPanel::Layout(int /*w*/, int /*h*/) {
 // 批次 138b：跨屏换 dpi 后重建字体（先建新的、换、再删旧的）。
 void DiagnosticsPanel::OnDpiChanged(int dpi) {
     if (!hwnd_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;
     HFONT old = font_;
     font_ = nf;

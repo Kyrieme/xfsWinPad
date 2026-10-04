@@ -2,6 +2,7 @@
 // 结构复用 PluginAdminDialog 的 State + GWLP_USERDATA + 自建控件 + 模态循环。
 // 分页控件一次性创建、按页显隐；任何改动即时 ApplyAll（live 预览）。
 #include "PreferencesDialog.h"
+#include "../core/UiFont.h"
 #include "../core/Log.h"
 #include "../core/Util.h"
 #include "../core/I18n.h"
@@ -475,10 +476,7 @@ void PreferencesDialog::Run(HWND parent, HINSTANCE hInst, AppSettings* current,
 
     const int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
 
     // 逻辑尺寸常量：所有 Mk* 控件工厂内部会再做 DPI 缩放，调用方必须传
     // 逻辑坐标。W/H（物理）仅用于窗口外框尺寸计算——曾经把物理值再传给

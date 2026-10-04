@@ -5,6 +5,7 @@
 //   * 程序化改控件期间设置屏蔽标志，EN_CHANGE 等不当作用户输入；
 //   * 关闭路径全部收口到 DestroyWindow，模态循环出口统一恢复宿主。
 #include "StyleConfiguratorDialog.h"
+#include "../core/UiFont.h"
 #include "../theme/Styler.h"
 #include "../theme/Theme.h"
 #include "../core/JsonLite.h"
@@ -567,10 +568,7 @@ std::wstring RunThemeColorEditor(HWND parent, HINSTANCE hInst,
 
     const int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
 
     constexpr int kDlgW = 460, kDlgH = 360;
     const int W = u(kDlgW), H = u(kDlgH);
@@ -772,10 +770,7 @@ void StyleConfiguratorDialog::Run(HWND parent, HINSTANCE hInst, IStyleApplier* a
 
     const int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
 
     // 逻辑尺寸常量 = 控件布局唯一坐标基准（Mk* 工厂内部统一缩放）；
     // W/H 物理值只用于窗口外框。与首选项按钮的二次缩放教训同源。

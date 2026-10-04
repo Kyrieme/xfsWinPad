@@ -1,4 +1,5 @@
 #include "TerminalPanel.h"
+#include "../core/UiFont.h"
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include "../core/Util.h"
@@ -81,9 +82,7 @@ bool TerminalPanel::Create(HWND parent, HINSTANCE hInst) {
         return false;
 
     int dpi = ::GetDpiForWindow(parent);
-    font_ = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    font_ = ::xfs::CreateUiFont(dpi);
     // mono_ comes from SetFont() below so settings can drive it
     mono_ = nullptr;
 
@@ -165,10 +164,7 @@ void TerminalPanel::SetFont(const std::wstring& name, int size) {
 // 批次 138b：跨屏换 dpi 后重建标题条字体，并让终端等宽字体跟上。
 void TerminalPanel::OnDpiChanged(int dpi) {
     if (!hwnd_) return;
-    HFONT nf = ::CreateFontW(-MulDiv(9, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                             FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT nf = ::xfs::CreateUiFont(dpi);
     if (!nf) return;
     HFONT old = font_;
     font_ = nf;

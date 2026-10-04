@@ -2,6 +2,7 @@
 // 复用 PreferencesDialog/StyleConfigurator 的配方。修改… 用捕获式录入：
 // 捕获框子类化 WM_KEYDOWN，忽略纯修饰键，实时显示 "Ctrl+Shift+F3" 形态。
 #include "ShortcutMapperDialog.h"
+#include "../core/UiFont.h"
 #include "../shortcut/ShortcutTable.h"
 #include "../core/CommandIds.h"
 #include "../core/Log.h"
@@ -217,10 +218,7 @@ void OpenModify(State& st, HWND parent, HINSTANCE inst, unsigned targetId,
 
     const int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
     // 逻辑常量 = 唯一坐标基准（Mk 内部统一 u() 缩放）；与首选项/配置器的
     // 二次缩放教训同源——W/H 物理值只用于窗口外框。
     constexpr int kMw = 380, kMh = 190;
@@ -397,10 +395,7 @@ void ShortcutMapperDialog::Run(HWND parent, HINSTANCE hInst,
 
     const int dpi = ::GetDpiForWindow(parent);
     auto u = [dpi](int px) { return ::MulDiv(px, dpi, 96); };
-    HFONT font = ::CreateFontW(-u(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT font = ::xfs::CreateUiFont(dpi);
     const int W = u(560), H = u(480);
     RECT rc{0, 0, W, H};
     const DWORD gstyle = WS_POPUP | WS_CAPTION | WS_SYSMENU;
