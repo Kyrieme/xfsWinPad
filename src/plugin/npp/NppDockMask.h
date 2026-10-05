@@ -121,5 +121,32 @@ inline bool DragOutOfSlot(const RECT& slotScreen, POINT pt, int slackPx) {
            pt.y < slotScreen.top - slackPx || pt.y > slotScreen.bottom + slackPx;
 }
 
+// 批次 139：OOP 停靠面板的键盘焦点桥判据（纯函数）。
+//
+// 【为什么需要】焦点在 Win32 里是"每输入队列"的：键盘只发给**前台线程**队列的
+//   焦点窗口（实测见 DockManager.cpp 顶部批次 139 段）。
+//   · 进程内面板与宿主同队列 —— 插件控件调 SetFocus 就等于设了宿主（前台线程）
+//     队列的焦点 ⇒ 键盘天然可达，宿主不必插手。
+//   · 跨进程（OOP）面板的 hClient 属于**代理进程**的队列 —— 插件控件调 SetFocus
+//     只改它那条队列；宿主队列焦点不动 ⇒ 不桥接就永远收不到键盘（鼠标仍正常，
+//     因为鼠标按光标下的窗口路由，与焦点无关）。
+//   宿主居中补一次 SetFocus(hClient) 即可打通：两进程实测里它返回 err=0，两侧
+//   队列焦点都变成 hClient，且插件进程真的收到 WM_SETFOCUS。
+//
+// 【触发点】WM_PARENTNOTIFY 的鼠标按下事件。系统在子窗口（= 插件 hClient）收到
+//   点击时把该消息发给**父窗口**（= 我们的 wrapper），载荷是坐标不是指针 ⇒ 跨进程
+//   安全；且它先于子窗口处理点击到达，随后插件自身控件的 SetFocus 仍能覆盖，
+//   不会抢走插件内部焦点。
+//
+// 【为什么限定"仅跨进程"】进程内面板若也在每次鼠标按下时把焦点设到 hClient，
+//   就会**夺走**插件控件自己的焦点（回归）。故 clientIsForeign == false 一律不桥。
+inline bool ShouldBridgeKeyboardFocus(UINT parentNotifyEvent, bool clientIsWindow,
+                                      bool clientIsForeign) {
+    if (!clientIsWindow || !clientIsForeign) return false;
+    return parentNotifyEvent == WM_LBUTTONDOWN ||
+           parentNotifyEvent == WM_MBUTTONDOWN ||
+           parentNotifyEvent == WM_RBUTTONDOWN;
+}
+
 } // namespace npp
 } // namespace xfs

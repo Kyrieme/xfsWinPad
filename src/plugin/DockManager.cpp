@@ -104,6 +104,18 @@ struct DockManager::Panel {
 //     ⇒ 与指针无关，也不是 UIPI）——而 DMN_* 全走 WM_NOTIFY；
 //   · 直发 `DMM_*`（`WM_USER` 段）能送达，但会让**编辑器 UI 线程**去等一个
 //     可能不泵消息的插件线程（挂起风险）。
+// ★ 批次 139 补测（同一两进程探针续跑）：跨进程 hClient 的**输入队列 / 焦点 / DWM**。
+//   · 焦点可桥接：宿主侧 `SetFocus(跨进程 hClient)` 返回 err=0，宿主线程与原插件
+//     线程的**两条队列焦点都变成 hClient**，且插件进程真的收到 `WM_SETFOCUS`；
+//     `AttachThreadInput(宿主, 插件, TRUE)` 亦成（err=0）。
+//   · DWM 正常：合成开启、`DWMWA_CLOAKED=0`（未被遮蔽）；`DWMWA_EXTENDED_FRAME_
+//     BOUNDS` 对子窗口返回 E_HANDLE —— 该属性只对顶级窗口有效，属预期。
+//   · 真实键鼠注入**测不了**（沙箱拒绝交出前台：`AllowSetForegroundWindow` err=5、
+//     `SetForegroundWindow` 返回 0），故 `WM_KEYDOWN/CHAR` 计数为 0。这是环境限制，
+//     **不是**产品结论，别据此下"OOP 面板键盘死"的断言。
+//   ⇒ 推论：OOP 面板的 hClient 在代理线程队列里，宿主不补 `SetFocus` 就收不到键盘
+//     （鼠标仍正常：鼠标按光标下窗口路由，与焦点无关）。桥接实现见 WndProc 的
+//     WM_PARENTNOTIFY 分支（判据 = npp::ShouldBridgeKeyboardFocus）。
 // 批次 126：面板标题条拖拽——浮动态：移动窗口 + 光标落进主框架吸附带内松手
 // 即重停靠（判据 = npp::SnapEdgeTo 纯函数，DockManager.h 声明静态成员）。
 // 批次 127：停靠态**同样可拖**——光标离开面板所占槽位即转浮动（判据 =
@@ -278,6 +290,21 @@ LRESULT DockManager::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, Panel* p
             return 0;
         }
         break;
+    // 批次 139：OOP 停靠面板的键盘焦点桥。系统在子窗口（= 插件 hClient）收到鼠标
+    // 按下时把 WM_PARENTNOTIFY 发给父窗口（= 本 wrapper），载荷是坐标不是指针 ⇒
+    // 跨进程安全。判据与理由见 npp::ShouldBridgeKeyboardFocus 与文件顶部批次 139
+    // 实测段。只对跨进程客户端生效：进程内面板与宿主同队列，插手反而会夺走插件
+    // 控件自己的焦点。
+    case WM_PARENTNOTIFY: {
+        if (p && p->data.hClient && ::IsWindow(p->data.hClient)) {
+            DWORD clientPid = 0;
+            ::GetWindowThreadProcessId(p->data.hClient, &clientPid);
+            if (npp::ShouldBridgeKeyboardFocus((UINT)LOWORD(wp), true,
+                                               clientPid != ::GetCurrentProcessId()))
+                ::SetFocus(p->data.hClient);
+        }
+        break;
+    }
     case WM_ERASEBKGND:
         return 1;   // 用类背景刷（COLOR_BTNFACE），避免闪烁
     }

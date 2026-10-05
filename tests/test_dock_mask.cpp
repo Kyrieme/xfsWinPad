@@ -277,6 +277,52 @@ static void TestDragOutOfSlot() {
     SectionEnd("[9] 拖出判据 DragOutOfSlot（四方向 + 边界 + 单调性）");
 }
 
+// 批次 139：OOP 停靠面板键盘焦点桥判据。判据有"名单外的活样本"两半 ——
+// 只测"跨进程鼠标按下 ⇒ 桥"等于只测名字对得上；真正的回归风险在**另一半**
+// （进程内面板被误桥 ⇒ 夺走插件控件焦点），故那半必须逐一钉住。
+static void TestShouldBridgeKeyboardFocus() {
+    // ---- 该桥的那一半：跨进程 + 三种鼠标按下 -----------------------------
+    CHECK(ShouldBridgeKeyboardFocus(WM_LBUTTONDOWN, true, true));
+    CHECK(ShouldBridgeKeyboardFocus(WM_MBUTTONDOWN, true, true));
+    CHECK(ShouldBridgeKeyboardFocus(WM_RBUTTONDOWN, true, true));
+
+    // ---- 不该桥的那一半（a）：进程内面板 ⇒ 一律不桥（回归红线）------------
+    CHECK(!ShouldBridgeKeyboardFocus(WM_LBUTTONDOWN, true, false));
+    CHECK(!ShouldBridgeKeyboardFocus(WM_MBUTTONDOWN, true, false));
+    CHECK(!ShouldBridgeKeyboardFocus(WM_RBUTTONDOWN, true, false));
+
+    // ---- 不该桥的那一半（b）：非鼠标按下事件 --------------------------------
+    // WM_PARENTNOTIFY 也会在子窗口创建/销毁时到达（WM_CREATE/WM_DESTROY），
+    // 它们是本判据最容易被"只判消息类型"写漏的活样本。
+    CHECK(!ShouldBridgeKeyboardFocus(WM_CREATE, true, true));
+    CHECK(!ShouldBridgeKeyboardFocus(WM_DESTROY, true, true));
+    CHECK(!ShouldBridgeKeyboardFocus(WM_MOUSEMOVE, true, true));   // 不是 PARENTNOTIFY 事件
+    CHECK(!ShouldBridgeKeyboardFocus(WM_LBUTTONUP, true, true));   // 抬起也不算
+
+    // ---- 不该桥的那一半（c）：hClient 不是有效窗口 -------------------------
+    CHECK(!ShouldBridgeKeyboardFocus(WM_LBUTTONDOWN, false, true));
+    CHECK(!ShouldBridgeKeyboardFocus(WM_LBUTTONDOWN, false, false));
+
+    // ---- 穷举：3 事件 × 2(是否窗口) × 2(是否跨进程) = 12，与真值逐项比 ----
+    const UINT events[3] = { WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN };
+    int cases = 0;
+    for (UINT ev : events) {
+        for (int isWin = 0; isWin < 2; ++isWin) {
+            for (int isForeign = 0; isForeign < 2; ++isForeign) {
+                const bool want = (isWin != 0) && (isForeign != 0);
+                if (ShouldBridgeKeyboardFocus(ev, isWin != 0, isForeign != 0) != want) {
+                    FAIL();
+                    std::printf("  [10] 穷举失配: ev=0x%X win=%d foreign=%d\n",
+                                (unsigned)ev, isWin, isForeign);
+                }
+                ++cases;
+            }
+        }
+    }
+    CHECK(cases == 12);   // "项数"本身就是断言
+    SectionEnd("[10] 批次 139：OOP 键盘焦点桥判据（含进程内不桥的回归红线）");
+}
+
 int main() {
     std::printf("== test_dock_mask ==\n");
     TestContainerEncoding();
@@ -288,6 +334,7 @@ int main() {
     TestRequestNames();
     TestSnapEdgeTo();
     TestDragOutOfSlot();
+    TestShouldBridgeKeyboardFocus();
 
     if (g_fail) {
         std::printf("FAILED: %d check(s)\n", g_fail);

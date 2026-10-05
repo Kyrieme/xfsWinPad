@@ -571,6 +571,50 @@ int main(int argc, char** argv) {
         CHECK(dock.PanelCount() == 0);
     }
 
+    // ---- 批次 139：键盘焦点桥**只对 OOP 客户端**生效（进程内面板不得被夺焦）----
+    // 跨进程 SetFocus 桥的**正向**证据在两进程探针里（跨进程 SetFocus 返回 err=0、
+    // 两侧队列焦点都变成 hClient、插件进程收到 WM_SETFOCUS）；这里把另一半钉死：
+    // 同样的 WM_PARENTNOTIFY 对**进程内**客户端不得动焦点 —— 否则插件控件自己的
+    // 焦点会在每次点击时被宿主夺走（回归）。判据 = 焦点完全没变。
+    CHECK(regExtraFn(0, npp::kDwsDfContBottom, L"focus-panel", nullptr) == TRUE);
+    CHECK(dock.PanelCount() == 1);
+    {
+        HWND fcl = extraHwndFn(0);
+        HWND fWrap = fcl ? ::GetParent(fcl) : nullptr;
+        CHECK(fcl != nullptr && ::IsWindow(fcl));
+        CHECK(fWrap != nullptr && ::IsWindow(fWrap));
+        // 量具前提：线程**没有 active 窗口**时，Windows 会把该线程队列的焦点"停用"，
+        // GetGUIThreadInfo 恒报 hwndFocus=0（两进程探针里也是先 SetActiveWindow 才
+        // 读到真值）。不先激活，下面"焦点没动"是空断言。host 已在上面 SW_SHOW。
+        ::SetActiveWindow(host);
+        GUITHREADINFO gtiB{};
+        gtiB.cbSize = sizeof(gtiB);
+        CHECK(::GetGUIThreadInfo(::GetCurrentThreadId(), &gtiB));
+        const HWND focusBefore = gtiB.hwndFocus;
+        // 真机点击子窗口时系统就是这样发给父窗口的：wParam=MAKEWPARAM(事件, 子id)。
+        ::SendMessageW(fWrap, WM_PARENTNOTIFY, MAKEWPARAM(WM_LBUTTONDOWN, 0),
+                       MAKELPARAM(5, 5));
+        GUITHREADINFO gtiA{};
+        gtiA.cbSize = sizeof(gtiA);
+        CHECK(::GetGUIThreadInfo(::GetCurrentThreadId(), &gtiA));
+        CHECK(gtiA.hwndFocus == focusBefore);   // 进程内：焦点必须完全没动
+        CHECK(gtiA.hwndFocus != fcl &&
+              !::IsChild(fcl, gtiA.hwndFocus)); // 更不许落到插件客户端（或其控件）
+        // 量具自检（positive control）：进程内 SetFocus 必须**能**被 GetGUIThreadInfo
+        // 观察到 —— 否则上面两条"焦点没动"是空断言（量具失灵也会全绿）。注意插件
+        // 对话框收到 WM_SETFOCUS 后会把焦点转给它自己的控件（实测落点 = 其子控件，
+        // 不是对话框本身），故判据取"焦点变成 fcl 或其子控件"而非"== fcl"。
+        ::SetFocus(fcl);
+        GUITHREADINFO gtiP{};
+        gtiP.cbSize = sizeof(gtiP);
+        CHECK(::GetGUIThreadInfo(::GetCurrentThreadId(), &gtiP));
+        CHECK(gtiP.hwndFocus != focusBefore);   // 量具对焦点变化敏感
+        CHECK(gtiP.hwndFocus == fcl || ::IsChild(fcl, gtiP.hwndFocus));
+        ::SetFocus(focusBefore);                // 还原，不影响后续
+    }
+    dock.Destroy();
+    CHECK(dock.PanelCount() == 0);
+
     mgr.UnloadAll();
     CHECK(mgr.CommandCount() == 0);            // 干净卸载
 
