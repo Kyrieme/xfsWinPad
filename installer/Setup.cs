@@ -22,7 +22,7 @@ using Microsoft.Win32;
 // 静默跳过，不影响编辑器本体——AI 面板首次打开时仍会给出手动安装指引。
 //
 // 命令行/环境钩子：
-//   setup.exe /silent              无对话框安装，文件关联取默认集（测试/CI 用）
+//   setup.exe /silent              无对话框安装（同时跳过安装前确认），文件关联取默认集（测试/CI 用）
 //   XFSWINPAD_SETUP_DEST=<dir>     覆盖安装目标目录（开发测试钩子：跳过
 //                                  快捷方式与 opencode 下载，卸载脚本不含 lnk 清理）
 class Setup {
@@ -63,6 +63,13 @@ class Setup {
             string destOverride = Environment.GetEnvironmentVariable("XFSWINPAD_SETUP_DEST");
             bool testMode = !string.IsNullOrEmpty(destOverride);
             if (testMode) dest = destOverride;
+
+            // ---- 安装前确认（安装 / 取消）------------------------------------
+            // 2026-10-05 用户反馈：安装器全程没有任何「取消」入口——双击后直接
+            // 开始释放文件、写注册表，关联对话框里的「跳过」只跳过关联、安装照样
+            // 走完，点哪个键都会装完。这里在任何改动发生**之前**先问一次：取消即
+            // 原样退出，不碰任何文件与注册表（因此无需回滚）。/silent 跳过确认。
+            if (!silent && !ConfirmInstall(dest)) return 1;
 
             // ---- 安装前检测：运行中的 xfsWinPad / 插件宿主会锁住 exe/dll ----
             // 检测方式 = 枚举本用户进程名；命中则提示，用户关闭后可重试。
@@ -459,6 +466,13 @@ class Setup {
         }
     }
 
+    // ---- 安装前确认：给用户一个真正的中止入口 -----------------------------
+    // 返回 true = 用户选择「安装」；false = 「取消」，调用方直接退出、不做改动。
+    static bool ConfirmInstall(string dest) {
+        using (var dlg = new ConfirmDialog(dest))
+            return dlg.ShowDialog() == DialogResult.OK;
+    }
+
     static void CreateShortcut(string lnk, string target, string workDir, string icon) {
         try {
             Type t = Type.GetTypeFromProgID("WScript.Shell");
@@ -756,5 +770,40 @@ class ProgressForm : Form, IDisposable {
         bar.Value = percent;
         label.Text = title + "  " + percent + "%";
         Application.DoEvents();   // 保持窗口响应
+    }
+}
+
+// 安装前确认框（批次 61）：在任何改动发生前明确给出「安装 / 取消」两个动作。
+// 此前安装器无确认步骤，双击即开始释放文件与写注册表，用户没有任何中止手段
+// （关联对话框的「跳过」只是跳过关联，安装仍会完成）。「取消」= 原样退出。
+class ConfirmDialog : Form {
+    public ConfirmDialog(string dest) {
+        Text = "xfsWinPad 安装";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterScreen;
+        MaximizeBox = MinimizeBox = false;
+        ClientSize = new System.Drawing.Size(460, 200);
+
+        var title = new Label {
+            Text = "即将安装 xfsWinPad",
+            Left = 16, Top = 16, Width = 428, Height = 24,
+            Font = new System.Drawing.Font(Font.Name, 11f, System.Drawing.FontStyle.Bold) };
+        var body = new Label {
+            Text = "安装位置：\n" + dest + "\n\n" +
+                   "将释放程序文件、注册右键菜单与文件关联（下一步可勾选），" +
+                   "并创建开始菜单 / 桌面快捷方式。\n\n是否继续安装？",
+            Left = 16, Top = 48, Width = 428, Height = 96 };
+
+        var btnInstall = new Button { Text = "安装", Left = 272, Top = 158, Width = 84 };
+        var btnCancel = new Button { Text = "取消", Left = 364, Top = 158, Width = 84 };
+        btnInstall.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
+        btnCancel.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
+
+        Controls.Add(title);
+        Controls.Add(body);
+        Controls.Add(btnInstall);
+        Controls.Add(btnCancel);
+        AcceptButton = btnInstall;
+        CancelButton = btnCancel;   // Esc = 取消
     }
 }
