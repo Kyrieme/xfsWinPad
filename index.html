@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.15.4 · 2026-10-05 · Windows 10/11 x64</span>
+  <span class="ver">v0.15.5 · 2026-10-05 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,22 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">FC5E1D69F8881F74FC0B82AB5D602041457FF409ADADAC0132912C819480FCF5</p>
+    <p class="hash">A8728C8CAC764DC31D14B27109713F28729FDA94542305D6115F5F33543D0D61</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">E7099DE582093C5BD3701F23D274038E21578A89599D0AEE986FB99798B267F1</p>
+    <p class="hash">873CB99584BE79F0492A2707A7EA47B787CAAA7D6B38CCF318230387D9EF0100</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.15.5</b>（2026-10-05）</p>
+    <ul>
+      <li><b>修复：双屏 / 多显示器下，窗口位置记不住、总是开回主屏</b>。
+        此前保存窗口位置时，把「窗口所在显示器」的原点重复算了一次：主屏原点恰为
+        <code>(0,0)</code>，所以单屏上看不出问题；副屏上保存的坐标会被推到屏幕外，
+        下次启动校验时发现位置已在屏外，便回退成默认位置 —— 于是<b>在副屏关闭程序，
+        重开又回到主屏</b>。现在改按系统主显示器的工作区换算，<b>在哪个屏关闭，
+        下次就在哪个屏还原</b>。注：升级后请先把它拖到副屏、正常关闭一次，之后即可稳定记住</li>
+    </ul>
     <p><b>v0.15.4</b>（2026-10-05）</p>
     <ul>
       <li><b>修复：双击 <code>.pln</code> / <code>.dec</code> 等经「打开方式」关联的文件，不再顶掉上次的标签栏与会话</b>。
