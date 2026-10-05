@@ -55,9 +55,9 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.15.7 · 2026-10-05 · Windows 10/11 x64</span>
+  <span class="ver">v0.15.8 · 2026-10-05 · Windows 10/11 x64</span>
   <div class="downloads">
-    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
+    <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.4 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
   </div>
   <p class="dl-note">便携版解压即用，不写注册表；两个版本功能完全一致。</p>
@@ -94,13 +94,24 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">B8097B7C01A1755E2941E877BDA7D11BD5397D4FF4CD46CBEEDD33EC9FC89B8A</p>
+    <p class="hash">504A18FCB69B631C84CA81ABB4E0B83502D5132476A3C797261C91C82BAB0E8E</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">9F9B65676818388C546EBEF9C15AD4C2FD935314752739C4901B27555D453153</p>
+    <p class="hash">A8D4FB57677CBAFCA9D0F92C76DB5EA7703BABB08DA3AE19D58BD2F6DD27483C</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+        <p><b>v0.15.8</b>（2026-10-05）</p>
+    <ul>
+      <li><b>Chroma 3380 测试计划：新增「跨文件补全」</b>。
+        在 <code>.pln</code> 里写 <code>JUDGE_PAT(&hellip;)</code> 时，补全候选项现在会
+        取自<b>同一工程里的 label 定义</b>，不用再手敲、也不怕拼错。
+        支持 <code>模块:label</code> 形式 —— <code>.pat</code> 里在某个模块命名空间下定义的
+        label，在 <code>.pln</code> 里按 <code>模块:label</code> 补全；计划级（全局）的
+        label 则直接以裸名补全。候选词源优先读计划自己编译产出的
+        <code>.label</code> 清单（最权威），没有时才回退到编译报告 <code>.rpt</code>
+        与 <code>.pat</code></li>
+    </ul>
         <p><b>v0.15.7</b>（2026-10-05）</p>
     <ul>
       <li><b>修复：进程外（OOP）插件的停靠面板收不到键盘输入</b>。
