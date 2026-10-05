@@ -6676,13 +6676,22 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 // 报告：扩展屏上退出 → 拔屏 → 重开窗口只露一条边）。
                 WINDOWPLACEMENT wp{ sizeof(WINDOWPLACEMENT) };
                 if (GetWindowPlacement(hwnd_, &wp)) {
+                    // rcNormalPosition 是**工作区坐标**（本窗口是顶层窗口、无
+                    // WS_EX_TOOLWINDOW ⇒ 见 WINDOWPLACEMENT 文档）。工作区坐标的
+                    // 原点是**主显示器**工作区左上角，与本窗口落在哪个显示器无关。
+                    // 所以用 SPI_GETWORKAREA（主屏工作区）平移回屏幕坐标。
+                    //
+                    // 【修过的 bug】原实现按 MonitorFromWindow 取「本窗口所在显示器」
+                    //   的 rcWork 偏移。主屏上 rcWork 原点恰是 (0,0) ⇒ 偏移为 0、
+                    //   看不出问题；副屏上等于把显示器原点**加了两遍**，保存的
+                    //   winX/winY 落到虚拟屏外，下次恢复时 40% 相交判定失败 →
+                    //   回退 CW_USEDEFAULT → 窗口永远开回主屏（用户报告：双屏笔记本
+                    //   在副屏关闭后重开又回主屏）。单屏开发机 rcWork 原点为 0，
+                    //   故此 bug 不可见。
                     RECT nr = wp.rcNormalPosition;
-                    // rcNormalPosition 是工作区坐标，转回屏幕坐标（MonInfo 里的
-                    // rcWork 已是屏幕坐标，直接偏移）
-                    HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
-                    MONITORINFO mi{ sizeof(MONITORINFO) };
-                    if (mon && GetMonitorInfoW(mon, &mi)) {
-                        ::OffsetRect(&nr, mi.rcWork.left, mi.rcWork.top);
+                    RECT work{};
+                    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+                        ::OffsetRect(&nr, work.left, work.top);
                     }
                     settings_.hasWindow = true;
                     settings_.winX = nr.left;  settings_.winY = nr.top;
