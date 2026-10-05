@@ -144,6 +144,22 @@ class Setup {
                     cmdKey.SetValue("", "\"" + exe + "\" --open \"%1\"");
             }
 
+            // ---- 「打开方式」兜底关联（Applications\<exe>）----
+            // 用户通过「打开方式 → xfsWinPad」给某扩展名（如 .pln/.dec/.pat）
+            // 建立关联时，Windows 把 UserChoice 指向 Applications\xfsWinPad.exe，
+            // 双击即调用**该 ProgId** 的 shell\open\command，而不是下面
+            // AssociateExtensions 写的 xfsWinPad.Document。
+            // 安装器此前从不写这个键 ⇒ 这类扩展名的双击永远走系统在首次
+            // 「打开方式」时登记的旧串（`"exe" "%1"`，无 --open）⇒ 跳过会话恢复
+            // 并在退出时把工作区顶成单标签（用户报的"持久化缺陷"，重装也修不好）。
+            // 这里统一兜底写 --open；卸载时整键删除（见 unLines）。
+            using (RegistryKey appKey = Registry.CurrentUser.CreateSubKey(
+                       @"Software\Classes\Applications\xfsWinPad.exe")) {
+                appKey.SetValue("FriendlyAppName", "xfsWinPad");
+                using (RegistryKey appShell = appKey.CreateSubKey(@"shell\open\command"))
+                    appShell.SetValue("", "\"" + exe + "\" --open \"%1\"");
+            }
+
             // ---- .xfm 文件关联（双击直达宏加载）----
             using (RegistryKey clsKey = Registry.CurrentUser.CreateSubKey(
                        @"Software\Classes\.xfm")) {
@@ -208,6 +224,7 @@ class Setup {
                 "rem xfsWinPad uninstaller",
                 "reg delete \"HKCU\\Software\\Classes\\*\\shell\\OpenWithxfsWinPad\" /f >nul 2>&1",
                 "reg delete \"HKCU\\Software\\Classes\\Directory\\shell\\OpenWithxfsWinPad\" /f >nul 2>&1",
+                "reg delete \"HKCU\\Software\\Classes\\Applications\\xfsWinPad.exe\" /f >nul 2>&1",
                 "reg delete \"HKCU\\Software\\Classes\\.xfm\" /f >nul 2>&1",
                 "reg delete \"HKCU\\Software\\Classes\\xfsWinPad.Macro\" /f >nul 2>&1",
                 "reg delete \"HKCU\\Software\\Classes\\" + DocProgId + "\" /f >nul 2>&1",
