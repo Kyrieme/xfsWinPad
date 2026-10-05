@@ -32,18 +32,21 @@ class Setup {
     // ---- 文件类型关联候选集（批次 30）--------------------------------------
     // 顺序即对话框展示顺序；preChecked 默认集保持克制（纯文本三类）。
     //
-    // 【csv 为何不在候选里】(2026-09-18 用户要求)
-    //   CSV 交给表格软件（Excel / WPS）打开才是用户的实际习惯；被编辑器接管
-    //   会破坏双击打开表格的默认体验。所以连候选都不给，免得手滑勾上。
-    //   升级时的旧关联由 UndoLegacyCsvAssociation() 撤销。
+    // 【csv 的取舍】(2026-10-05 用户要求：加回候选，但默认不勾)
+    //   CSV 交给表格软件（Excel / WPS）双击打开是多数人的习惯，所以**默认不关联**
+    //   —— csv 进候选供勾选，但不在 AssocDefault 里，勾选框初始为未选。
+    //   同时保留用户自己勾选的权利：想用编辑器接管 CSV 的人勾上即以本次选择为准。
+    //   于是撤销逻辑要分情况：没勾 csv ⇒ 仍清掉老版本自动写下的关联；勾了 csv
+    //   ⇒ 跳过撤销（否则会把刚写的关联立刻撤掉）。见下方调用处。
     static readonly string[] AssocCandidates = {
-        "txt", "log", "md", "tsv", "ini", "cfg", "conf",
+        "txt", "log", "md", "csv", "tsv", "ini", "cfg", "conf",
         "json", "xml", "yaml", "yml", "toml",
         "cpp", "c", "cc", "h", "hpp", "hxx",
         "py", "js", "ts", "java", "cs", "go", "rs", "rb", "lua",
         "sql", "sh", "bat", "cmd", "ps1", "cmake", "mk",
         "diff", "patch", "asm", "php", "html", "htm", "css",
     };
+    // 默认勾选集（/silent 免交互时也用它）。csv 刻意不在其中 —— 默认不关联 csv。
     static readonly string[] AssocDefault = { "txt", "log", "md" };
     const string DocProgId = "xfsWinPad.Document";
 
@@ -172,10 +175,10 @@ class Setup {
             if (assoc.Count > 0)
                 AssociateExtensions(exe, assoc);
 
-            // 撤销旧版本写入的 .csv 关联（本版本起 csv 不再关联，见候选集注释）。
-            // 必须放在关联写入之后：即便用户这次又勾了 csv（旧对话框里勾过），
-            // 也以「不关联 csv」为准。
-            UndoLegacyCsvAssociation();
+            // 撤销旧版本**自动**写入的 .csv 关联（老版本把 csv 放在默认集里）。
+            // 只在这次**没勾 csv** 时才撤：勾了就以用户本次选择为准，否则等于
+            // 刚关联完立刻反悔。放在关联写入之后，撤销才有东西可撤。
+            if (!assoc.Contains("csv")) UndoLegacyCsvAssociation();
 
             // ---- 卸载项 (HKCU) ----
             // 版本从 exe 的 FileVersion 读（CMake project(VERSION) 单一数据源）
@@ -312,12 +315,14 @@ class Setup {
         }
     }
 
-    // ---- 撤销旧版本的 .csv 关联（2026-09-18）-------------------------------
-    // 【为什么必须有这一步，光从候选集删掉不够】
+    // ---- 撤销旧版本自动写入的 .csv 关联（2026-09-18；2026-10-05 改为按需调用）--
+    // 【为什么还要这一步，光把 csv 从默认集拿掉不够】
     //   关联是写进注册表的**持久状态**，不是安装包里的清单。老版本（批次 30 起）
     //   把 .csv 放进默认集，凡是装过的人，`.csv` 的默认值 / OpenWithProgids /
-    //   UserChoice 三处都指向 xfsWinPad。新版即使不再关联，也**不会自动消失**——
+    //   UserChoice 三处都指向 xfsWinPad。如今 csv 默认不勾，也**不会自动消失**——
     //   用户升级后照样双击 CSV 打开编辑器，然后回来说"没修好"。
+    //   ★ 调用方只在用户这次**没勾 csv** 时才调本函数（见 Main 里的条件）：
+    //     勾了是以本次选择为准，再撤就把刚写的关联清掉了。
     //
     // 【只撤我们写的那一份，别动别人的】
     //   用户可能早已把 CSV 交回 Excel / WPS。三处逐项验证归属：
