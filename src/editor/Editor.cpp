@@ -1160,8 +1160,7 @@ void Editor::HandleAutocompleteChar(unsigned int ch) {
     // 判据（光标前恰好是 `IDENT:` 且 IDENT 是已知模块）严格更具体，让泛化的
     // 语句补全先跑会把它顶掉。门槛取 `len >= 1`（而不是下面词汇补全的 3）——
     // `st`/`sp` 只有 1~3 字符，卡在 3 字符门槛下这个功能就永远弹不出来。
-    if (IsChroma3380Lexer(lexerName_) && scopedWords_ && len >= 1 && len <= 64 &&
-        !Send(SCI_AUTOCACTIVE)) {
+    if (IsChroma3380Lexer(lexerName_) && scopedWords_ && len >= 1 && len <= 64) {
         // 取冒号前一小段做作用域判定。窗口而不是全文：这一步每次按键都跑，
         // 代价必须与文档大小无关；标识符上限 64 字节（IsSymbolName 同口径），
         // 取 128 足够把 `IDENT:` 整个包进来。
@@ -1183,8 +1182,7 @@ void Editor::HandleAutocompleteChar(unsigned int ch) {
     // 但它不改下面任何一行 —— 返回 false 时词汇补全那条路一字不变，所以对
     // 另外 36 种语言是零改动（IsChroma3380Lexer 先短路）。
     if (IsChroma3380Lexer(lexerName_) && len >= 2 && len <= 64 &&
-        len >= (int)chroma3380::kStmtCompleteMinPrefix &&
-        !Send(SCI_AUTOCACTIVE)) {
+        len >= (int)chroma3380::kStmtCompleteMinPrefix) {
         std::string stmtPrefix;
         GetTextRangeUtf8((long long)start, (size_t)len, stmtPrefix);
         if (HandleStatementCompletion(start, stmtPrefix)) return;
@@ -1193,7 +1191,12 @@ void Editor::HandleAutocompleteChar(unsigned int ch) {
         if (Send(SCI_AUTOCACTIVE)) Send(SCI_AUTOCCANCEL);
         return;
     }
-    if (Send(SCI_AUTOCACTIVE)) return;   // 已在补全中，Scintilla 自动继续过滤
+    // 批次 151：**不能**因为"已在补全中"就撒手交给 Scintilla。实测（5.6.6 源码
+    // AutoComplete::Select + ScintillaDoc「If an item is found, it is selected」）
+    // 它只把高亮移到第一个命中项，**从不收窄可见列表** —— 于是在 2 字符时弹出
+    // 的语句名列表（ALPG_PIN_GROUP / ALARM_ON / ALARM_OFF）在补到 `ALPG` 后
+    // 仍原样留着 ALARM_*，用户看到的就是"前缀过滤与已输入不一致"。
+    // 每敲一个字符都按当前前缀重弹一次，列表才与已键入文本一致。
     // 读前缀（caret 前 len 字节）
     // 用 *FULL 版消息 + Sci_TextRangeFull：短版 Sci_TextRange 的 cpMin/cpMax 是
     // `long`（32 位），把 sptr_t 塞进去要收窄，MSVC 会报 C4244/C4838，而且文档
@@ -1316,8 +1319,6 @@ bool Editor::HandleSignatureHint() {
                 sigTipParam_ = -1;
                 sigTipPos_ = -1;
             }
-            if (Send(SCI_AUTOCACTIVE)) return true;   // 已在收窄候选中，交给 Scintilla
-
             Send(SCI_AUTOCSETSEPARATOR, ' ');
             Send(SCI_AUTOCSETIGNORECASE, 1);
             Send(SCI_AUTOCSETAUTOHIDE, 1);
@@ -1327,9 +1328,11 @@ bool Editor::HandleSignatureHint() {
             Send(SCI_AUTOCSETORDER, SC_ORDER_CUSTOM);
             Send(SCI_AUTOCSETMAXHEIGHT, 8);
             // lenEntered = 已输入的实参片段长度：Tab/回车选中后 Scintilla 用它算出
-            // 替换区间，正好把 `@6` 换成 `@6V`。scintilla 之后按
-            // RangeText(posStart - startLen, caret) 继续做前缀过滤，所以逐字符
-            // 输入会自动收窄候选——不必自己重弹。
+            // 替换区间，正好把 `@6` 换成 `@6V`。
+            // 批次 151：**不能**指望 Scintilla 自己收窄可见列表 —— 它只按
+            // RangeText(posStart - startLen, caret) 移动高亮，不收窄（见
+            // HandleAutocompleteChar 的说明）。所以本函数在每次按键上都会被重入，
+            // 每个字符都按当前 prefix 重弹一次，档位列表才与已输入一致。
             Send(SCI_AUTOCSHOW, (uptr_t)prefix.size(), (LPARAM)list.c_str());
             return true;   // 下拉框已出，本次按键不再走词汇补全
         }
@@ -1604,6 +1607,10 @@ bool Editor::ShowScopedAutocomplete(const std::string& scope,
         Send(SCI_AUTOCSETORDER, SC_ORDER_PERFORMSORT);
         Send(SCI_AUTOCSETMAXHEIGHT, 8);
         Send(SCI_AUTOCSHOW, (uptr_t)prefix.size(), (LPARAM)list.c_str());
+    } else if (Send(SCI_AUTOCACTIVE)) {
+        // 本模块里一个 label 命中当前前缀（或候选只有已打全的那一个）：撤掉可能
+        // 残留的上一弹列表（Scintilla 不随输入收窄，见批次 151 说明）。
+        Send(SCI_AUTOCCANCEL);
     }
     // 作用域已识别 → 本次按键由本分支接管（即使无候选也不让位给语句补全：
     // `已知模块:` 后面本来就不该出现语句名，弹出来才是错的）。
@@ -1618,8 +1625,12 @@ void Editor::ShowAutocomplete(const std::string& prefix) {
     //    批次 31：lexer 有注释/字符串风格表 → GETSTYLEDTEXT 过滤扫描，
     //    注释里「只」出现一次的词不进候选；否则退回纯文本扫描。
     const sptr_t docLen = Send(SCI_GETLENGTH);
-    wordCache_.clear();
-    if (docLen > 0 && docLen <= 1024 * 1024) {
+    // 批次 151：本函数现在会在补全进行中被逐字符重入（见 HandleAutocompleteChar
+    // 的说明）。重弹时文档与上一弹只差刚键入的那一个字符，词集无需重扫 —— 沿用
+    // 上一轮结果，否则 1MB 文件会变成"每按一键扫一遍"。
+    const bool keepWords = Send(SCI_AUTOCACTIVE) != 0 && !wordCache_.empty();
+    if (!keepWords) wordCache_.clear();
+    if (!keepWords && docLen > 0 && docLen <= 1024 * 1024) {
         const WordStyleFilter* f = WordStyleFilterFor(lexerName_.c_str());
         if (f && f->Any()) {
             std::string buf((size_t)docLen * 2 + 2, '\0');
@@ -1659,7 +1670,12 @@ void Editor::ShowAutocomplete(const std::string& prefix) {
         if (match(w) && cands.size() < 100) cands.insert(w);
     for (const std::string& w : ext)
         if (match(w) && cands.size() < 100) cands.insert(w);
-    if (cands.empty()) return;
+    if (cands.empty()) {
+        // 当前前缀一个候选都没有：撤掉上一弹残留的列表 —— Scintilla 的 auto-hide
+        // 只在"列表里一个都对不上"时才自己关，被别的通路弹出来的残留它不管。
+        if (Send(SCI_AUTOCACTIVE)) Send(SCI_AUTOCCANCEL);
+        return;
+    }
 
     std::string list;
     for (const std::string& w : cands) {

@@ -299,15 +299,28 @@ std::map<std::string, std::vector<std::string>> MergePatModules(
 //   这个文件（性质与 7 工程取证见 Chroma3380Diagnostics.h 的 ExtractLabelFileNames
 //   一节）。只对 `.pln`（Plan）有意义 —— `.pat` 没有"计划级"这个概念。
 // 【⚠️ 批次 149：`.label` 存在时**独占** patLabels，不与 `.rpt`/`.pat` 取并集】
-//   批次 148 曾把两源取并集，实测会带进**两类噪声**（真实 `.pln` 逐字核对）：
-//     ① 模块内 label：ALPG 的 `.rpt` 有 `os_st`/`os_sp`（`Module Name : contact`），
-//        它们在 `.pln` 里必须写 `contact:os_st`，**裸名非法**；`.label` 也**不含**它们。
-//     ② 模块级 label：AD7760 的 `.rpt` 有 `fun_78_125K`/`__fun_78_125K` …，但该 `.pln`
-//        的 `JUDGE_PAT` **全是** `fun_78_125K:st` 形态（零个裸名），故这些裸名同样非法；
-//        `.label` 剔除 `_C_` 拼接名后**正好是 0**，与 `.pln` 完全吻合。
+//   批次 148 曾把两源取并集，实测会多给候选（真实 `.pln` 逐字核对）。`.label` 的语义
+//   批次 150 重新取证后修正如下 —— 它不是"裸名清单"，而是**计划每个 JUDGE_PAT 实参的
+//   C 标识符形态**：裸名实参原样进表（ALPG `contact`、SCAN `OS_st`），`module:label`
+//   实参则被拼成 `<module>_C_<label>`（AD7760 `fun_78_125K_C_st`）。故剔除 `_C_` 拼接名
+//   后剩下的，**恰好等于**该计划用过的裸名实参集合 —— 这才是它的权威之处。
+//   多给的候选有两种，性质**不同**，不可混谈：
+//     ① 计划未引用的 `::` label：ALPG 的 `os_st`/`os_sp` 在 `os.pat` 里写作 `os_st::`
+//        （**双冒号 = 计划级**，与批次 148 口径及 XfsLexerStyles.h 的 SCE_ATEP_LABEL
+//        注释一致），故它们**本是合法裸名**，只是这份 `.pln` 从不引用 → 不在 `.label`。
+//        ⚠️ 不要按"必须写 `contact:os_st`"处理：那是未经证实的说法，与 `::` 口径矛盾。
+//     ② 计划未引用的模块标记：AD7760 的 `fun_78_125K`/`__fun_78_125K` 是模块起止标记，
+//        该 `.pln` 的 `JUDGE_PAT` 全用 `fun_78_125K:st` 形态（零个裸名），故也未被引用；
+//        `.label` 剔 `_C_` 后**正好是 0**，与 `.pln` 完全吻合。
 //   对照 ALPG：`.pln` 的 20 个裸名实参与 `.label` 20 条**逐字相等**。
-//   ⇒ `.label` 是**计划自己**编译出的裸名清单，权威；有它就只用它（`宁可少报不可错报`：
-//     代价是「尚未写进 `.pln` 的新 label」不再提示，属可接受的少报）。
+//   ⇒ 有 `.label` 就只用它（`宁可少报不可错报`：代价是「尚未写进 `.pln` 的新 label」
+//     不再提示，属可接受的少报）。
+//   【批次 150 结论：缺 `.label` 时 `.rpt` 回退多给的这层**没有可靠判据可收窄**】
+//   ①②两类在 `.rpt` 里与"合法且被引用"的名字**同形**：ALPG 的模块标记 `contact` 与
+//   未引用的 `os_st` 同表、`Module Name` 都是 `contact`；SCAN 的 `OS_st` 是 `::` 且确实
+//   被引用。而"计划引用了哪些"只有 `.label`/`.pln` 自己知道 —— 任何据此过滤的规则都会
+//   在别的工程上误删合法候选（属错报）。故**不实现**该收窄：保留 `.rpt` 的"多给"作为
+//   缺 `.label` 时的回退代价。若将来要收窄，必须先拿到编译器语义层面的证据。
 //   没有 `.label`（非 .pln / 尚未 plncmp / 读失败）时才回退批次 146 的 `.rpt`+`.pat`。
 // 【必须剔除拼接名】`.label` 是计划级 **C 标识符**清单，模块内 label 会被 CRAFT 拼成
 //   `<module>_C_<label>`（AD7760 实测 `fun_78_125K_C_st`）。这种名字在 `.pln` 里不是
@@ -4132,9 +4145,10 @@ std::vector<std::string> MainWindow::RefreshDecSymbols() {
     d->patModuleLabels = MergePatModules(ResolvePatModuleSources(*d, src));
 
     // 批次 146/148/149：跨文件补全第二段 —— JUDGE_PAT 裸名实参的词源。
-    // 【批次 149：`.label` 存在时独占】它是计划自己 plncmp 出的裸名权威清单，与 `.pln`
-    //   逐字相等；批次 148 的并集会把 `.rpt` 的两类噪声（模块内 label / 模块级 label）
-    //   带进来（证据见 ResolveLabelFilePath 上方注释），故改为**存在即独占、缺失才回退**。
+    // 【批次 149：`.label` 存在时独占】它记录该计划每个 JUDGE_PAT 实参的 C 标识符形态，
+    //   剔除 `_C_` 拼接名后恰等于用过的裸名实参集，与 `.pln` 逐字相等；批次 148 的并集
+    //   还会带进 `.rpt` 里"合法但未被引用"的名字（`::` label / 模块标记，缺 `.label` 时
+    //   无法可靠区分，见 ResolveLabelFilePath 上方批次 150 结论），故改为**存在即独占**。
     const std::filesystem::path labelFile = ResolveLabelFilePath(*d);
     if (!labelFile.empty())
         d->patLabels = ExtractPlanLabelNames(labelFile, d->patModuleLabels);
