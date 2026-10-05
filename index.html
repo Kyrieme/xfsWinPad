@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.15.6 · 2026-10-05 · Windows 10/11 x64</span>
+  <span class="ver">v0.15.7 · 2026-10-05 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,14 +94,20 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">16F729D03270FB44E9AAEB5981FBBAA2717253DAF4839855A845A4BB376D56B4</p>
+    <p class="hash">B8097B7C01A1755E2941E877BDA7D11BD5397D4FF4CD46CBEEDD33EC9FC89B8A</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">70D4AE0E57458076AA6E82D288CF624AB04B6E5B7534D350A5681A99E7F6F61B</p>
+    <p class="hash">9F9B65676818388C546EBEF9C15AD4C2FD935314752739C4901B27555D453153</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
-    <p><b>v0.15.6</b>（2026-10-05）</p>
+        <p><b>v0.15.7</b>（2026-10-05）</p>
+    <ul>
+      <li><b>修复：进程外（OOP）插件的停靠面板收不到键盘输入</b>。
+        以「进程外运行」方式加载的插件，它的停靠面板与主程序不在同一个输入队列里，主程序此前没有把键盘焦点接过去，于是面板里的输入框、列表等控件<b>只能鼠标点、不能键盘输入</b>。
+        本版在面板被点击时补上跨进程焦点桥，插件面板的键盘输入恢复正常；进程内插件的面板行为<b>完全不变</b>（不抢插件自身的控件焦点）</li>
+    </ul>
+<p><b>v0.15.6</b>（2026-10-05）</p>
     <ul>
       <li><b>安装程序：新增「安装前确认」，安装过程终于可以取消</b>。
         此前双击安装包会<b>直接开始</b>释放文件、写注册表，全程没有任何取消入口 ——
