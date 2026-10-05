@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.15.1 · 2026-10-04 · Windows 10/11 x64</span>
+  <span class="ver">v0.15.2 · 2026-10-05 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,22 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">19E94B62354A24D846D7F12C38F62349B2126213649210D7ECF8894E4C7A48A7</p>
+    <p class="hash">86BD25F977F76207F74DCB6A3933BEF7A4BCB9620041C89D8FE8AC593114364E</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">27948892B03FA091D537B79AC7735A5B0C1F19804D9DD673F0BB1925C6FA815C</p>
+    <p class="hash">59110D433E5110983A0E089CEF5E96D99CA54510EB50D9C6899CF0030F4245D6</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.15.2</b>（2026-10-05）</p>
+    <ul>
+      <li><b>安装程序：文件关联把 <code>.csv</code> 加回候选（默认不勾选）</b>。
+        此前候选列表里只有 <code>.tsv</code> 而没有 <code>.csv</code>，
+        需要在安装时顺手关联表格文件的用户<b>选不到</b>这一项；
+        现在 <code>.csv</code> 回到列表，<b>默认仍不勾选</b>，想要就手动打勾。
+        与之配套，<b>只有在你没有勾选 <code>.csv</code> 时</b>，安装程序才去撤销
+        旧版本曾自动写入的关联 —— 勾了就不动，避免出现「我没选、却被悄悄关联上」</li>
+    </ul>
     <p><b>v0.15.1</b>（2026-10-04）</p>
     <ul>
       <li><b>界面字体全面自适应</b>：标签页、查找框、查找结果窗口，以及各停靠面板与
