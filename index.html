@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.15.3 · 2026-10-05 · Windows 10/11 x64</span>
+  <span class="ver">v0.15.4 · 2026-10-05 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,24 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">E3A1B50E9523487FBF2D922107A4629BBF2E29925D3C3BB96FB0D3230BA88B8F</p>
+    <p class="hash">FC5E1D69F8881F74FC0B82AB5D602041457FF409ADADAC0132912C819480FCF5</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">CF97007699C3434E11DEA24CBFBF56FA2DFCDD3D4CF10A24778D147A52E9BC14</p>
+    <p class="hash">E7099DE582093C5BD3701F23D274038E21578A89599D0AEE986FB99798B267F1</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.15.4</b>（2026-10-05）</p>
+    <ul>
+      <li><b>修复：双击 <code>.pln</code> / <code>.dec</code> 等经「打开方式」关联的文件，不再顶掉上次的标签栏与会话</b>。
+        v0.15.3 修好了右键菜单与安装时勾选关联这两条打开路径，但还剩一条<b>安装程序从不写</b>的注册表路径：
+        当你用<b>「打开方式 → xfsWinPad」</b>给某个扩展名（例如 <code>.pln</code>、<code>.dec</code>、<code>.pat</code>）
+        建立关联时，Windows 实际把双击指向 <code>&hellip;\Applications\xfsWinPad.exe</code> 的打开命令 ——
+        这条命令仍是系统<b>首次建立关联时登记的旧串</b>（不含 <code>--open</code>），
+        所以双击这类文件仍会跳过会话恢复、退出时把工作区顶成单标签。本版让安装程序
+        <b>补写这条命令</b>并在卸载时一并清理，双击这类文件也会<b>先恢复上次的标签与双视图再叠加</b>。
+        <b>升级后需重新运行安装程序</b>，此修复才会写入注册表</li>
+    </ul>
     <p><b>v0.15.3</b>（2026-10-05）</p>
     <ul>
       <li><b>修复：双击文件 / 「打开方式」打开时，不再顶掉上次的标签栏与会话</b>。
