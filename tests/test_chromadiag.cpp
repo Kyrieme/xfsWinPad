@@ -754,6 +754,281 @@ static void RunExtractDecSymbolLocations() {
     CHECK(ExtractDecSymbolLocations("DEC_MODE APAS;\n").empty());
 }
 
+// ---------------------------------------------------------------------------
+// 批次 146：跨文件补全第二段 —— FindPatFileRefs / ExtractRptLabels / ExtractPatLabels
+//
+// 【正例全部是真实工程样本的**原文行**】（temp/ 私密、CI 上不存在，故内嵌）：
+//   · LOAD_PAT 行取自 9 处真实 .pln（含带第二实参、带行尾注释两种形态）；
+//   · .rpt 片段取自 SCAN_tutorial/PAT/ls299_pat/ls299_pat.rpt（含那个"字段紧贴、
+//     中间没有空格"的坑：`__scan_func_patModule Name : …`）；
+//   · .pat 片段取自 SCAN_tutorial/PAT/ls299_func.pat（含 `iil_st ::` 冒号前带空格、
+//     `static_idd_st::*1 …` 冒号后紧贴向量两种形态）。
+// ---------------------------------------------------------------------------
+
+static const char* kRealPlanLoadPat = R"PLN(TEST_ITEM
+{
+  3. SET_UPAT_REG(X0, RPT_Cont_0);
+}
+  LOAD_PAT("./PAT/ls299_pat.ppo");
+  JUDGE_PAT(OS_st, OS_sp );
+        LOAD_PAT("./PAT/3380P_MPC9600.ppo",3200);
+  LOAD_PAT("./PAT/AD7760.ppo"); //ad574a.pat include functional pattern and open_short pattern
+)PLN";
+
+// ls299_pat.rpt 的原文片段（第 27~40、70、78 行）。
+static const char* kRealRptExcerpt = R"RPT(Module Name :func_pat       Type :SPM  Address :0       vector no. :127     
+Module Name :scan_9thFail_patType :SPM  Address :157     vector no. :14      
+Module no.= 7
+
+Label Name :func_pat       Module Name : func_pat       Offset : 0       
+Label Name :OS_st          Module Name : func_pat       Offset : 0       
+Label Name :__func_pat     Module Name : func_pat       Offset : 126     
+Label Name :scan_func_pat  Module Name : scan_func_pat  Offset : 0       
+Label Name :__scan_func_patModule Name : scan_func_pat  Offset : 13      
+Label Name :scan_9thFail_patModule Name : scan_9thFail_patOffset : 0       
+Label no.= 40
+
+File :  ls299_func.pat  SPM :(0)-(142)  FPM :(0)-(-1)
+)RPT";
+
+// ls299_func.pat 的原文片段（第 14~19、41、52、62 行）。
+static const char* kRealPatExcerpt = R"PAT(SPM_PATTERN (func_pat) {
+ 
+   OS_st::  *X XX XX X XX XXXXXXXX XX*TS2;
+            *X XX XX X XX XXXXXXXX XX*RPT 2;
+            *0 00 00 0 00 00000000 00*;
+   clr_st:: *0 00 00 0 00 LLLLLLLL XX*TS2;
+  hold_st:: *1 11 11 1 00 00000000 XX*;//-----load
+    iil_st ::*1 11 11 1 00 00000000 XX*;//load low    
+   static_idd_st::*1 11 11 1 00 11111111 XX* TS2;
+}
+)PAT";
+
+static void RunFindPatFileRefs() {
+    const std::vector<PatFileRef> r = FindPatFileRefs(kRealPlanLoadPat);
+    CHECK(r.size() == 3);
+    if (r.size() == 3) {
+        CHECK(r[0].path == "./PAT/ls299_pat.ppo");
+        CHECK(r[1].path == "./PAT/3380P_MPC9600.ppo");   // 第二实参不影响取路径
+        CHECK(r[2].path == "./PAT/AD7760.ppo");          // 行尾注释不影响取路径
+        CHECK(r[0].line == 4);                           // 0-based 行号
+    }
+    // 负控：SET_DEC_FILE 不归这支管
+    CHECK(FindPatFileRefs("  SET_DEC_FILE \"./ls299.dec\"\n").empty());
+    // 负控：注释里的 LOAD_PAT 不算（抹平层负责）
+    CHECK(FindPatFileRefs("// LOAD_PAT(\"./PAT/x.ppo\");\n").empty());
+    CHECK(FindPatFileRefs("# LOAD_PAT(\"./PAT/x.ppo\");\n").empty());
+    // 负控：长名字前缀不得命中（LOAD_PATTERN ≠ LOAD_PAT）
+    CHECK(FindPatFileRefs("LOAD_PATTERN(\"./PAT/x.ppo\");\n").empty());
+    // 负控：没引号 / 未闭合 / 空路径
+    CHECK(FindPatFileRefs("LOAD_PAT;\n").empty());
+    CHECK(FindPatFileRefs("LOAD_PAT(\"./PAT/x.ppo);\n").empty());
+    CHECK(FindPatFileRefs("LOAD_PAT(\"\");\n").empty());
+    CHECK(FindPatFileRefs("").empty());
+}
+
+static void RunExtractRptLabels() {
+    const std::vector<std::string> v = ExtractRptLabels(kRealRptExcerpt);
+    CHECK(v.size() == 6);
+    // 逐个断言（顺序 = 文件出现顺序），重点钉那个"字段紧贴"的坑。
+    if (v.size() == 6) {
+        CHECK(v[0] == "func_pat");
+        CHECK(v[1] == "OS_st");
+        CHECK(v[2] == "__func_pat");
+        CHECK(v[3] == "scan_func_pat");
+        CHECK(v[4] == "__scan_func_pat");     // 紧贴 `Module Name`，按空白切会多带一截
+        CHECK(v[5] == "scan_9thFail_pat");    // 同上
+    }
+    // 负控：Module Name 行 / File 行 / 表头都不得当成 label
+    CHECK(ExtractRptLabels("Module Name :func_pat       Type :SPM  Address :0\n").empty());
+    CHECK(ExtractRptLabels("File :  ls299_func.pat  SPM :(0)-(142)\n").empty());
+    CHECK(ExtractRptLabels("Label no.= 40\n").empty());
+    CHECK(ExtractRptLabels("").empty());
+    // 负控：空名字字段不得产出空串
+    CHECK(ExtractRptLabels("Label Name :       Module Name : func_pat  Offset : 0\n").empty());
+    // 同名只记第一次
+    CHECK(ExtractRptLabels("Label Name :A  Module Name : M  Offset : 0\n"
+                           "Label Name :A  Module Name : M  Offset : 1\n").size() == 1);
+}
+
+static void RunExtractPatLabels() {
+    const std::vector<std::string> v = ExtractPatLabels(kRealPatExcerpt);
+    CHECK(v.size() == 5);
+    if (v.size() == 5) {
+        CHECK(v[0] == "OS_st");
+        CHECK(v[1] == "clr_st");
+        CHECK(v[2] == "hold_st");
+        CHECK(v[3] == "iil_st");            // 冒号前有空格 `iil_st ::`
+        CHECK(v[4] == "static_idd_st");     // 冒号后紧贴向量 `static_idd_st::*`
+    }
+    // 负控：SPM_PATTERN 行、向量行、HEADER 行都不得命中
+    CHECK(ExtractPatLabels("SPM_PATTERN (func_pat) {\n").empty());
+    CHECK(ExtractPatLabels("   *0 00 00 0 00 LLLLLLLL XX*;\n").empty());
+    CHECK(ExtractPatLabels("HEADER    CLR,%SEL0,SEL1;\n").empty());
+    // 负控（**真实行尾注释**）：ls299_func_scan1.pat 里 `//sfr_st::` 出现 8 次，
+    // 都在行尾、行首是 `*` —— 一个 label 都不许进候选。
+    CHECK(ExtractPatLabels(
+        "   *0 00 00 0 00 LLLLLLLL *; //sfr_st:: \n"
+        "   *1 10 00 1 00 XXXXXXXX *; //sfr_sp::\n").empty());
+    // 负控（块注释里与真定义同形的那一行）：只有抹平层能挡住它
+    CHECK(ExtractPatLabels("/*\n   sfr_st::\n*/\n").empty());
+    // 单冒号不是 label 定义（.pat 里定义用 `::`；`module:label` 是 .pln 的引用写法）
+    CHECK(ExtractPatLabels("   os_sp: *X XX*\n").empty());
+    CHECK(ExtractPatLabels("").empty());
+}
+
+// 批次 147：`module:label` 位置感知补全。内嵌真实语料原文行（temp/ 私密、CI 不存在）。
+//
+// 取材：3380D_MAWI2WGtoAD7760/PAT/AD7760_func.pat（单冒号 `st:`/`sp :`/`AA:`，
+//   `SPM_PATTERN(name)` 换行后 `{`）、3380P_MCP9600_Clock_Buffer/PAT/func.pat
+//   （块注释里的 `History:`）、SCAN_tutorial/PAT/ls299_func.pat（双冒号 `OS_st::`）、
+//   MCP9600（`SPM_PATTERN(func_run_DBL, DBL){` 带模式第二实参）。
+static const char* kRealPatModules = R"PAT(SET_DEC_FILE "./AD7760_pin.dec"
+
+HEADER   DB15,%DB14,DB13,DB12,DB11;
+/*
+  History:
+  1. RPM_PATTERN replaced by SPM_PATTERN
+*/
+SPM_PATTERN(fun_78_125K)
+{
+          /* D DDDD D D DDDD DD DDD CRRSD */
+      st:  * X XXXX X X XXXX XX XXX 1001X      * TS1;        //Register Write init
+           * X XXXX X X XXXX XX XXX 1001X      * RPT 49;
+       AA: * X XXXX X X XXXX XX XXX 1011X      * TS1,RPT 45;
+      sp : * X XXXX X X XXXX XX XXX 1111X      *;
+}
+
+SPM_PATTERN(func_run_DBL, DBL){
+               * 1XXXXXXXXXXXXXXXXXXXXX *TS1;
+}
+
+SPM_PATTERN (func_pat) {
+   OS_st::  *X XX XX X XX XXXXXXXX XX*TS2;
+   static_idd_st::*1 11 11 1 00 11111111 XX* TS2;
+}
+)PAT";
+
+static void RunExtractPatModules() {
+    const std::vector<PatModule> v = ExtractPatModules(kRealPatModules);
+    CHECK(v.size() == 3);
+    if (v.size() == 3) {
+        CHECK(v[0].name == "fun_78_125K");
+        CHECK(v[0].labels.size() == 3);
+        if (v[0].labels.size() == 3) {
+            CHECK(v[0].labels[0] == "st");      // 紧贴冒号 `st:`
+            CHECK(v[0].labels[1] == "AA");      // 紧贴冒号 + 行尾微指令
+            CHECK(v[0].labels[2] == "sp");      // 冒号前有空格 `sp :`
+        }
+        CHECK(v[1].name == "func_run_DBL");     // 第二实参 DBL 是模式，不是名字
+        CHECK(v[1].labels.empty());
+        // 批次 148：双冒号 `OS_st::` / `static_idd_st::` 是**计划级/全局** label，
+        // 不算模块内 label（全语料 .pln 里 `::` 出现 0 次；这些名字以裸名写进
+        // JUDGE_PAT）。若误收，会产出 `func_pat:OS_st` 这种永远编译不过的候选。
+        CHECK(v[2].name == "func_pat");
+        CHECK(v[2].labels.empty());
+    }
+    // 负控：块注释里的 `History:`（真实 MCP9600/func.pat）——块头之外、且被抹平层挡住
+    CHECK(ExtractPatModules("/*\n  History:\n*/\n").empty());
+    // 负控：没有块头 → 行首 `st:` 不归属任何模块
+    CHECK(ExtractPatModules("st: * x *;\n").empty());
+    // 负控：HEADER / SET_DEC_FILE 行没有任何模块
+    CHECK(ExtractPatModules("HEADER A,B;\n").empty());
+    // 负控：块注释里的 `label:` 不抽（抹平层）
+    CHECK(ExtractPatModules("SPM_PATTERN(m) {\n/* sfr_st:: */\n}\n")[0].labels.empty());
+    // 负控：向量行 / `[XA:0,…]`（不在行首）不抽
+    CHECK(ExtractPatModules("SPM_PATTERN(m) {\n  *0 00*;[XA:0,X=XA]\n}\n")[0].labels.empty());
+    // 负控：与块头同行的 `st:` 不在行首 → 按"行首"口径**故意不抽**（宁可少报）
+    CHECK(ExtractPatModules("SPM_PATTERN(m) { st: *x*; }\n")[0].labels.empty());
+    // 负控：块外的 label 不挂到模块上
+    CHECK(ExtractPatModules("SPM_PATTERN(m) {\n st:\n}\nzz:\n")[0].labels.size() == 1);
+    // 同名 label 在一模块内只记一次
+    CHECK(ExtractPatModules("SPM_PATTERN(m) {\n st:\n st:\n}\n")[0].labels.size() == 1);
+    CHECK(ExtractPatModules("").empty());
+}
+
+static void RunScopedNameBefore() {
+    // 真实形态：`.pln` 的 `JUDGE_PAT(fun_78_125K:st, …)`，光标本就落在 `st` 的词首
+    const std::string s = "JUDGE_PAT(fun_78_125K:";
+    CHECK(ScopedNameBefore(s, s.size()) == "fun_78_125K");
+    // 负控：冒号前有空白（`a ? b :`）→ 不认（真实 .pln 的 module:label 无空白）
+    CHECK(ScopedNameBefore("a ? b :", 7) == "");
+    // 负控：`::` 不认（.pln 里无此写法）
+    CHECK(ScopedNameBefore("x::", 3) == "");
+    // 负控：只有冒号 / pos=0 / 超出范围
+    CHECK(ScopedNameBefore(":", 1) == "");
+    CHECK(ScopedNameBefore("abc:", 0) == "");
+    CHECK(ScopedNameBefore("abc:", 99) == "");
+    // 负控：数字开头不是标识符
+    CHECK(ScopedNameBefore("1abc:", 5) == "");
+    // 下划线开头可以
+    CHECK(ScopedNameBefore("__func_run:", 11) == "__func_run");
+    // 已知的"少报"边界：无空白的 `a?b:` 会把 `b` 当成作用域名（宿主查不到 → 退回普通补全）
+    CHECK(ScopedNameBefore("a?b:", 4) == "b");
+}
+
+// 批次 148：`.label` 文件解析。内嵌真实语料原文（temp/ 私密、CI 不存在）。
+//
+// 取材：open_short/.open_short/open_short.label（15 条裸名，逐字等于 .pln 的
+//   JUDGE_PAT 实参集合）、AD7760/.AD7760/AD7760.label（6 条 CRAFT 拼接名
+//   `fun_78_125K_C_st` —— 本层**照切**，拼接名的剔除是宿主侧按下标量做的）。
+//   ⚠️ 真实文件是 `count`(1B)+`00` + 64B 定长记录（名字 + `\0` 填充），**不是**
+//   空格分隔的纯文本 —— 下面是按真实字节布局重建的样本。
+static void RunExtractLabelFileNames() {
+    // 真实字节布局：open_short.label 的 15 条（count=0x0F）按 64B 记录重建。
+    static const char* kNames[15] = {
+        "OS_st", "OS_sp", "static_idd_st", "static_idd_sp", "clr_st",
+        "load_sp", "pleak_st", "iil_sp", "pleak_l", "iih_st",
+        "iih_sp", "QA_RF", "__QA_RF", "CLK_TO_QA", "__CLK_TO_QA"};
+    std::string layout;
+    layout.push_back((char)0x0F);        // count = 15
+    layout.push_back('\0');
+    for (const char* n : kNames) {
+        const std::string nm(n);
+        layout.append(nm);
+        layout.append(64 - nm.size(), '\0');   // 64B 定长记录，`\0` 右填充
+    }
+    CHECK(layout.size() == 2 + 15 * 64);
+    const std::vector<std::string> v = ExtractLabelFileNames(layout);
+    CHECK(v.size() == 15);
+    if (v.size() == 15) {
+        CHECK(v[0] == "OS_st");
+        CHECK(v[1] == "OS_sp");
+        CHECK(v[13] == "CLK_TO_QA");
+        CHECK(v[14] == "__CLK_TO_QA");
+    }
+
+    // AD7760.label 的拼接名照切（剔除由宿主按「已知模块 × 已知 label」精确完成）。
+    const std::vector<std::string> cat = ExtractLabelFileNames(
+        "fun_78_125K_C_st fun_78_125K_C_sp fun_156_25K_C_st");
+    CHECK(cat.size() == 3);
+    if (cat.size() == 3) CHECK(cat[0] == "fun_78_125K_C_st");
+
+    // 分隔符覆盖：制表 / 换行 / 回车 / 换页；连续分隔不产生空名。
+    CHECK(ExtractLabelFileNames("\tA\r\nB\fC\vD  E\n").size() == 5);
+
+    // 去重保序。
+    const std::vector<std::string> dup = ExtractLabelFileNames("A B A C B");
+    CHECK(dup.size() == 3);
+    if (dup.size() == 3) {
+        CHECK(dup[0] == "A");
+        CHECK(dup[1] == "B");
+        CHECK(dup[2] == "C");
+    }
+
+    // 负控：纯数字字段整段丢（不剥前缀，不会把 `1abc` 拆出 `abc`）。
+    CHECK(ExtractLabelFileNames("1 2 3").empty());
+    // 负控：超长字段（>64）丢弃。
+    CHECK(ExtractLabelFileNames(std::string(70, 'x')).empty());
+    // 负控：空文本 / 纯空白。
+    CHECK(ExtractLabelFileNames("").empty());
+    CHECK(ExtractLabelFileNames("  \t\r\n ").empty());
+    // 下划线开头合法。
+    CHECK(ExtractLabelFileNames("__contact").size() == 1);
+    // 全 NUL（空表）→ 无候选。
+    CHECK(ExtractLabelFileNames(std::string(130, '\0')).empty());
+}
+
 // 批次 106：DefinitionHintText —— 状态栏「定义」提示要显示的那行文本。
 //
 // 【为什么值得单测】它唯一的工作是"截断"，而按字节截断有一个**静默**的失败模式：
@@ -1366,8 +1641,86 @@ static int DumpSymbols(int argc, char** argv) {
     return 0;
 }
 
+// `--patlabels <文件>…` —— 把每个 .rpt / .pat 抽出的 label 按**入参下标**打出来，
+// 供 Python 侧对真实语料逐条核对（同 --symbols 的理由：真实语料私密 + 路径含中文，
+// 用下标而非路径传递，避免控制台码页问题）。
+//
+// 按扩展名分派：`.rpt` → ExtractRptLabels（`Label Name :` 表），其余 → ExtractPatLabels
+// （行首标识符 + `::` 定义）。大小写不敏感（真实语料里有 `.RPT` 的可能）。
+static int DumpPatLabels(int argc, char** argv) {
+    int total = 0;
+    for (int i = 2; i < argc; ++i) {
+        std::ifstream in(argv[i], std::ios::binary);
+        if (!in) {
+            std::printf("cannot open index=%d\n", i - 2);
+            return 2;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+        const std::string path(argv[i]);
+        const std::size_t dot = path.find_last_of('.');
+        std::string ext = (dot == std::string::npos) ? std::string() : path.substr(dot);
+        for (char& c : ext)
+            if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        std::vector<std::string> v = (ext == ".rpt") ? ExtractRptLabels(text)
+                                                     : ExtractPatLabels(text);
+        std::printf("PATLABELS %d ext=%s n=%zu\n", i - 2, ext.c_str(), v.size());
+        for (const std::string& s : v) std::printf("  %s\n", s.c_str());
+        total += (int)v.size();
+    }
+    std::printf("TOTAL %d\n", total);
+    return 0;
+}
+
+// 批次 147：打印每个 .pat 的 module → 块内 label，供真实语料核对。
+static int DumpPatModules(int argc, char** argv) {
+    int total = 0;
+    for (int i = 2; i < argc; ++i) {
+        std::ifstream in(argv[i], std::ios::binary);
+        if (!in) {
+            std::printf("cannot open index=%d\n", i - 2);
+            return 2;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+        const std::vector<PatModule> ms = ExtractPatModules(text);
+        std::printf("PATMODULES %d n=%zu\n", i - 2, ms.size());
+        for (const PatModule& pm : ms) {
+            std::printf("  [%s] %zu:", pm.name.c_str(), pm.labels.size());
+            for (const std::string& s : pm.labels) std::printf(" %s", s.c_str());
+            std::printf("\n");
+        }
+        total += (int)ms.size();
+    }
+    std::printf("TOTAL %d\n", total);
+    return 0;
+}
+
+// 批次 148：打印每个 `.label` 抽出的裸名，供真实语料核对（拼接名本层照切）。
+static int DumpLabelFile(int argc, char** argv) {
+    int total = 0;
+    for (int i = 2; i < argc; ++i) {
+        std::ifstream in(argv[i], std::ios::binary);
+        if (!in) {
+            std::printf("cannot open index=%d\n", i - 2);
+            return 2;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+        const std::vector<std::string> v = ExtractLabelFileNames(text);
+        std::printf("LABELFILE %d n=%zu\n", i - 2, v.size());
+        for (const std::string& s : v) std::printf("  %s\n", s.c_str());
+        total += (int)v.size();
+    }
+    std::printf("TOTAL %d\n", total);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc > 2 && std::string(argv[1]) == "--symbols") return DumpSymbols(argc, argv);
+    if (argc > 2 && std::string(argv[1]) == "--patlabels") return DumpPatLabels(argc, argv);
+    if (argc > 2 && std::string(argv[1]) == "--patmodules") return DumpPatModules(argc, argv);
+    if (argc > 2 && std::string(argv[1]) == "--labelfile") return DumpLabelFile(argc, argv);
     if (argc > 1) return ScanFile(argc, argv);
     std::printf("== test_chromadiag ==\n");
     RunFileKind();
@@ -1384,6 +1737,12 @@ int main(int argc, char** argv) {
     RunExtractDecSymbolLocations();
     RunDefinitionHintText();
     RunCrossKind();
+    RunFindPatFileRefs();
+    RunExtractRptLabels();
+    RunExtractPatLabels();
+    RunExtractPatModules();
+    RunScopedNameBefore();
+    RunExtractLabelFileNames();
     if (g_fail) {
         std::printf("FAILED: %d check(s)\n", g_fail);
         return 1;

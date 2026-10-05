@@ -274,6 +274,58 @@ struct DecFileRef {
 // 不会命中（抹平层负责）。
 std::vector<DecFileRef> FindDecFileRefs(const std::string& text);
 
+// ---------------------------------------------------------------------------
+// 批次 146：跨文件补全第二段 —— `.pat` 的 label → `.pln` 的 JUDGE_PAT 实参
+//
+// 【.pln 侧到底消费什么（取证：真实工程 9 处 LOAD_PAT + 全部 JUDGE_PAT 调用点）】
+//     LOAD_PAT("./PAT/ls299_pat.ppo");            <- 取的是**编译产物路径串**，不是符号
+//     JUDGE_PAT(OS_st, OS_sp);                    <- 取的是 .pat 模块里的 label
+//     JUDGE_PAT(scan_func_pat, __scan_func_pat);
+//     JUDGE_PAT(fun_78_125K:st, fun_78_125K:sp);  <- 另一种写法 module:label
+//   所以「.pat → .pln」的符号消费点是 **JUDGE_PAT 的实参**，不是 LOAD_PAT 的参数。
+//
+// 【本批只覆盖「裸名」形态，`module:label` 只覆盖到 module 那一半 —— 有意为之】
+//   真实语料核对（7 份 .rpt，对应 6 个工程）：`JUDGE_PAT(X, __X)` 裸名形态的实参 X
+//   基本全部命中 .rpt 的 Label Name 表 —— SCAN 12/12、open_short 15/15、
+//   Normal_DBL 10/10、MCP9600 6/6、GANG 2/2；ALPG 18/20（缺的 `ALPG_Walking`/
+//   `__ALPG_Walking` 属下面「陈旧 .rpt」那种情况）。`module:label` 形态（仅 AD7760
+//   的 `fun_78_125K:st` 一类）里，module 这一半命中（它本身就是 Offset 0 的
+//   Label Name），而 `st`/`sp` 这种**模块内 label** 在 .rpt 里**没有**
+//   （AD7760.rpt 的 Label Name 表只有 6 条模块级标签）—— 它们只存在于 .pat 源码
+//   （写作单冒号 `st:`）与 CRAFT 的 `.label` 文件里。位置感知地补 `module:` 之后的
+//   label 是**后续段**，本批不做，也就不会给错候选。
+//
+// 【.rpt 可能陈旧 —— 词源固有风险，已记为已知代价】
+//   ALPG 工程样本里 `.rpt` 的 Label Name 表与 `.pln`/`.label` 不一致（.rpt 有
+//   `os_st`/`os_sp`，而当前 `.label` 里是 `ALPG_Walking`/`__ALPG_Walking`），说明
+//   CRAFT 报告可能对应**上一次编译**。取 .rpt 为词源就会跟着陈旧：少给当前构建里
+//   有的名字（漏）或多给已删的名字（多）。补全场景下这仍优于完全不补，故接受。
+//
+// 【词源两条路：.rpt 优先、.pat 兜底】
+//   · `.rpt`（CRAFT 编译报告）首选：它是 CRAFT 实际编出的 label 表，补出来的名字
+//     CRAFT 一定认得（零误报面）；配对规则「<dir>/<stem>.ppo → <dir>/<stem>/<stem>.rpt」
+//     在 8 个真实工程样本上 100% 成立。缺 .rpt（工程没编译过）时该路静默无候选。
+//   · `.pat` 源文件兜底：`.pat` 与 `.ppo` **不是**一一对应（`ls299_pat.ppo` 实由
+//     `ls299_func.pat` + `ls299_func_scan1.pat` 编成，见 .rpt 末尾的 `File :` 行），
+//     所以兜底只能收该目录下**全部** .pat 的 label —— 会多给当前 .ppo 里并不存在的
+//     候选。这是**有意**取舍：宁可多给，也不让没编译过的工程完全没有补全。
+//
+// 【为什么只解析 Label Name 就够（不必再解析 Module Name 行）】
+//   JUDGE_PAT 里当实参用的模块名，在 .rpt 里**本身就是一条 Label Name**（Offset 0）——
+//   真实 AD7760.rpt 第 32 行 `fun_78_125K` 既是模块名也是 label，而 .pln 正写
+//   `JUDGE_PAT(fun_78_125K:st, …)`。少一条解析规则就少一处分位面。
+struct PatFileRef {
+    int line = 0;        // LOAD_PAT 所在行（0-based）
+    int start = 0;       // 路径首字符的行内列（字节，不含引号）
+    int length = 0;      // 路径字节数
+    std::string path;    // 引号内的原始字节（不做编码转换，编码归宿主管）
+};
+
+// 提取 LOAD_PAT 引用的路径。宽容口径与 FindDecFileRefs 完全一致：行首标识符不是
+// LOAD_PAT、没有成对双引号、路径为空 —— 一律跳过。不判扩展名（内核只抽引用，
+// 「这个路径能不能推出 .rpt / 该扫哪个目录的 .pat」是宿主的路径知识）。
+std::vector<PatFileRef> FindPatFileRefs(const std::string& text);
+
 // .dec 文本里是否声明了**无歧义的** DEC_MODE APAS。同时出现 APAS 与 NORM
 // 声明视为歧义 → false（宁漏不误）。
 bool DecDeclaresApas(const std::string& decText);
@@ -329,6 +381,144 @@ struct DecSymbolLoc {
     std::string lineText;   // 该行原文（去首尾空白）；name 就在其中的 col 处
 };
 std::vector<DecSymbolLoc> ExtractDecSymbolLocations(const std::string& decText);
+
+// ---------------------------------------------------------------------------
+// 批次 146：跨文件补全第二段的两支抽取（词源两条路的取舍见上方 PatFileRef 一节）
+// ---------------------------------------------------------------------------
+
+// 从 CRAFT 编译报告（.rpt）文本里抽 `Label Name :` 行的名字 —— **首选**词源。
+//
+// 【格式与那个必须绕开的坑】
+//     `Label Name :func_pat       Module Name : func_pat       Offset : 0`
+//   字段左对齐、空格补齐，且**可能完全没有间隙**：真实样本 ls299_pat.rpt 第 70 行
+//     `Label Name :scan_9thFail_patModule Name : scan_9thFail_patOffset : 0`
+//   所以**不能**用「切到第一个空白」取名字（那会得到 `scan_9thFail_patModule`），
+//   必须切到字面量 `Module Name`。标签只可能是标识符（不含空格），不会误切。
+//
+// 【容差口径】这是**补全**词源，不是诊断：多一个候选只是列表噪声，所以不校验
+//   Offset / 段落位置等其它字段；但名字本身仍按标识符口径校验（1~64 字符、
+//   IsIdStart 开头、全 IsIdChar），绝不把明显不是标识符的东西塞进候选。
+//   同名只记第一次；按文件顺序返回。
+std::vector<std::string> ExtractRptLabels(const std::string& rptText);
+
+// 从 `.pat` 源文本里抽**行首** label 定义 —— **兜底**词源（.rpt 缺席时用）。
+//
+// 【规则】跳过空白后的**行首**标识符 + 可选空白 + `::`。真实样本里既有紧贴的
+//   `OS_st::*X XX…*`，也有冒号前带空格的 `iil_st ::*1 11…*`，两种都要认。
+//   限定「行首」是因为 .pat 里行首 `IDENT::` 只有 label 一种含义（该语言没有
+//   别的作用域语法；向量行以 `*` 起头、HEADER 行不含 `::`）。
+//
+// 【已知不足：真实 .pat 里单冒号 `name:` 更常见，本批**不认**】
+//   真实语料里 ls299 系用双冒号 `OS_st::`，而 AD7760 / ALPG 系用**单冒号**
+//   `st:`、`wadd_10:`、`BF_ST:`（且模块内 label 不进 .rpt）。本批只认 `::`，
+//   故对这些工程的 .pat 兜底几乎抽不到东西。之所以不顺手把单冒号也认下：单冒号
+//   的误报面还没查清（比如别处的 `Ident:` 结构），而本批主路（.rpt）已能覆盖
+//   裸名形态，兜底抽不到只会"少给"，符合"宁可少报不可错报"。单冒号 + 位置感知
+//   补 `module:` 之后的 label 一并留给后续段。
+//
+// 【为什么还要跑在抹平层上】真实样本 SCAN_tutorial/PAT/ls299_func_scan1.pat 里
+//   `*0 00 00 0 00 LLLLLLLL *; //sfr_st::` 这类**注释里的 `label::`** 出现 8 次。
+//   它们都在行尾（行首是 `*`），光靠"行首"规则就已经被挡掉了。真正需要抹平层
+//   的是**块注释 / `#` 行注释**：`/* …\n   sfr_st::\n */` 里那一行在原文上与真
+//   定义**同形**，只认原文就会凭空多一个候选（真实语料 ALPG 的 `func.pat` 里
+//   就有块注释内的 `History:`，但那是单冒号；双冒号的这种写法当前语料没出现，
+//   但这正是"宁可少报"该防的）。抹平层逐字节保长度地把这类注释整段抹成空格，
+//   从根上排除；代价是每行一次小分配，兜底路径上可接受。
+std::vector<std::string> ExtractPatLabels(const std::string& patText);
+
+// ---------------------------------------------------------------------------
+// 批次 147：跨文件补全第三段 —— `module:label` 的**位置感知**补全
+//
+// 【补的是哪一半】批次 146 把 `.pat` 侧的 label 灌进 `.pln` 的词汇补全，但只覆盖
+//   「裸名」形态。真实语料里还存在 `JUDGE_PAT(fun_78_125K:st, fun_78_125K:sp)`
+//   这种 `module:label` 写法（module = SPM_PATTERN 名，label = 该 pattern 块内定义的
+//   label）。这两半是完全不同的名空间：`st`/`sp` 这类**模块内** label **不进**
+//   `.rpt` 的 Label Name 表（真实 AD7760.rpt 只有 6 条模块级标签），只存在于 `.pat`
+//   源码里，且写作**单冒号** `st:`（ls299 系则写双冒号 `OS_st::`）。
+//
+// 【为什么要位置感知】把全部模块内 label 不加区分地灌进词汇表，会在任意位置弹出
+//   别的模块的 label —— 对 `.pln` 读者是纯噪声。`module:` 之后该给的只有该模块的
+//   label，所以候选集必须**按作用域收窄**，这要求补全侧知道光标前的 `module:` 上下文。
+//
+// 【本层只做两件纯文本事】① 从 .pat 文本解出 `module → 块内 label`；② 从「光标前
+//   的文本」解出作用域名。读盘、路径解析、弹窗都在宿主 / Editor 侧（与批次 146 同分层）。
+// ---------------------------------------------------------------------------
+struct PatModule {
+    std::string              name;    // SPM/APM/RPM_PATTERN 的首个实参
+    std::vector<std::string> labels;  // 该块内行首 label（去重、保序）
+};
+
+// 从 `.pat` 源文本解出每个 pattern 块的名字与其**块内** label。
+//
+// 【块头】行首标识符为 SPM_PATTERN / APM_PATTERN / RPM_PATTERN（手册 §3.4 明文；
+//   RPM_PATTERN 是旧名，MCP9600 的 .pat 注释写明已被 SPM_PATTERN 取代，但仍认）。
+//   模块名取紧跟其后的 `(` 内第一个标识符（`SPM_PATTERN(func_run_DBL, DBL)` 的
+//   第二实参是模式，不是名字）。仅在**大括号深度为 0** 时认块头 —— 于是没有 `{ }`
+//   的畸形写法也不会把后续内容误挂到上一个模块上。
+//
+// 【块内 label】大括号深度 ≥ 1 的行上取**行首** 标识符 + 可选空白 + **单冒号**
+//   （`st:`、`sp :`）。跑在 BlankComments 抹平层上，于是块注释里的 `History:`（真实
+//   MCP9600/func.pat 存在）不会混进来。「行首 + 至少一层大括号」两道闸把向量行
+//   （以 `*` 起头）、HEADER 行、以及 `[XA:0,…]` 里的冒号（不在行首）全部排除。
+//   真实语料逐条核对：AD7760 的 `st:`/`sp :`/`AA:`、ALPG 的 `wadd_10:`/`BF_ST:`/
+//   `WK_ST:` 全部命中，无一误抽。
+//
+// 【批次 148 修正：双冒号 `IDENT::` **不算**模块内 label】这是本批最重要的一处口径
+//   修正。`.pat` 的两种定义语法对应**两个不同名空间**，真实语料两侧都验证过：
+//     · `IDENT:`  （单冒号）= **模块内** label → `.pln` 必须写 `module:IDENT`
+//       实证：AD7760 的 `st:`/`sp:` 只出现在 `JUDGE_PAT(fun_78_125K:st, …)`；且
+//       `AD7760.rpt` 的 Label Name 表**只有** 6 条模块级标签，`st`/`sp` 一个都没有。
+//     · `IDENT::` （双冒号）= **计划级/全局** label → `.pln` 直接写裸名 `IDENT`
+//       实证：ls299 的 `OS_st::`/`clr_st::` 在 `.pln` 里写成 `JUDGE_PAT(OS_st, OS_sp)`、
+//       `JUDGE_PAT(clr_st, load_sp)`（**全语料 0 处** `::` 出现在 `.pln`）；且这些名字
+//       **都**进了 `.rpt` 的 Label Name 表。
+//   于是把 `::` 也当模块内 label 会给出 `func_pat:OS_st` 这种**永远编译不过**的候选
+//   （`OS_st` 是全局名，不能也不该被模块限定）—— 属"错报"，必须排除。全局 label 由
+//   `ExtractPatLabels`（只认 `::`）与 `.label` 文件走**平铺**词表，不归这里管。
+//
+// 【去重与顺序】模块内 label 去重保序；模块按出现顺序排列（同名模块由宿主合并）。
+std::vector<PatModule> ExtractPatModules(const std::string& patText);
+
+// text[0, pos) 上，若 pos 紧跟在 `IDENT:` 之后，返回 IDENT；否则空串。
+//
+// 【只认单冒号、且冒号必须紧贴 pos】用于补全时分词：`fun_78_125K:` 之后打 `s`，
+//   就能从「`s` 之前是 `:`、`:` 之前是标识符」解出作用域 `fun_78_125K`。
+//   标识符口径同 IsSymbolName（1~64、IsIdStart 开头、全 IsIdChar）。
+//   刻意不认 `::`（全语料 `.pln` 里 0 处出现）与冒号前带空白的 `IDENT :`（真实 .pln
+//   无此写法）—— 三目运算符 `a ? b : c` 的 `:` 会命中，但那只是把 `b` 当成作用域名，
+//   宿主查不到同名模块就退回普通补全，属"少报"而非"错报"。
+std::string ScopedNameBefore(const std::string& text, std::size_t pos);
+
+// ---------------------------------------------------------------------------
+// 批次 148：`.label` 文件 —— 计划级（plncmp 输出）的**裸名 label 权威清单**
+//
+// 【它是什么】`plncmp <plan>.pln` 会在 `<plan 同目录>/.<plan 名>/<plan 名>.label`
+//   产出这个文件（与生成的 `<plan>_body.cpp` 同一目录）。它是**计划自己**的 label
+//   清单，即"这份 `.pln` 里可以裸名引用的全部 label"。7 个真实工程逐一核对，它**逐字
+//   等于** `.pln` 里 `JUDGE_PAT` 的实参集合：
+//     · SCAN 12/12、MCP9600 6/6、ALPG 20/20、ls299_tutorial 16/16、open_short 15/15
+//   因此它比 `.rpt` 的 Label Name 表**更贴合本工程**（`.rpt` 是 pattern 级、且可能陈旧）。
+//
+// 【为什么比 .rpt 更值得信】ALPG 实测：`.rpt` 缺 `ALPG_Walking`/`__ALPG_Walking`
+//   （那份 `.rpt` 是旧构建留下的，甚至不含 `ALPG_Walking_pat.pat`），而 `.label` 有它们，
+//   `.pln` 也正是用它们 —— 批次 146 靠 `.rpt` 时 ALPG 只命中 18/20，`.label` 补齐到 20/20。
+//
+// 【格式：定长记录，不是空白分隔的纯文本】4 份真实 `.label` 的字节核对（2026-10-05）：
+//     `count`(1B) + `00`(1B) + `count` × 64B 定长记录；记录内是名字 + `\0` 右填充。
+//   实证：open_short `0F 00 4F 53 5F 73 74 00…`（count=15）；ALPG `14 00 "contact"…`
+//   （count=20）；AD7760 `06 00 "fun_78_125K_C_…"`（count=6）；SCAN `0C 00 "OS_st"…`
+//   （count=12）。字节数逐一吻合 `2 + count×64`（962=2+15×64 等）。
+//   ⇒ 分隔符**是 `\0`**（不是空格）；名字之间靠定长记录 + NUL 填充隔开。
+//   解析口径：跳过 2 字节头（当 `text[1] == '\0'` 时；否则当纯文本从头扫，容错），
+//   再按"标识符字符的最长游程"切名 —— NUL / 空白 / 任何非标识符字节都是分隔符。
+//   非 IsSymbolName 的碎片丢掉（`count` 字节值 < 0x20 时天然被跳过）。
+//
+// 【⚠️ 模块内 label 在这里是 CRAFT 拼接名，宿主必须剔除】`.label` 是**计划级 C 标识符**
+//   清单：模块内 label（`.pat` 单冒号 `st:`）会被拼成 `<module>_C_<label>`
+//   （AD7760 实测 `fun_78_125K_C_st`）。这种名字在 `.pln` 里**不是合法 token**，
+//   剔除判据由宿主用「已知模块 × 已知 label」精确匹配，本层只负责切名。
+// ---------------------------------------------------------------------------
+std::vector<std::string> ExtractLabelFileNames(const std::string& labelText);
 
 // ---------------------------------------------------------------------------
 // 批次 106：状态栏「定义」提示要显示的那行文本（**按码点边界截断**）

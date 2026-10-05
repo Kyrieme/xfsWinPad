@@ -4,6 +4,7 @@
 #include "../language/LanguageMap.h"
 #include "../language/ChromaSignature.h"  // 批次 73：Chroma 3380 签名提示（纯解析器）
 #include "../language/Chroma3380Complete.h" // 批次 77：语句名补全的候选生成（纯函数）
+#include "../language/Chroma3380Diagnostics.h" // 批次 147：ScopedNameBefore（纯函数）
 #include "../language/XfsLexer.h"        // 批次 72：自研 ATE 词法器工厂
 #include "../language/XfsLexerStyles.h"  // 批次 72：ATE 族样式号（SCE_ATEP_* 等）
 #include "../settings/Settings.h"
@@ -1154,6 +1155,29 @@ void Editor::HandleAutocompleteChar(unsigned int ch) {
     const sptr_t pos = Send(SCI_GETCURRENTPOS);
     const sptr_t start = Send(SCI_WORDSTARTPOSITION, pos, 1);
     const int len = (int)(pos - start);
+    // 批次 147：`module:label` 的位置感知补全。**必须排在语句名补全之前** ——
+    // 两者都在 Chroma 三支下、都可能被 `IDENT:` 后的这次按键命中，而本分支的
+    // 判据（光标前恰好是 `IDENT:` 且 IDENT 是已知模块）严格更具体，让泛化的
+    // 语句补全先跑会把它顶掉。门槛取 `len >= 1`（而不是下面词汇补全的 3）——
+    // `st`/`sp` 只有 1~3 字符，卡在 3 字符门槛下这个功能就永远弹不出来。
+    if (IsChroma3380Lexer(lexerName_) && scopedWords_ && len >= 1 && len <= 64 &&
+        !Send(SCI_AUTOCACTIVE)) {
+        // 取冒号前一小段做作用域判定。窗口而不是全文：这一步每次按键都跑，
+        // 代价必须与文档大小无关；标识符上限 64 字节（IsSymbolName 同口径），
+        // 取 128 足够把 `IDENT:` 整个包进来。
+        constexpr sptr_t kScopeCtx = 128;
+        const sptr_t lo = (start > kScopeCtx) ? start - kScopeCtx : 0;
+        std::string ctx;
+        GetTextRangeUtf8((long long)lo, (size_t)(start - lo), ctx);
+        // pos 传 ctx.size()（= start），因为判据是"光标前（此处即 word start 前）
+        // 紧贴一个 IDENT:"；若传 pos 则会带上已键入的这截 label，判据必失。
+        const std::string scope = chroma3380::ScopedNameBefore(ctx, ctx.size());
+        if (!scope.empty()) {
+            std::string scopePrefix;
+            GetTextRangeUtf8((long long)start, (size_t)len, scopePrefix);
+            if (ShowScopedAutocomplete(scope, scopePrefix)) return;
+        }
+    }
     // 批次 77：语句名补全（只有 Chroma 三支、只有语句起始位置）。
     // 放在下面 len<3 的既有门槛**之前**，是因为它自己的前缀门槛更低（2 字符）；
     // 但它不改下面任何一行 —— 返回 false 时词汇补全那条路一字不变，所以对
@@ -1545,6 +1569,44 @@ bool Editor::HandleStatementCompletion(sptr_t wordStart, const std::string& pref
     // 这里 lenEntered == prefix.size() == caret - wordStart），所以两者相等
     // 就是"这次完成确实来自我们这个下拉"的凭据。
     stmtCompleteStart_ = wordStart;
+    return true;
+}
+
+// 批次 147：`module:label` 的位置感知补全（见 Editor.h 的 ShowScopedAutocomplete）。
+// 候选只来自 provider 给的**本模块 label**，不走关键词/文档词汇/跨标签词汇 ——
+// 这正是"位置感知"的意义：`fun_78_125K:` 后面只可能接该 pattern 块里定义的
+// `st`/`sp`/`AA`，混进全局词汇只会是噪声。
+bool Editor::ShowScopedAutocomplete(const std::string& scope,
+                                    const std::string& prefix) {
+    std::set<std::string> words;
+    if (!scopedWords_ || !scopedWords_(scope, words)) return false;
+    // 过滤规则与 ShowAutocomplete 的 match 同口径：前缀命中且不与已输入完全相同
+    // （否则"接受"会变成原地重打）。大小写不敏感 —— `SC_ORDER_PERFORMSORT` +
+    // AUTOCSETIGNORECASE 与 Scintilla 自己的过滤保持一致，避免出现"我们筛进去、
+    // 它按前缀又滤掉"的空列表。
+    std::string list;
+    int shown = 0;
+    for (const std::string& w : words) {
+        if (w.size() < prefix.size()) continue;
+        if (_strnicmp(w.c_str(), prefix.c_str(), prefix.size()) != 0) continue;
+        if (_stricmp(w.c_str(), prefix.c_str()) == 0) continue;
+        if (!list.empty()) list += ' ';
+        list += w;
+        if (++shown >= 100) break;
+    }
+    // 下拉框会顶掉气泡（Scintilla 硬约束），先把我们的气泡记账清掉。
+    CancelSignatureHint();
+    if (shown > 0) {
+        Send(SCI_AUTOCSETSEPARATOR, ' ');
+        Send(SCI_AUTOCSETIGNORECASE, 1);
+        Send(SCI_AUTOCSETAUTOHIDE, 1);
+        Send(SCI_AUTOCSETDROPRESTOFWORD, 0);
+        Send(SCI_AUTOCSETORDER, SC_ORDER_PERFORMSORT);
+        Send(SCI_AUTOCSETMAXHEIGHT, 8);
+        Send(SCI_AUTOCSHOW, (uptr_t)prefix.size(), (LPARAM)list.c_str());
+    }
+    // 作用域已识别 → 本次按键由本分支接管（即使无候选也不让位给语句补全：
+    // `已知模块:` 后面本来就不该出现语句名，弹出来才是错的）。
     return true;
 }
 

@@ -1076,6 +1076,32 @@ std::vector<DecFileRef> FindDecFileRefs(const std::string& text) {
     return out;
 }
 
+// 批次 146：LOAD_PAT 引用的路径（跨文件补全第二段的入口）。与 FindDecFileRefs
+// 同构 —— 差别只在关键字与"不判扩展名"（见头文件）。用 LeadingKeywordIs 而非
+// Upper(substr) 是为了不在这条会被 .pln 每轮编辑调用的路径上产生临时串。
+std::vector<PatFileRef> FindPatFileRefs(const std::string& text) {
+    std::vector<PatFileRef> out;
+    const std::vector<LineSpan> lines = SplitLines(text);
+    bool inBlock = false;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string m = BlankComments(text, lines[i].begin, lines[i].end, inBlock);
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(m, 0, m.size(), col, len)) continue;
+        if (!LeadingKeywordIs(m, col, len, "LOAD_PAT")) continue;
+        const std::size_t q1 = m.find('"', col + len);
+        if (q1 == kNone) continue;                       // 没引号 → 跳过
+        const std::size_t q2 = m.find('"', q1 + 1);
+        if (q2 == kNone || q2 <= q1 + 1) continue;       // 没闭合 / 空路径 → 跳过
+        PatFileRef r;
+        r.line = (int)i;
+        r.start = (int)(q1 + 1);
+        r.length = (int)(q2 - q1 - 1);
+        r.path = text.substr(lines[i].begin + q1 + 1, (std::size_t)r.length);
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
 bool DecDeclaresApas(const std::string& decText) {
     const std::vector<LineSpan> lines = SplitLines(decText);
     bool inBlock = false;
@@ -1230,6 +1256,193 @@ std::vector<DecSymbolLoc> ExtractDecSymbolLocations(const std::string& decText) 
             addName(code[k].substr(c3, l3), k, c3);
         }
         i = endLine + 1;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 146：跨文件补全第二段 —— .rpt（首选）/ .pat（兜底）两支 label 抽取
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 符号名口径（与 .dec 抽取的 addName 同一套）：1~64 字符、IsIdStart 开头、全 IsIdChar。
+bool IsSymbolName(const std::string& s) {
+    if (s.empty() || s.size() > 64) return false;
+    if (!IsIdStart((unsigned char)s[0])) return false;
+    for (char c : s) if (!IsIdChar((unsigned char)c)) return false;
+    return true;
+}
+
+} // namespace
+
+std::vector<std::string> ExtractRptLabels(const std::string& rptText) {
+    static const char kLabelPrefix[]  = "Label Name :";
+    static const char kModuleMarker[] = "Module Name";
+    constexpr std::size_t kLabelPrefixLen = sizeof(kLabelPrefix) - 1;
+
+    std::vector<std::string> out;
+    std::set<std::string> uniq;
+    const std::vector<LineSpan> lines = SplitLines(rptText);
+    for (const LineSpan& L : lines) {
+        std::size_t b = L.begin, e = L.end;
+        // 真实 .rpt 这段是顶格的；这里宽容地跳过行首空白，不改变任何真实行为。
+        while (b < e && (rptText[b] == ' ' || rptText[b] == '\t')) ++b;
+        if (e - b < kLabelPrefixLen) continue;
+        if (rptText.compare(b, kLabelPrefixLen, kLabelPrefix) != 0) continue;
+
+        const std::size_t nb = b + kLabelPrefixLen;      // 名字起点
+        std::size_t ne = e;
+        // 切到字面量 `Module Name`：字段可能**紧贴**其后（`scan_9thFail_patModule Name`），
+        // 按空白切会多带一截。标签只能是标识符、不含空格，故不会误切。
+        const std::size_t mk = rptText.find(kModuleMarker, nb);
+        if (mk != kNone && mk < ne) ne = mk;
+        while (ne > nb && (rptText[ne - 1] == ' ' || rptText[ne - 1] == '\t' ||
+                           rptText[ne - 1] == '\r')) --ne;
+        if (ne <= nb) continue;
+
+        std::string name = rptText.substr(nb, ne - nb);
+        if (!IsSymbolName(name)) continue;
+        if (!uniq.insert(name).second) continue;         // 同名只记第一次
+        out.push_back(std::move(name));
+    }
+    return out;
+}
+
+std::vector<std::string> ExtractPatLabels(const std::string& patText) {
+    std::vector<std::string> out;
+    std::set<std::string> uniq;
+    const std::vector<LineSpan> lines = SplitLines(patText);
+    bool inBlock = false;
+    for (const LineSpan& L : lines) {
+        // 跑在抹平层上：块注释 / `#` 行注释里的 `label::` 与真定义同形，只认原文会多给候选
+        // （行尾那 8 处 `//sfr_st::` 本来就被"行首"规则挡掉了，抹平层是第二道闸）。
+        const std::string m = BlankComments(patText, L.begin, L.end, inBlock);
+        std::size_t col = 0, len = 0;
+        if (!LeadingIdentIn(m, 0, m.size(), col, len)) continue;   // 必须是行首标识符
+        std::size_t p = col + len;
+        while (p < m.size() && (m[p] == ' ' || m[p] == '\t')) ++p; // `iil_st ::` 的空格
+        if (p + 2 > m.size() || m[p] != ':' || m[p + 1] != ':') continue;
+
+        std::string name = m.substr(col, len);
+        if (!IsSymbolName(name)) continue;
+        if (!uniq.insert(name).second) continue;
+        out.push_back(std::move(name));
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 147：`module:label` 位置感知补全的两支纯文本解析（说明见头文件同节）
+// ---------------------------------------------------------------------------
+
+std::vector<PatModule> ExtractPatModules(const std::string& patText) {
+    std::vector<PatModule> out;
+    const std::vector<LineSpan> lines = SplitLines(patText);
+    bool inBlock = false;
+    int  depth = 0;      // 大括号深度（抹平层上计数，注释里的括号不算）
+    int  cur   = -1;     // 当前模块下标（-1 = 不在任何 pattern 块内）
+
+    for (const LineSpan& L : lines) {
+        const std::string m = BlankComments(patText, L.begin, L.end, inBlock);
+
+        // 深度 0 时试认块头（含"上一行是块头、本行才出现 `{`"的中间态）。
+        // 认不到**不重置** cur —— 此时 cur 要么在等 `{`，要么本来就在块外。
+        if (depth == 0) {
+            std::size_t col = 0, len = 0;
+            if (LeadingIdentIn(m, 0, m.size(), col, len) &&
+                (LeadingKeywordIs(m, col, len, "SPM_PATTERN") ||
+                 LeadingKeywordIs(m, col, len, "APM_PATTERN") ||
+                 LeadingKeywordIs(m, col, len, "RPM_PATTERN"))) {
+                std::size_t p = col + len;
+                while (p < m.size() && (m[p] == ' ' || m[p] == '\t')) ++p;
+                if (p < m.size() && m[p] == '(') {
+                    ++p;                                        // 跳过 `(`
+                    while (p < m.size() && (m[p] == ' ' || m[p] == '\t')) ++p;
+                    std::size_t q = p;
+                    while (q < m.size() && IsIdChar((unsigned char)m[q])) ++q;
+                    // 只取 `(` 内的**第一个**标识符：`SPM_PATTERN(f, DBL)` 的
+                    // 第二实参是模式，不是模块名。
+                    if (q > p) {
+                        std::string name = m.substr(p, q - p);
+                        if (IsSymbolName(name)) {
+                            PatModule pm;
+                            pm.name = std::move(name);
+                            out.push_back(std::move(pm));
+                            cur = (int)out.size() - 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        bool closed = false;
+        for (std::size_t k = 0; k < m.size(); ++k) {
+            if (m[k] == '{') ++depth;
+            else if (m[k] == '}' && depth > 0) {
+                --depth;
+                if (depth == 0) closed = true;   // 本行把最外层块关上了
+            }
+        }
+
+        // 只在块体里收 label（块头行首是关键字，后面跟 `(`，天然不含 `:`）
+        if (cur >= 0 && depth >= 1) {
+            std::size_t col = 0, len = 0;
+            if (LeadingIdentIn(m, 0, m.size(), col, len)) {
+                std::size_t p = col + len;
+                while (p < m.size() && (m[p] == ' ' || m[p] == '\t')) ++p;  // `sp :` 的空格
+                // 【批次 148】只认**单冒号**：`.pat` 里 `IDENT:` 是模块内 label，
+                // 而 `IDENT::` 是计划级/全局 label（全语料 `.pln` 里 `::` 出现 0 次，
+                // 且这些名字都以裸名形式写进 `.pln` 的 `JUDGE_PAT`）。若把 `::` 也收进来，
+                // 会产出 `func_pat:OS_st` 这种永远编译不过的候选 —— 属错报，必须排除。
+                if (p < m.size() && m[p] == ':' &&
+                    (p + 1 >= m.size() || m[p + 1] != ':')) {
+                    std::string name = m.substr(col, len);
+                    if (IsSymbolName(name)) {
+                        std::vector<std::string>& vec = out[(std::size_t)cur].labels;
+                        bool dup = false;
+                        for (const std::string& s : vec) if (s == name) { dup = true; break; }
+                        if (!dup) vec.push_back(std::move(name));
+                    }
+                }
+            }
+        }
+        if (closed) cur = -1;                     // 块关闭 → 退出该模块
+    }
+    return out;
+}
+
+std::string ScopedNameBefore(const std::string& text, std::size_t pos) {
+    if (pos == 0 || pos > text.size()) return {};
+    if (text[pos - 1] != ':') return {};                     // 冒号必须紧贴 pos
+    const std::size_t e = pos - 1;                           // 标识符结束（不含冒号）
+    if (e == 0 || text[e - 1] == ':') return {};             // 刻意不认 `::`
+    std::size_t b = e;
+    while (b > 0 && IsIdChar((unsigned char)text[b - 1])) --b;
+    if (b == e) return {};
+    if (!IsIdStart((unsigned char)text[b])) return {};
+    std::string name = text.substr(b, e - b);
+    if (!IsSymbolName(name)) return {};
+    return name;
+}
+
+// 批次 148：`.label` 文件解析（说明与字节取证见头文件同节）。
+// 真实格式是 `count`(1B) + `00`(1B) + count×64B 定长记录，名字以 `\0` 右填充；
+// 故**分隔符是 `\0`**、不是空格。这里按"标识符字符的最长游程"切名：NUL / 空白 /
+// 任何非标识符字节都自然成为分隔符，对纯文本形态也容错。
+std::vector<std::string> ExtractLabelFileNames(const std::string& labelText) {
+    std::vector<std::string> out;
+    std::set<std::string> uniq;
+    // 有 2 字节头（count + NUL）时跳过；否则当纯文本从头扫（容错）。
+    std::size_t i = (labelText.size() >= 2 && labelText[1] == '\0') ? 2 : 0;
+    while (i < labelText.size()) {
+        if (!IsIdChar((unsigned char)labelText[i])) { ++i; continue; }  // 分隔符 / 头字节
+        const std::size_t b = i;
+        while (i < labelText.size() && IsIdChar((unsigned char)labelText[i])) ++i;
+        std::string name = labelText.substr(b, i - b);   // 最长游程（**不剥**前缀）
+        if (!IsSymbolName(name)) continue;               // 数字开头 / 超长 → 整段丢
+        if (!uniq.insert(name).second) continue;
+        out.push_back(std::move(name));
     }
     return out;
 }

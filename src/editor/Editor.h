@@ -202,6 +202,10 @@ public:
     // 列表项右侧带章节号（`FORCE_V_MLDPS?4.9.4`，只显示不插入）。返回 true 表示
     // 下拉框已出、本次按键不再走普通词汇补全。
     bool HandleStatementCompletion(sptr_t wordStart, const std::string& prefix);
+    // 批次 147：`module:label` 的位置感知补全。scope 是光标前 `IDENT:` 的 IDENT，
+    // prefix 是冒号后已键入的那截。返回 true = scope 是已知模块（本次按键由本分支
+    // 接管）；false = 不认识 → 交回后面的语句/词汇补全。只在 Chroma 三支下调用。
+    bool ShowScopedAutocomplete(const std::string& scope, const std::string& prefix);
     // 批次 78：Scintilla 在**补全项已写进文档之后**发的 SCN_AUTOCCOMPLETED。
     // 语句名补全的"续动作"（补 `(` + 出签名提示）只能挂在这里 ——
     // SCN_AUTOCSELECTION(2022) 是在 NotifyParent 里、AutoCompleteInsert 之前发的，
@@ -218,6 +222,15 @@ public:
     // 批次 31：跨标签词汇源（Workspace 注入；每次弹出候选时回调重建）
     void SetExtWordsProvider(std::function<void(std::set<std::string>&)> cb) {
         extWords_ = std::move(cb);
+    }
+
+    // 批次 147：`module:label` 的**位置感知**词源（Workspace 注入）。
+    // 回调语义：scope 是已知模式模块时填 out 并返回 true；不认识则返回 false
+    // （此时本分支让位给后面的语句/词汇补全，功能不被吞掉）。
+    // 只对 Chroma 三支词法器生效，且只在光标前恰好是 `IDENT:` 时触发。
+    void SetScopedWordsProvider(
+            std::function<bool(const std::string&, std::set<std::string>&)> cb) {
+        scopedWords_ = std::move(cb);
     }
 
     // --- 批次 103：Chroma 3380 语句的**悬停气泡** ------------------------------
@@ -257,6 +270,8 @@ private:
     std::set<std::string> wordCache_;    // 文档词汇缓存（每次触发重建）
     bool wordCacheValid_ = false;        // 保留字段（暂无失效路径）
     std::function<void(std::set<std::string>&)> extWords_;   // 跨标签词汇源
+    // 批次 147：作用域词汇源（`module:` 后只列该模块的 label），见 setter 注释。
+    std::function<bool(const std::string&, std::set<std::string>&)> scopedWords_;
     bool autoClose_ = true;
     bool braceExpand_ = true;
     bool largeFile_ = false;

@@ -29,6 +29,7 @@
 #include "../theme/Styler.h"
 #include <shlobj.h>
 #include <fstream>
+#include <map>
 #include <set>
 #include "../theme/Theme.h"
 #include "../workspace/Workspace.h"
@@ -145,6 +146,214 @@ std::vector<std::string> MergeDecSymbols(const std::vector<std::string>& decText
             if (out.size() >= 4096) return out;
             if (uniq.insert(s).second) out.push_back(std::move(s));
         }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 146：跨文件补全第二段 —— .pat label 词源（.pln 的 JUDGE_PAT 实参）
+//
+// 词源两条路（.rpt 优先 / .pat 兜底）的取证与取舍见 Chroma3380Diagnostics.h 的
+// PatFileRef 一节。这里只补"为什么按 .ppo 逐个决定"：一个 .pln 可能 LOAD_PAT 多个
+// .ppo，某个 .ppo 有编译报告就吃它的精确集，没有才退回扫同目录 .pat —— 于是
+// "多给候选"的代价只在**这个 .ppo 确实没编过**时承担，不是整份 .pln 一刀切。
+// ---------------------------------------------------------------------------
+enum class PatLabelSource { Rpt, Pat };
+struct PatLabelSourceFile {
+    std::filesystem::path path;
+    PatLabelSource        kind;
+};
+
+// 「.ppo 路径解析」——批次 147 抽自 ResolvePatLabelSources 以便复用。
+// LOAD_PAT 的路径字节来自 Chroma 文件内容（真实文件是 ANSI/GBK），按 ACP 还原成宽
+// 路径，相对路径相对**本文档所在目录**解析（与 ResolveDecFilePaths 同口径）。
+// 解不出 / 上限 64 —— 静默跳过（真实工程只有 1 个 LOAD_PAT）。
+std::vector<std::filesystem::path> ResolvePatPpoPaths(const Document& d,
+                                                      const std::string& text) {
+    std::vector<std::filesystem::path> out;
+    for (const chroma3380::PatFileRef& ref : chroma3380::FindPatFileRefs(text)) {
+        if (out.size() >= 64) break;
+        const int wl = ::MultiByteToWideChar(CP_ACP, 0, ref.path.c_str(),
+                                             (int)ref.path.size(), nullptr, 0);
+        if (wl <= 0) continue;
+        std::wstring wref((std::size_t)wl, L'\0');
+        ::MultiByteToWideChar(CP_ACP, 0, ref.path.c_str(), (int)ref.path.size(),
+                              wref.data(), wl);
+        std::filesystem::path p(std::move(wref));
+        if (p.is_relative()) p = d.path.parent_path() / p;
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+// 「读哪些文件、各用哪支抽取」的清单。
+// 【首选】`<dir>/<stem>.ppo` → `<dir>/<stem>/<stem>.rpt`（8 个真实工程样本 100% 成立）。
+// 【兜底】该 .ppo **同目录**（非递归）下的全部 `*.pat`；去重按绝对路径。
+// 找不到目录 / 枚举失败 / 路径解不出 —— 一律静默跳过（与 .dec 链路同口径：宁漏不误）。
+std::vector<PatLabelSourceFile> ResolvePatLabelSources(const Document& d,
+                                                       const std::string& text) {
+    std::vector<PatLabelSourceFile> out;
+    std::set<std::wstring> seen;
+    for (const std::filesystem::path& p : ResolvePatPpoPaths(d, text)) {
+        if (out.size() >= 64) break;
+
+        const std::filesystem::path rpt =
+            p.parent_path() / p.stem() /
+            std::filesystem::path(p.stem().wstring() + L".rpt");
+        std::error_code e1;
+        if (std::filesystem::is_regular_file(rpt, e1)) {
+            if (seen.insert(rpt.wstring()).second)
+                out.push_back({rpt, PatLabelSource::Rpt});
+            continue;                                 // .rpt 命中 → 不再为它兜底
+        }
+
+        std::error_code e2;
+        for (std::filesystem::directory_iterator it(p.parent_path(), e2), end;
+             !e2 && it != end; it.increment(e2)) {
+            if (out.size() >= 64) break;
+            std::error_code e3;
+            if (!it->is_regular_file(e3)) continue;
+            const std::filesystem::path q = it->path();
+            // 扩展名大小写不敏感（Windows 磁盘上的 .PAT 也该认）。
+            if (_wcsicmp(q.extension().c_str(), L".pat") != 0) continue;
+            if (seen.insert(q.wstring()).second) out.push_back({q, PatLabelSource::Pat});
+        }
+    }
+    return out;
+}
+
+// 按来源分派抽取、去重合并；上限 4096（与 MergeDecSymbols 同一套防御性天花板）。
+std::vector<std::string> MergePatLabels(const std::vector<PatLabelSourceFile>& files) {
+    std::vector<std::string> out;
+    std::set<std::string> uniq;
+    for (const PatLabelSourceFile& f : files) {
+        const std::string body = ReadSmallTextFile(f.path);
+        if (body.empty()) continue;
+        const std::vector<std::string> names =
+            (f.kind == PatLabelSource::Rpt) ? chroma3380::ExtractRptLabels(body)
+                                            : chroma3380::ExtractPatLabels(body);
+        for (const std::string& s : names) {
+            if (out.size() >= 4096) return out;
+            if (uniq.insert(s).second) out.push_back(s);
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 147：跨文件补全第三段 —— `module:label` 的**位置感知**补全
+//
+// 与前两段（.dec 符号 / .pat label 平铺词表）不同，这里补的是"模块名: 之后"
+// 那半个词：`JUDGE_PAT(fun_78_125K:st, …)` 里 `:` 后只该列 **fun_78_125K 这个模式
+// 块内**定义的 label（`st`/`sp`/`AA`），而不是全局 label 或 dec 符号。
+//
+// 【词源为什么恒取 .pat 源、不看 .rpt】模块内 label 不在 .rpt 的 `Label Name` 表里
+//   —— AD7760.rpt 只有 6 条模块级标签（fun_78_125K / __fun_78_125K …），`st`/`sp`
+//   /`AA` 一个都没有；它们只写在 .pat 源码的块体里。故这条链路不受 .rpt 是否命中
+//   影响，对每个 .ppo **恒**扫其同级目录的 `*.pat`（与批次 146 的兜底路径同一枚举）。
+// 【候选集口径】模块名按**源码原样**（大小写敏感，与 `.pln` 引用逐字对齐）；同名模块
+//   出现在多个 .pat 时取 label 并集（保序）。上限 4096（同 MergeDecSymbols）。
+// ---------------------------------------------------------------------------
+std::vector<std::filesystem::path> ResolvePatModuleSources(const Document& d,
+                                                           const std::string& text) {
+    std::vector<std::filesystem::path> out;
+    std::set<std::wstring> seen;
+    for (const std::filesystem::path& p : ResolvePatPpoPaths(d, text)) {
+        if (out.size() >= 64) break;
+        std::error_code e2;
+        for (std::filesystem::directory_iterator it(p.parent_path(), e2), end;
+             !e2 && it != end; it.increment(e2)) {
+            if (out.size() >= 64) break;
+            std::error_code e3;
+            if (!it->is_regular_file(e3)) continue;
+            const std::filesystem::path q = it->path();
+            if (_wcsicmp(q.extension().c_str(), L".pat") != 0) continue;   // .PAT 也认
+            if (seen.insert(q.wstring()).second) out.push_back(q);
+        }
+    }
+    return out;
+}
+
+std::map<std::string, std::vector<std::string>> MergePatModules(
+        const std::vector<std::filesystem::path>& files) {
+    std::map<std::string, std::vector<std::string>> out;
+    for (const std::filesystem::path& f : files) {
+        const std::string body = ReadSmallTextFile(f);
+        if (body.empty()) continue;
+        for (chroma3380::PatModule& m : chroma3380::ExtractPatModules(body)) {
+            std::vector<std::string>& dst = out[m.name];
+            for (std::string& s : m.labels) {
+                if (dst.size() >= 4096) break;
+                if (std::find(dst.begin(), dst.end(), s) == dst.end())
+                    dst.push_back(std::move(s));
+            }
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 批次 148：跨文件补全第四段 —— `.label` 文件（计划级 label 权威清单）
+//
+// 【路径】`plncmp <plan>.pln` 会在 `<plan 同目录>/.<plan 名>/<plan 名>.label` 产出
+//   这个文件（性质与 7 工程取证见 Chroma3380Diagnostics.h 的 ExtractLabelFileNames
+//   一节）。只对 `.pln`（Plan）有意义 —— `.pat` 没有"计划级"这个概念。
+// 【⚠️ 批次 149：`.label` 存在时**独占** patLabels，不与 `.rpt`/`.pat` 取并集】
+//   批次 148 曾把两源取并集，实测会带进**两类噪声**（真实 `.pln` 逐字核对）：
+//     ① 模块内 label：ALPG 的 `.rpt` 有 `os_st`/`os_sp`（`Module Name : contact`），
+//        它们在 `.pln` 里必须写 `contact:os_st`，**裸名非法**；`.label` 也**不含**它们。
+//     ② 模块级 label：AD7760 的 `.rpt` 有 `fun_78_125K`/`__fun_78_125K` …，但该 `.pln`
+//        的 `JUDGE_PAT` **全是** `fun_78_125K:st` 形态（零个裸名），故这些裸名同样非法；
+//        `.label` 剔除 `_C_` 拼接名后**正好是 0**，与 `.pln` 完全吻合。
+//   对照 ALPG：`.pln` 的 20 个裸名实参与 `.label` 20 条**逐字相等**。
+//   ⇒ `.label` 是**计划自己**编译出的裸名清单，权威；有它就只用它（`宁可少报不可错报`：
+//     代价是「尚未写进 `.pln` 的新 label」不再提示，属可接受的少报）。
+//   没有 `.label`（非 .pln / 尚未 plncmp / 读失败）时才回退批次 146 的 `.rpt`+`.pat`。
+// 【必须剔除拼接名】`.label` 是计划级 **C 标识符**清单，模块内 label 会被 CRAFT 拼成
+//   `<module>_C_<label>`（AD7760 实测 `fun_78_125K_C_st`）。这种名字在 `.pln` 里不是
+//   合法 token，混进候选就是噪声。判据**精确**：用「已知模块 × 已知 label」拼出来逐字
+//   比对，**不靠** `_C_` 字样猜（`_C_` 也可能出现在合法名字里）。
+// ---------------------------------------------------------------------------
+std::filesystem::path ResolveLabelFilePath(const Document& d) {
+    if (!d.HasPath()) return {};
+    if (KindOfDocument(d) != chroma3380::ChromaFileKind::Plan) return {};
+    const std::wstring stem = d.path.stem().wstring();
+    if (stem.empty()) return {};
+    const std::filesystem::path p =
+        d.path.parent_path() / (L"." + stem) / (stem + L".label");
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(p, ec)) return {};
+    return p;
+}
+
+// 名字是否是"已知模块 × 已知 label"的 CRAFT 拼接名（`<module>_C_<label>`）。
+bool IsConcatenatedModuleLabel(
+        const std::string& name,
+        const std::map<std::string, std::vector<std::string>>& modules) {
+    for (const auto& kv : modules) {
+        const std::string prefix = kv.first + "_C_";
+        if (name.size() <= prefix.size()) continue;    // 至多是 `<module>_C_`，无 label 段
+        if (name.compare(0, prefix.size(), prefix) != 0) continue;
+        const std::string rest = name.substr(prefix.size());
+        for (const std::string& l : kv.second)
+            if (l == rest) return true;
+    }
+    return false;
+}
+
+// 读 `.label`、抽名、剔除拼接名，返回 `patLabels` 的裸名清单（上限 4096）。
+// `modules` 传当前文档的 patModuleLabels（必须先算好 —— 剔除要用它做精确匹配）。
+std::vector<std::string> ExtractPlanLabelNames(
+        const std::filesystem::path& labelFile,
+        const std::map<std::string, std::vector<std::string>>& modules) {
+    if (labelFile.empty()) return {};
+    const std::string body = ReadSmallTextFile(labelFile);
+    if (body.empty()) return {};
+    std::vector<std::string> out;
+    for (std::string& s : chroma3380::ExtractLabelFileNames(body)) {
+        if (out.size() >= 4096) break;
+        if (IsConcatenatedModuleLabel(s, modules)) continue;
+        out.push_back(std::move(s));
     }
     return out;
 }
@@ -3906,6 +4115,8 @@ std::vector<std::string> MainWindow::RefreshDecSymbols() {
     if (!wantsDec || d->editor.IsLargeFile()) {
         // 非 Chroma / 大文件：清空缓存（弹窗少一路词源，不是错）。
         d->decSymbols.clear();
+        d->patLabels.clear();
+        d->patModuleLabels.clear();
         defHints_.clear();
         RefreshDefinitionHint();
         return {};
@@ -3914,6 +4125,21 @@ std::vector<std::string> MainWindow::RefreshDecSymbols() {
     const std::string src = d->editor.GetTextUtf8();
     std::vector<std::string> decTexts = LoadReferencedDecTexts(*d, src);
     d->decSymbols = MergeDecSymbols(decTexts);
+
+    // 批次 147：跨文件补全第三段 —— `module:label` 的位置感知词源。模块内 label
+    // 不在 .rpt 里，只能从 .pat 源码抽（见 ResolvePatModuleSources 注释）。
+    // ⚠️ 必须**先于** patLabels 算：批次 148 用它剔除 `.label` 里的拼接名。
+    d->patModuleLabels = MergePatModules(ResolvePatModuleSources(*d, src));
+
+    // 批次 146/148/149：跨文件补全第二段 —— JUDGE_PAT 裸名实参的词源。
+    // 【批次 149：`.label` 存在时独占】它是计划自己 plncmp 出的裸名权威清单，与 `.pln`
+    //   逐字相等；批次 148 的并集会把 `.rpt` 的两类噪声（模块内 label / 模块级 label）
+    //   带进来（证据见 ResolveLabelFilePath 上方注释），故改为**存在即独占、缺失才回退**。
+    const std::filesystem::path labelFile = ResolveLabelFilePath(*d);
+    if (!labelFile.empty())
+        d->patLabels = ExtractPlanLabelNames(labelFile, d->patModuleLabels);
+    else
+        d->patLabels = MergePatLabels(ResolvePatLabelSources(*d, src));
 
     // 批次 106：同一批 .dec 再抽一次**带位置**的，喂状态栏「定义」提示。
     // 这里必须重抽（而不是从 decSymbols 反推），两个理由都不是洁癖：

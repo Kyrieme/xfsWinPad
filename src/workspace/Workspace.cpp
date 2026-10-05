@@ -368,7 +368,20 @@ void Workspace::WireExtWords(Document* d) {
         // 打开的标签里，上面的跨标签词汇源覆盖不到 —— 这正是这层缓存的增量。
         // 缓存由宿主随打开/切换/编辑防抖刷新，这里只读，不碰盘。
         for (const std::string& s : d->decSymbols) out.insert(s);
+        // 批次 146：被引用 .pat 的 label（.pln 的 JUDGE_PAT 实参词源），同上只读。
+        for (const std::string& s : d->patLabels) out.insert(s);
     });
+    // 批次 147：`module:label` 的位置感知词源。与上面的平铺词表不同 —— 只在
+    // 光标前恰好是 `IDENT:` 时被 Editor 问起，且只回答"这个 IDENT 是不是已知
+    // 的模式模块"。是 → 给出该模块内的 label 并返回 true（接管候选）；不是 →
+    // 返回 false，Editor 会照常走语句/词汇补全（功能不被吞）。
+    d->editor.SetScopedWordsProvider(
+        [d](const std::string& scope, std::set<std::string>& out) -> bool {
+            const auto it = d->patModuleLabels.find(scope);
+            if (it == d->patModuleLabels.end()) return false;
+            out.insert(it->second.begin(), it->second.end());
+            return true;
+        });
 }
 
 void Workspace::CollectOpenTabWords(std::set<std::string>& out,
