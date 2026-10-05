@@ -55,7 +55,7 @@
   <img class="logo" src="favicon.png" alt="xfsWinPad">
   <h1>xfsWinPad</h1>
   <p class="tagline">Windows 下的轻量级文本 / 代码编辑器 · 大文件秒开 · AI 助手 · 插件生态</p>
-  <span class="ver">v0.15.2 · 2026-10-05 · Windows 10/11 x64</span>
+  <span class="ver">v0.15.3 · 2026-10-05 · Windows 10/11 x64</span>
   <div class="downloads">
     <a class="btn btn-primary" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-setup.exe">⬇ 下载安装版（5.3 MB）</a>
     <a class="btn btn-ghost" href="https://github.com/Kyrieme/xfsWinPad/releases/latest/download/xfsWinPad-portable.zip">⬇ 下载便携版（2.4 MB）</a>
@@ -94,13 +94,23 @@
   <section>
     <h2>文件校验（SHA256）</h2>
     <p class="muted">xfsWinPad-setup.exe</p>
-    <p class="hash">86BD25F977F76207F74DCB6A3933BEF7A4BCB9620041C89D8FE8AC593114364E</p>
+    <p class="hash">E3A1B50E9523487FBF2D922107A4629BBF2E29925D3C3BB96FB0D3230BA88B8F</p>
     <p class="muted" style="margin-top:10px">xfsWinPad-portable.zip</p>
-    <p class="hash">59110D433E5110983A0E089CEF5E96D99CA54510EB50D9C6899CF0030F4245D6</p>
+    <p class="hash">CF97007699C3434E11DEA24CBFBF56FA2DFCDD3D4CF10A24778D147A52E9BC14</p>
   </section>
 
   <section>
     <h2>更新日志</h2>
+    <p><b>v0.15.3</b>（2026-10-05）</p>
+    <ul>
+      <li><b>修复：双击文件 / 「打开方式」打开时，不再顶掉上次的标签栏与会话</b>。
+        此前通过文件关联双击（或右键「以 xfsWinPad 打开」）打开一个文件时，程序会把它
+        当普通命令行参数处理，<b>直接跳过会话恢复</b>、只打开这一个文件；退出时又把这个
+        「只有一个标签」的工作区写回会话记录，导致<b>下次启动时原来的多标签、左右双视图
+        全都丢失</b>。现在这类 Shell 打开会<b>先恢复上次的标签与双视图，再把你打开的文件
+        叠加进去</b>。注：命令行直接传文件名（<code>xfsWinPad.exe 文件</code>）仍保持
+        「只开这个文件」的旧行为；<b>升级后需重新运行安装程序</b>，文件关联命令才会更新</li>
+    </ul>
     <p><b>v0.15.2</b>（2026-10-05）</p>
     <ul>
       <li><b>安装程序：文件关联把 <code>.csv</code> 加回候选（默认不勾选）</b>。
