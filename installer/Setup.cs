@@ -125,12 +125,13 @@ class Setup {
             string icon = "\"" + exe + "\",0";
 
             // ---- 右键菜单 (HKCU, 免管理员)：以 xfsWinPad 打开 ----
+            // `--open`：Shell 打开语义 = 先恢复上次会话（标签栏/双视图）再叠加该文件。
             using (RegistryKey shellKey = Registry.CurrentUser.CreateSubKey(
                        @"Software\Classes\*\shell\OpenWithxfsWinPad")) {
                 shellKey.SetValue("", "以 xfsWinPad 打开");
                 shellKey.SetValue("Icon", icon);
                 using (RegistryKey cmdKey = shellKey.CreateSubKey("command"))
-                    cmdKey.SetValue("", "\"" + exe + "\" \"%1\"");
+                    cmdKey.SetValue("", "\"" + exe + "\" --open \"%1\"");
             }
 
             // ---- 右键文件夹 → 作为项目工作区打开（批次 30）----
@@ -140,7 +141,7 @@ class Setup {
                 shellKey.SetValue("", "以 xfsWinPad 打开");
                 shellKey.SetValue("Icon", icon);
                 using (RegistryKey cmdKey = shellKey.CreateSubKey("command"))
-                    cmdKey.SetValue("", "\"" + exe + "\" \"%1\"");
+                    cmdKey.SetValue("", "\"" + exe + "\" --open \"%1\"");
             }
 
             // ---- .xfm 文件关联（双击直达宏加载）----
@@ -156,7 +157,7 @@ class Setup {
                 using (RegistryKey shellKey = appKey.CreateSubKey("shell"))
                     using (RegistryKey openKey = shellKey.CreateSubKey("open"))
                         using (RegistryKey cmdKey = openKey.CreateSubKey("command"))
-                            cmdKey.SetValue("", "\"" + exe + "\" \"%1\"");
+                            cmdKey.SetValue("", "\"" + exe + "\" --open \"%1\"");
             }
             // .xfm 同样需要 UserChoice（Win11 实测无它即弹「选择打开方式」）
             SFTA.SetFileAssociation("xfsWinPad.Macro", ".xfm");
@@ -302,7 +303,7 @@ class Setup {
             using (RegistryKey shellKey = appKey.CreateSubKey("shell"))
                 using (RegistryKey openKey = shellKey.CreateSubKey("open"))
                     using (RegistryKey cmdKey = openKey.CreateSubKey("command"))
-                        cmdKey.SetValue("", "\"" + exe + "\" \"%1\"");
+                        cmdKey.SetValue("", "\"" + exe + "\" --open \"%1\"");
         }
         foreach (string ext in exts) {
             using (RegistryKey extKey = Registry.CurrentUser.CreateSubKey(

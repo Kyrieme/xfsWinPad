@@ -313,6 +313,10 @@ StartupOptions ParseCommandLine(LPCWSTR cmd) {
         } else if (a == L"--new") {
             // 绕过单实例转发：显式开新进程/新窗口
             opts.forceNew = true;
+        } else if (a == L"--open") {
+            // Shell 打开（关联双击 / 打开方式 / 右键菜单）：恢复上次工作区
+            // 后再叠加这些文件；由安装器写注册表命令时加上。
+            opts.shellOpen = true;
         } else if (a == L"--no-restore") {
             opts.noRestore = true;   // 空白窗口：不恢复会话（New Window 命令）
         } else if (a == L"--restore" && i + 1 < argc) {
@@ -3342,7 +3346,6 @@ void MainWindow::ApplyAll(const AppSettings& s) {
 // 写出一侧（批次 108）：槽位只在"我是最后一个活着的窗口"（= 应用退出）时写，
 // 否则被关掉的窗口下次启动会复活；见 SessionCloseDisposition / WM_CLOSE。
 void MainWindow::StartupSession() {
-    if (!startup_.files.empty()) { OpenCliFiles(startup_); return; }
     if (!startup_.restoreFile.empty()) {
         SessionState ss;
         if (SessionLoad(startup_.restoreFile, &ss)) RestoreSession(ss);
@@ -3352,15 +3355,20 @@ void MainWindow::StartupSession() {
             workspace_->NewDocument();
         return;
     }
-    if (startup_.noRestore || !startup_.firstInstance) {
-        workspace_->NewDocument();
-        return;
+    // 会话恢复条件：首实例（冷启动）且未被 --no-restore 否决。
+    // 带 CLI 文件时默认不恢复——`xfsWinPad.exe <file>` 是"只开这个文件"，
+    // e2e 探针正是靠它拿到干净的单文档窗口；但 Shell 打开（关联双击 / 打开方式
+    // / 右键菜单）的文件带 `--open`，那才是"先恢复上次工作区，再叠加打开的文件"。
+    const bool wantRestore = !startup_.noRestore && startup_.firstInstance &&
+                             (startup_.files.empty() || startup_.shellOpen);
+    if (wantRestore) {
+        SessionState ss;
+        if (SessionLoad(SessionFilePath(), &ss)) RestoreSession(ss);
+        for (const auto& slot : SessionSlots(SessionDir(),
+                                             (unsigned long)::GetCurrentProcessId()))
+            SpawnRestoreWindow(slot);
     }
-    SessionState ss;
-    if (SessionLoad(SessionFilePath(), &ss)) RestoreSession(ss);
-    for (const auto& slot : SessionSlots(SessionDir(),
-                                         (unsigned long)::GetCurrentProcessId()))
-        SpawnRestoreWindow(slot);
+    if (!startup_.files.empty()) { OpenCliFiles(startup_); return; }
     // 会话缺失/损坏/全部失效 → 兜底空白文档（仅在两视图都为空时）
     if (workspace_->Count() == 0 && workspace_->Count1() == 0)
         workspace_->NewDocument();

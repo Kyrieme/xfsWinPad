@@ -50,6 +50,11 @@ struct StartupOptions {
     bool forceNew = false;   // --new: bypass single-instance forwarding
     bool firstInstance = true;  // set by wWinMain: owns the legacy session.json
     bool noRestore = false;  // --no-restore: start blank, skip session restore
+    // --open: the files came from a Shell gesture (file association double-click,
+    // "Open with", right-click menu). Restore the previous session first, then
+    // open them on top. A bare `xfsWinPad.exe <file>` keeps the old "just this
+    // file" path, which the e2e probes rely on for a clean single-doc window.
+    bool shellOpen = false;
     std::wstring restoreFile;   // --restore <file>: load this session slot only
 };
 
