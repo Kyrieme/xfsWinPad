@@ -53,10 +53,19 @@ namespace xfs {
 
 namespace {
 
-// 跨窗口 / 增量重排的状态标记。基类把 LexSpan 的返回值传给下一个窗口，Scintilla
-// 增量 Lex 时也会把该位置原有的状态当 initStyle 传进来，所以用它承载「块注释
-// 未闭合」这一个跨行状态即可。取值刻意避开样式号区间（样式号 ≥64）。
-enum { kStateDefault = 0, kStateBlockComment = 1 };
+// 跨窗口 / 增量重排的状态标记。
+//
+// ⚠ 取值**必须**等于行尾字节被写进去的样式号，不能自拟 0/1：
+//   · 同一 Lex 调用内跨窗口时，基类把 LexSpan 的返回值当下一窗口的 initStyle；
+//   · 但 Scintilla 的**增量重排**（编辑后 Document::EnsureStyledTo →
+//     LexInterface::Colourise，见 third_party/scintilla/src/Document.cxx）是从
+//     「改动行的行首」重跑 Lex，传进来的 initStyle = StyleAt(start-1)，也就是
+//     **本词法器自己写进上一行行尾那个字节的样式号**。
+//   行尾一律被 Push 成 SCE_ATEP_COMMENT / SCE_ATEP_DEFAULT，若这里用 0/1，两者
+//   永不相等 → 打开文件时全量着色正确、一在块注释体内编辑就整段掉色。
+//   StilLexer 从一开始就用样式号当状态（StBlockComment = SCE_STIL_COMMENT），所以
+//   没有这个毛病；本文件与 ChromaDecLexer / ChromaPlanLexer 三处同步修正。
+enum { kStateDefault = SCE_ATEP_DEFAULT, kStateBlockComment = SCE_ATEP_COMMENT };
 
 // 常见电源/时钟/JTAG 信号名。这是「初始线索」而非白名单——.pat 里 pin 名的
 // 权威来源是 .dec 的 PIN_LIST，词法器读不到跨文件信息，所以只认两类：

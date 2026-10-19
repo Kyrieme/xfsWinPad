@@ -42,6 +42,8 @@
   "menu.edit.convert.upper": "대문자로 변환(&U)",
   "menu.edit.convert.lower": "소문자로 변환(&L)",
   "menu.edit.convert.comment": "줄 주석 전환(&G)",
+  "menu.edit.convert.commentline": "주석(&C)",
+  "menu.edit.convert.uncomment": "주석 해제(&N)",
   "menu.edit.insertdt": "날짜/시간 삽입",
 
   "menu.search": "검색(&S)",

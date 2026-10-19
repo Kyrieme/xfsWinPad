@@ -42,6 +42,8 @@
   "menu.edit.convert.upper": "to &UPPERCASE",
   "menu.edit.convert.lower": "to &lowercase",
   "menu.edit.convert.comment": "&Toggle Line Comment",
+  "menu.edit.convert.commentline": "&Comment",
+  "menu.edit.convert.uncomment": "Uncomme&nt",
   "menu.edit.insertdt": "Insert Date && Time",
 
   "menu.search": "&Search",

@@ -42,6 +42,8 @@
   "menu.edit.convert.upper": "转为大写(&U)",
   "menu.edit.convert.lower": "转为小写(&L)",
   "menu.edit.convert.comment": "切换行注释(&G)",
+  "menu.edit.convert.commentline": "注释(&C)",
+  "menu.edit.convert.uncomment": "取消注释(&N)",
   "menu.edit.insertdt": "插入日期和时间",
 
   "menu.search": "搜索(&S)",

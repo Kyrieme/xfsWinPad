@@ -1146,6 +1146,54 @@ static void TestBlockCommentOpenerAlignment() {
     }
 }
 
+// Scintilla 增量重排：编辑后它从「改动行的行首」重跑 Lex（Document::EnsureStyledTo
+// 里 LineStartPosition(GetEndStyled()) 对齐行首），并把 StyleAt(start-1) 当 initStyle
+// 传进来（Document.cxx 的 LexInterface::Colourise）。于是跨行状态**不再由 LexSpan
+// 的返回值携带**，而由上一行行尾字节的样式号携带——状态常量必须等于那个样式号。
+//
+// 这是真实缺陷的回归钉（2026-10-19）：批次 72/73 的三个词法器把状态写成 0/1，而
+// 行尾写的是 SCE_*_DEFAULT / SCE_*_COMMENT，两者永不相等。表现是**打开文件时注释
+// 是绿的，一在块注释体内（非含 `/*` 的那一行）编辑就整段掉色**——E2E 实测 .pln：
+// 第 2 行从 COMMENT(91) 变 STMT(93)、`*/` 行变 OPERATOR(103)。这里用单测钉住，
+// 因为它比 E2E 更早、更准；STIL 一直用样式号当状态（StBlockComment =
+// SCE_STIL_COMMENT），是这批用例里的**阴性对照**（它必须本来就过）。
+static void RelexFrom(Scintilla::ILexer5* lx, MockDoc& doc, Sci_Position line) {
+    const Sci_Position p = doc.LineStart(line);
+    const int initStyle = (p > 0) ? (int)(unsigned char)doc.StyleAt(p - 1) : 0;
+    lx->Lex((Sci_PositionU)p, doc.Length() - p, initStyle, &doc);
+}
+
+static void TestBlockCommentSurvivesIncrementalRelex() {
+    struct { const char* lexer; const char* body; int comment; } kCases[] = {
+        { kLexChromaPlan,  "FORCE_V_MLDPS(a, 1V, @1V, @1A)", SCE_PLN_COMMENT  },
+        { kLexChromaDec,   "PIN_LIST x = 1;",                SCE_DEC_COMMENT  },
+        { kLexAtePattern,  "HEADER x;",                      SCE_ATEP_COMMENT },
+        { kLexStil,        "Signals x;",                     SCE_STIL_COMMENT },
+    };
+    for (const auto& c : kCases) {
+        // line 0 普通行；line 1 开 `/*`；line 2 = 注释体（重排起点，**不含** `/*`）；
+        // line 3 又一行注释体；line 4 收 `*/`；line 5 普通行。
+        MockDoc doc(std::string("first line\n/* open\n") + c.body + "\nx\n*/\ntail\n");
+        Scintilla::ILexer5* lx = XfsCreateLexer(c.lexer);
+        CHECK(lx != nullptr);
+        if (!lx) continue;
+
+        const std::size_t open  = FindIn(doc.Text(), "/* open");
+        const std::size_t close = FindIn(doc.Text(), "*/");
+        CHECK(open != (std::size_t)-1 && close != (std::size_t)-1);
+
+        LexAll(lx, doc);
+        // 基线：全量着色时从 `/*` 到 `*/` 全是注释色
+        CHECK(doc.RangeIs(open, close + 2 - open, c.comment));
+
+        // 增量重排：从注释体第 2 行（line 2）的行首重跑，initStyle 由上一行行尾决定
+        RelexFrom(lx, doc, 2);
+        CHECK(doc.RangeIs(open, close + 2 - open, c.comment));
+        CheckFullyStyled(doc);
+        lx->Release();
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc >= 4 && std::strcmp(argv[1], "--dump") == 0)
         return DumpFile(argv[2], argv[3]);
@@ -1172,6 +1220,7 @@ int main(int argc, char** argv) {
     TestDegenerate();
     TestChromaPlanPreprocessor();
     TestBlockCommentOpenerAlignment();
+    TestBlockCommentSurvivesIncrementalRelex();
 
     printf("test_atelexer: %d checks, %d failures\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;

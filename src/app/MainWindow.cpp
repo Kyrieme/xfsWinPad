@@ -7,6 +7,7 @@
 #include "ResultsPanel.h"
 #include "WindowsListDialog.h"
 #include "../core/CommandIds.h"
+#include "../core/ChordKeys.h"    // 批次 154：Ctrl+K,C / Ctrl+K,U 和弦判定（纯函数）
 #include "../core/Dpi.h"          // 批次 138：ScalePx / ClampSuggestedRect（纯函数，有单测）
 #include "../core/I18n.h"
 #include "../core/JsonLite.h"
@@ -803,6 +804,13 @@ bool MainWindow::Create(HINSTANCE hInst, const StartupOptions& opts) {
     return true;
 }
 
+// 批次 154：焦点在活动文档的 Scintilla 上吗？和弦只在这里生效。
+bool MainWindow::EditorHasFocus() const {
+    Document* d = workspace_ ? workspace_->Active() : nullptr;
+    if (!d || !d->editor.Valid()) return false;
+    return ::GetFocus() == d->editor.Hwnd();
+}
+
 int MainWindow::RunMessageLoop() {
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -810,6 +818,37 @@ int MainWindow::RunMessageLoop() {
         if (findDlg_ && findDlg_->IsVisible() &&
             IsDialogMessageW(findDlg_->Hwnd(), &msg))
             continue;
+        // 批次 154：Ctrl+K,C / Ctrl+K,U 双键和弦。ShortcutTable 是单和弦模型装不下
+        // 双键序列，故在 TranslateAcceleratorW 之前独立拦截：
+        //   Arm（Ctrl+K）  ⇒ 记前缀并吞掉该键；
+        //   Comment/Uncomment ⇒ 直接发 WM_COMMAND 并吞掉该键；
+        //   其余 ⇒ 放弃任何半途前缀，放行给正常流程（加速器 / Scintilla）。
+        // 仅当焦点在编辑器上才处理，避免劫持查找框等对话框里的按键。
+        if (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN) {
+            if (EditorHasFocus()) {
+                const bool ctrl = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                const bool alt = (::GetKeyState(VK_MENU) & 0x8000) != 0;
+                const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                const ChordAction act = DecideChord(
+                    (unsigned)msg.wParam, ctrl, alt, shift, chordPending_);
+                if (act == ChordAction::Arm) {
+                    chordPending_ = true;
+                    continue;
+                }
+                if (act == ChordAction::Comment ||
+                    act == ChordAction::Uncomment) {
+                    chordPending_ = false;
+                    SendMessageW(hwnd_, WM_COMMAND,
+                                 act == ChordAction::Comment
+                                     ? Cmd::EditCommentLine
+                                     : Cmd::EditUncommentLine, 0);
+                    continue;
+                }
+                chordPending_ = false;   // 其它键：放弃半途前缀
+            } else {
+                chordPending_ = false;
+            }
+        }
         if (!TranslateAcceleratorW(hwnd_, accel_, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -819,6 +858,17 @@ int MainWindow::RunMessageLoop() {
 }
 
 // --- menus ----------------------------------------------------------------------
+
+// 批次 154：和弦命令的尾注文本（双键序列）。ShortcutTable 是单和弦模型装不下双键，
+// 故这两条注解不进快捷键表而在这里硬编码；菜单尾注与 toolbar tooltip（CmdShortcut）
+// 共用同一来源，不会各写一份。非和弦命令返回空串。
+std::wstring ChordText(unsigned int cmd) {
+    switch (cmd) {
+        case Cmd::EditCommentLine:   return L"Ctrl+K, Ctrl+C";
+        case Cmd::EditUncommentLine: return L"Ctrl+K, Ctrl+U";
+        default:                     return L"";
+    }
+}
 
 void MainWindow::BuildMenus() {
     auto popup = [](HMENU parent, const wchar_t* text) {
@@ -836,6 +886,13 @@ void MainWindow::BuildMenus() {
         if (info.Valid()) {
             t += L"\t";
             t += info.ToString();
+        } else {
+            // 批次 154：和弦命令（双键）不在快捷键表内，回退到硬编码尾注文本。
+            const std::wstring chord = ChordText(id);
+            if (!chord.empty()) {
+                t += L"\t";
+                t += chord;
+            }
         }
         AppendMenuW(m, MF_STRING, id, t.c_str());
     };
@@ -897,6 +954,9 @@ void MainWindow::BuildMenus() {
     item(convert, Tr(L"menu.edit.convert.upper"), Cmd::EditUpperCase);
     item(convert, Tr(L"menu.edit.convert.lower"), Cmd::EditLowerCase);
     item(convert, Tr(L"menu.edit.convert.comment"), Cmd::EditToggleComment);
+    // 批次 154：严格方向两条（VS Ctrl+K,C / Ctrl+K,U）
+    item(convert, Tr(L"menu.edit.convert.commentline"), Cmd::EditCommentLine);
+    item(convert, Tr(L"menu.edit.convert.uncomment"), Cmd::EditUncommentLine);
     sep(edit);
     item(edit, Tr(L"menu.edit.insertdt"), Cmd::EditTimeDate);
 
@@ -1325,6 +1385,15 @@ const wchar_t* CmdShortcut(unsigned int cmd) {
         case Cmd::EditPaste:     return L" (Ctrl+V)";
         default:                 break;
     }
+    // 批次 154：和弦命令（双键序列）同样不在 ACCEL 表内，尾注取自 ChordText。
+    {
+        const std::wstring chord = ChordText(cmd);
+        if (!chord.empty()) {
+            static std::wstring chordTip;   // 仅 UI 线程使用（tooltip 路径）
+            chordTip = L" (" + chord + L")";
+            return chordTip.c_str();
+        }
+    }
     // 其余命令查快捷键表（默认 + shortcuts.json 覆盖）。
     const ShortcutInfo info = GlobalShortcuts().Get(cmd);
     if (!info.Valid()) return L"";
@@ -1419,6 +1488,7 @@ const ToolbarBtnDef kToolbarDefs[] = {
     {L"cmd.cut",     Cmd::EditCut,        IDR_TB_CUT},
     {L"cmd.copy",    Cmd::EditCopy,       IDR_TB_COPY},
     {L"cmd.paste",   Cmd::EditPaste,      IDR_TB_PASTE},
+    {L"menu.edit.convert.comment", Cmd::EditToggleComment, 0},  // 批次 154：行注释 toggle（纯文字）
     {nullptr,        0,                   0},                  // sep
     {L"cmd.find",    Cmd::SearchFind,     IDR_TB_FIND},
     {L"cmd.replace", Cmd::SearchReplace,  IDR_TB_REPLACE},
@@ -6115,6 +6185,8 @@ void MainWindow::ExecuteCommand(unsigned int id) {
         case Cmd::EditSplitLines: EditCmd(Cmd::EditSplitLines); break;
         case Cmd::EditRemoveEmptyLines: EditCmd(Cmd::EditRemoveEmptyLines); break;
         case Cmd::EditReverseLines: EditCmd(Cmd::EditReverseLines); break;
+        case Cmd::EditCommentLine: EditCmd(Cmd::EditCommentLine); break;
+        case Cmd::EditUncommentLine: EditCmd(Cmd::EditUncommentLine); break;
 
         case Cmd::SearchFind:      ShowFindDialog(L"", 0); break;
         case Cmd::SearchReplace:   ShowFindDialog(L"", 1); break;
@@ -6328,6 +6400,8 @@ void MainWindow::EditCmd(unsigned int cmd) {
         case Cmd::EditSplitLines: ed.SplitLineAtCaret(); break;
         case Cmd::EditRemoveEmptyLines: ed.RemoveEmptyLines(); break;
         case Cmd::EditReverseLines: ed.ReverseLines(); break;
+        case Cmd::EditCommentLine: ed.CommentSelection(); break;
+        case Cmd::EditUncommentLine: ed.UncommentSelection(); break;
     }
     UpdateUndoRedoState();
 }

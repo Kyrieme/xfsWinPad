@@ -1860,6 +1860,31 @@ void Editor::ToggleLineComment() {
     SelectRange(ts, ts + (sptr_t)out.size());
 }
 
+void Editor::CommentSelection() {
+    // 与 ToggleLineComment 同骨架：lexer 名 → 行注释符，无行注释语言不动作
+    const char* prefix = LineCommentToken(lexerName_.c_str());
+    if (!prefix) return;
+    std::string text;
+    sptr_t ts = 0, te = 0;
+    if (!CollectLineRange(&text, &ts, &te)) return;
+    std::string out = LineOps::CommentLines(text, prefix,
+                                            DocEolStr(Send(SCI_GETEOLMODE)));
+    ReplaceLineRange(ts, te, out);
+    SelectRange(ts, ts + (sptr_t)out.size());
+}
+
+void Editor::UncommentSelection() {
+    const char* prefix = LineCommentToken(lexerName_.c_str());
+    if (!prefix) return;
+    std::string text;
+    sptr_t ts = 0, te = 0;
+    if (!CollectLineRange(&text, &ts, &te)) return;
+    std::string out = LineOps::UncommentLines(text, prefix,
+                                              DocEolStr(Send(SCI_GETEOLMODE)));
+    ReplaceLineRange(ts, te, out);
+    SelectRange(ts, ts + (sptr_t)out.size());
+}
+
 void Editor::JoinSelectedLines() {
     sptr_t selStart = Send(SCI_GETSELECTIONSTART);
     sptr_t selEnd = Send(SCI_GETSELECTIONEND);

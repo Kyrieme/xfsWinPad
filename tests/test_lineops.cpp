@@ -85,12 +85,51 @@ static void RunToggleComment() {
     CHECK(!commented);
 }
 
+// 批次 154：严格方向 —— 只加（Ctrl+K,C）
+static void RunCommentLines() {
+    // 基本：每行按自身缩进插入
+    CHECK(CommentLines("int a;\n  int b;\n", "//", "\n")
+          == "//int a;\n  //int b;\n");
+    // 空行/全空白行跳过（用户要求：多行选中的空行跳过）
+    CHECK(CommentLines("code\n\n  \n\t\nmore\n", "//", "\n")
+          == "//code\n\n  \n\t\n//more\n");
+    // 已是注释行不动（严格"只加"，不像 toggle 会整体取消）
+    CHECK(CommentLines("//a\nb\n", "//", "\n") == "//a\n//b\n");
+    // 全部已注释 → 原样不动
+    CHECK(CommentLines("//a\n//b\n", "//", "\n") == "//a\n//b\n");
+    // 全空行 → 原样不动
+    CHECK(CommentLines("\n  \n", "//", "\n") == "\n  \n");
+    // "# " 形式（python / sql）
+    CHECK(CommentLines("x = 1\n", "# ", "\n") == "# x = 1\n");
+    // 无尾 EOL 保持
+    CHECK(CommentLines("a\nb", "//", "\n") == "//a\n//b");
+}
+
+// 批次 154：严格方向 —— 只删（Ctrl+K,U）
+static void RunUncommentLines() {
+    // 基本：去掉 prefix 及其后紧随的一个空格
+    CHECK(UncommentLines("//int a;\n  //int b;\n", "//", "\n")
+          == "int a;\n  int b;\n");
+    // 无 prefix 行不动（严格"只删"，不像 toggle 会整体加）
+    CHECK(UncommentLines("//a\nb\n", "//", "\n") == "a\nb\n");
+    // 空行跳过
+    CHECK(UncommentLines("//a\n\n  //b\n", "//", "\n") == "a\n\n  b\n");
+    // "# " 形式
+    CHECK(UncommentLines("# x = 1\n", "# ", "\n") == "x = 1\n");
+    // 全部无 prefix → 原样不动
+    CHECK(UncommentLines("a\nb\n", "//", "\n") == "a\nb\n");
+    // 无尾 EOL 保持
+    CHECK(UncommentLines("//a\n//b", "//", "\n") == "a\nb");
+}
+
 int main() {
     printf("== test_lineops ==\n");
     RunSplitJoin();
     RunRemoveEmpty();
     RunReverse();
     RunToggleComment();
+    RunCommentLines();
+    RunUncommentLines();
     if (g_fail) {
         printf("FAILED: %d check(s)\n", g_fail);
         return 1;

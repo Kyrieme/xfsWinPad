@@ -45,6 +45,8 @@ enum Cmd : unsigned int {
     EditSplitLines,          // 批次 29：拆分行
     EditRemoveEmptyLines,    // 批次 29：删除空行
     EditReverseLines,        // 批次 29：行序反转
+    EditCommentLine,         // 批次 154：严格加行注释（VS Ctrl+K,C）
+    EditUncommentLine,       // 批次 154：严格取消行注释（VS Ctrl+K,U）
 
     // Search
     SearchFind = 400,

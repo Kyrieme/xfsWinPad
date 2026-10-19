@@ -29,8 +29,9 @@
 //   引用不上色（多数派），只靠运算符已足够读出结构。
 //
 // 【跨行状态】
-//   只有块注释 `/* */` 跨行，经 LexSpan 返回值在窗口/增量重排之间传递。
-//   其余全部行局部。
+//   只有块注释 `/* */` 跨行。状态编码在**行尾字节的样式**里（见下方 enum 注释）：
+//   同一 Lex 调用内跨窗口靠 LexSpan 返回值，增量重排靠 Scintilla 传回的
+//   StyleAt(start-1)——两条路径读到的必须是同一个值。其余全部行局部。
 
 #include "ChromaDecLexer.h"
 #include "Chroma3380Db.h"
@@ -42,7 +43,9 @@ namespace xfs {
 
 namespace {
 
-enum { kStateDefault = 0, kStateBlockComment = 1 };
+// 状态值必须**等于**行尾字节的样式号（理由见 AtePatternLexer 同处注释）：
+// Scintilla 增量重排时 initStyle = StyleAt(start-1) = 上一行行尾字节的样式号。
+enum { kStateDefault = SCE_DEC_DEFAULT, kStateBlockComment = SCE_DEC_COMMENT };
 
 inline bool IsSpace(char c) { return c == ' ' || c == '\t'; }
 inline bool IsDigit(char c) { return c >= '0' && c <= '9'; }

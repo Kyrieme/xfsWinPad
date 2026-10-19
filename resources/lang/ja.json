@@ -42,6 +42,8 @@
   "menu.edit.convert.upper": "大文字に変換(&U)",
   "menu.edit.convert.lower": "小文字に変換(&L)",
   "menu.edit.convert.comment": "行コメントの切り替え(&G)",
+  "menu.edit.convert.commentline": "コメント(&C)",
+  "menu.edit.convert.uncomment": "コメント解除(&N)",
   "menu.edit.insertdt": "日付と時刻の挿入",
 
   "menu.search": "検索(&S)",

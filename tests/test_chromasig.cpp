@@ -531,7 +531,12 @@ static void RunDataIntegrity() {
     // 交代一句为什么。数值来源：语言包数据源的生成器运行输出（私密侧）。
     CHECK(kStatementCount == 309);
     CHECK(kParamCount == 1265);
-    CHECK(kValueCount == 227);
+    // 230：2026-10-16 修正 FORCE_I_MLDPS.i_range（7 档 → 3 档 @1A/@500mA/@25mA）
+    //   后池 +3。这 3 值是**新段**不是复用段——段级去重的单位是「整段」，
+    //   这 3 项的顺序/内容与 FORCE_V_MLDPS 的 7 值段都不同，`intern_run` 只能新开
+    //   一段；其余参数的下标随之整体 +3，由生成器的逐槽审计（162 槽全对比）
+    //   保证自洽。数值来源：生成器运行输出（私密侧）。
+    CHECK(kValueCount == 230);
 
     // 语句 → 参数区间必须在池内
     for (int i = 0; i < kStatementCount; ++i) {
@@ -599,10 +604,15 @@ static void RunDataIntegrity() {
 static void RunFamilyRanges() {
     struct Case { const char* stmt; const char* param; const char* want; };
     static const Case kCases[] = {
-        // MLDPS 族：电压 2 档、电流 7 档
+        // MLDPS 族：v_range 2 档。i_range **随力的方向而不同**——串族即错的现场案例：
+        //   V-force（FORCE_V_MLDPS，4.3.2）能用全部 7 档电流档（该 7 档已在
+        //   RunForceVMldps 钉过）；I-force（FORCE_I_MLDPS，4.3.1）只有 3 个高电流档
+        //   @1A/@500mA/@25mA：手册 p98 本节的 I_range 表就是这 3 行（印了两遍），
+        //   旁证是 4.8.4 FORCE_CURRENT 的 MLDPS 分支 `_I_RNG, @25mA|@500mA|@1A`。
+        //   2026-10-16 用户实测「第 3 参下拉框内容不对」后纠正：曾按「本节表被归因
+        //   截断」把 4.3.2 的 7 档串到本条头上（语法合法、全错）。顺序照本节表。
         {"FORCE_V_MLDPS", "v_range", "@6V @12V"},
-        {"FORCE_I_MLDPS", "i_range",
-         "@5uA @25uA @250uA @2.5mA @25mA @500mA @1A"},
+        {"FORCE_I_MLDPS", "i_range", "@1A @500mA @25mA"},
         // DPS 族：电压 4 档(@4V~@16V)、电流 8 档(@1uA~@2A)
         {"FORCE_V_DPS",   "v_range", "@4V @8V @12V @16V"},
         {"FORCE_I_DPS",   "v_range", "@4V @8V @12V @16V"},

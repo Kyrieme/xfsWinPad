@@ -5,6 +5,20 @@
 namespace xfs {
 namespace LineOps {
 
+namespace {
+// 行内首个非空白列位置（全空白 → -1）。返回 ptrdiff_t 便于与 s.size() 比较。
+ptrdiff_t FirstNonWs(const std::string& s) {
+    for (size_t i = 0; i < s.size(); ++i)
+        if (s[i] != ' ' && s[i] != '\t') return (ptrdiff_t)i;
+    return -1;
+}
+// 非空行的首个非空白处是否恰好以 prefix 开头。
+bool HasPrefix(const std::string& s, const std::string& prefix) {
+    ptrdiff_t p = FirstNonWs(s);
+    return p >= 0 && s.compare((size_t)p, prefix.size(), prefix) == 0;
+}
+} // namespace
+
 void SplitLines(const std::string& text, std::vector<std::string>* lines,
                 bool* endsEol) {
     lines->clear();
@@ -74,43 +88,61 @@ std::string ToggleComment(const std::string& text, const std::string& prefix,
     bool endsEol = false;
     SplitLines(text, &lines, &endsEol);
 
-    auto isWs = [](char c) { return c == ' ' || c == '\t'; };
-    auto firstNonWs = [&](const std::string& s) -> ptrdiff_t {
-        for (size_t i = 0; i < s.size(); ++i)
-            if (!isWs(s[i])) return (ptrdiff_t)i;
-        return -1;
-    };
-    auto hasPrefix = [&](const std::string& s) -> bool {
-        ptrdiff_t p = firstNonWs(s);
-        return p >= 0 && s.compare((size_t)p, prefix.size(), prefix) == 0;
-    };
-
     // 判定：全部非空行已带 prefix → 取消；否则逐行补（已带的行不动）。
     // 全空行选区：无目标，不动作，commented=false。
     size_t nonEmpty = 0, with = 0;
     for (const auto& s : lines) {
-        if (firstNonWs(s) < 0) continue;
+        if (FirstNonWs(s) < 0) continue;
         ++nonEmpty;
-        if (hasPrefix(s)) ++with;
+        if (HasPrefix(s, prefix)) ++with;
     }
     bool uncomment = nonEmpty > 0 && with == nonEmpty;
     if (outCommented) *outCommented = nonEmpty > 0 && !uncomment;
 
     if (uncomment) {
         for (auto& s : lines) {
-            if (!hasPrefix(s)) continue;
-            ptrdiff_t p = firstNonWs(s);
+            if (!HasPrefix(s, prefix)) continue;
+            ptrdiff_t p = FirstNonWs(s);
             s.erase((size_t)p, prefix.size());
             if ((size_t)p < s.size() && s[(size_t)p] == ' ')
                 s.erase((size_t)p, 1);
         }
     } else if (nonEmpty > 0) {
         for (auto& s : lines) {
-            ptrdiff_t p = firstNonWs(s);
-            if (p < 0) continue;          // 空行不动
-            if (hasPrefix(s)) continue;   // 已注释行不动
+            ptrdiff_t p = FirstNonWs(s);
+            if (p < 0) continue;                    // 空行不动
+            if (HasPrefix(s, prefix)) continue;     // 已注释行不动
             s.insert((size_t)p, prefix);
         }
+    }
+    return JoinLines(lines, eol, endsEol);
+}
+
+std::string CommentLines(const std::string& text, const std::string& prefix,
+                         const char* eol) {
+    std::vector<std::string> lines;
+    bool endsEol = false;
+    SplitLines(text, &lines, &endsEol);
+    for (auto& s : lines) {
+        ptrdiff_t p = FirstNonWs(s);
+        if (p < 0) continue;                    // 空行/全空白行不动
+        if (HasPrefix(s, prefix)) continue;     // 已注释行不动（严格"只加"）
+        s.insert((size_t)p, prefix);
+    }
+    return JoinLines(lines, eol, endsEol);
+}
+
+std::string UncommentLines(const std::string& text, const std::string& prefix,
+                           const char* eol) {
+    std::vector<std::string> lines;
+    bool endsEol = false;
+    SplitLines(text, &lines, &endsEol);
+    for (auto& s : lines) {
+        if (!HasPrefix(s, prefix)) continue;    // 无 prefix 行不动（严格"只删"）
+        ptrdiff_t p = FirstNonWs(s);
+        s.erase((size_t)p, prefix.size());
+        if ((size_t)p < s.size() && s[(size_t)p] == ' ')
+            s.erase((size_t)p, 1);
     }
     return JoinLines(lines, eol, endsEol);
 }

@@ -611,8 +611,32 @@ try {
   $act1 = [CH]::AutoCActive($g_ed)
   Write-Output ("  [diag] prefix 'F' -> autoC={0}" -f $act1)
   if ($act1 -ne 0) { Fail "a one-character prefix raised a dropdown (threshold is 2)" }
-  # (2) four characters at a statement position -> dropdown, and NOT the calltip
+  # (2) the SECOND character crosses the 2-character threshold, so this read is the
+  #     sharpest available proof of WHERE the threshold sits: 1 char showed nothing
+  #     (checked above), 2 chars showed the list right there. SCI_AUTOCPOSSTART is
+  #     the caret at the moment SCI_AUTOCSHOW ran - AutoComplete::Start stores
+  #     posStart = sel.MainCaret() and startLen = lenEntered separately (see the
+  #     corrected note in P3); it is NOT the prefix start. So it must read $c7 + 2.
   [CH]::TypeChar($g_ed, [int][char]'O')
+  Start-Sleep -Milliseconds 400
+  $act2 = [CH]::AutoCActive($g_ed)
+  $ps2  = [CH]::AutoCPosStart($g_ed)
+  Write-Output ("  [diag] prefix 'FO' -> autoC={0} posStart={1} want={2}" -f `
+                $act2, $ps2, ($c7 + 2))
+  if ($act2 -ne 1) {
+    Fail "the 2-character threshold did not raise a dropdown at a statement position" }
+  if ($ps2 -ne ($c7 + 2)) {
+    Fail (("SCI_AUTOCPOSSTART = {0}, want {1} (the caret when the list was shown) - " +
+           "the list did not appear at the 2-char threshold") -f $ps2, ($c7 + 2)) }
+  # (3) two more characters at a statement position -> the list is still up, and NOT
+  #     the calltip. Batch 151 deliberately re-shows the list on EVERY keystroke,
+  #     because Scintilla never narrows the visible list - it only moves the
+  #     highlight to the first hit - so the displayed items would otherwise keep
+  #     offering words the typed prefix no longer matches. A consequence of that
+  #     fix is that posStart now tracks the caret instead of freezing at the
+  #     2-character show; this assertion pins THAT behaviour. (An earlier revision
+  #     of this harness expected $c7 + 2 here, which was true only while the
+  #     removed "already active -> let Scintilla filter" guard existed.)
   [CH]::TypeChar($g_ed, [int][char]'R')
   [CH]::TypeChar($g_ed, [int][char]'C')
   Start-Sleep -Milliseconds 400
@@ -620,33 +644,28 @@ try {
   $act7   = [CH]::AutoCActive($g_ed)
   $tip7   = [CH]::CallTipActive($g_ed)
   $ps7    = [CH]::AutoCPosStart($g_ed)
+  $caret7 = [CH]::CurrentPos($g_ed)
   Write-Output ("  [diag] prefix 'FORC' -> autoC={0} callTip={1} posStart={2} caret={3}" -f `
-                $act7, $tip7, $ps7, [CH]::CurrentPos($g_ed))
+                $act7, $tip7, $ps7, $caret7)
   if ($act7 -ne 1) { Fail "no dropdown at a statement position for prefix FORC" }
   if ($tip7 -ne 0) { Fail "calltip and dropdown both up (Scintilla cancels one when the other shows)" }
-  # SCI_AUTOCPOSSTART is the caret at the moment the list was SHOWN, and Scintilla
-  # does NOT move it as the user keeps typing (later chars only re-filter the list).
-  # The list is shown when the prefix reaches the 2-character threshold - i.e. on
-  # the second character 'O' - so posStart must be $c7 + 2. This is the sharpest
-  # available proof of WHERE the threshold sits: 1 char showed nothing (checked
-  # above), 2 chars showed the list right there, 4 chars kept filtering it.
-  if ($ps7 -ne ($c7 + 2)) {
-    Fail (("SCI_AUTOCPOSSTART = {0}, want {1} (the caret when the list was shown, i.e. " +
-           "after 2 prefix chars) - the list did not appear at the 2-char threshold") -f
-          $ps7, ($c7 + 2)) }
-  # (3) Tab accepts item 0. See the corrected notes below on what the delta can and
+  if ($ps7 -ne $caret7) {
+    Fail (("SCI_AUTOCPOSSTART = {0}, caret = {1} - the list was not re-shown on the " +
+           "last keystroke, so the visible items no longer match the typed prefix " +
+           "(batch 151)") -f $ps7, $caret7) }
+  # (4) Tab accepts item 0. See the corrected notes below on what the delta can and
   #     cannot prove (batch 78: FORCE_CURRENT and FORCE_I_MLDPS are both 13 chars,
   #     so the ORDER proof lives in the text assertion).
   [CH]::PressKey($g_ed, $VK_TAB)
   Start-Sleep -Milliseconds 400
   $delta = [CH]::TextLength($g_ed) - $len7
-  # (4) the text itself (WM_GETTEXT is below WM_USER, so it is marshalled safely).
+  # (5) the text itself (WM_GETTEXT is below WM_USER, so it is marshalled safely).
   #     Read BEFORE the delta assertion, because since batch 78 the delta also
   #     carries the continuation the acceptance triggers - see below.
   $text7 = [CH]::GetText($g_ed)
   Write-Output ("  [diag] after Tab: delta={0} autoC={1}" -f $delta, [CH]::AutoCActive($g_ed))
   if ([CH]::AutoCActive($g_ed) -ne 0) { Fail "Tab did not close the statement dropdown" }
-  # (3) Delta pins the SIZE of what was accepted: nameLen - prefixLen, PLUS the
+  # (6) Delta pins the SIZE of what was accepted: nameLen - prefixLen, PLUS the
   #     batch-78 continuation (a '(' and, when the auto-close-brackets preference
   #     is on - the default - its paired ')'). Deriving the bracket count from the
   #     text instead of hardcoding it keeps this valid whether or not the local
@@ -655,7 +674,7 @@ try {
   #     order. Batch 77's comment claimed an alphabetically sorted list would have
   #     accepted FORCE_CURRENT "and the length would not match" - but FORCE_CURRENT
   #     (manual 4.8) and FORCE_I_MLDPS (manual 4.3) are BOTH 13 characters, so the
-  #     sizes are identical. The ORDER proof is the text assertion in (4) below;
+  #     sizes are identical. The ORDER proof is the text assertion in (5) above;
   #     this line only catches a wrong-length name (e.g. FORCE_I_DPS, 11).
   $extra7 = 1
   if ($text7.IndexOf($want + "()") -ge 0) { $extra7 = 2 }

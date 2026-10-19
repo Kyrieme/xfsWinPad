@@ -134,6 +134,9 @@ private:
     void UpdateTitleBar();
     void UpdateStatusBar();
     void UpdateUndoRedoState();   // 工具栏撤销/重做按钮禁用态（无操作/到底变灰）
+    // 批次 154：焦点是否在活动文档的 Scintilla 上。Ctrl+K,C / Ctrl+K,U 只在
+    // 编辑器里生效（避免劫持查找框等对话框里的按键）。
+    bool EditorHasFocus() const;
     void DoGotoLine();
     void ApplyRestoreJumps();   // WM_APP_RESTOREJUMP：窗口消息循环开始后再跳恢复行
     void HandleSearchAction(SearchAction act);
@@ -348,6 +351,9 @@ private:
     static LRESULT CALLBACK ToolbarMouseProc(HWND, UINT, WPARAM, LPARAM,
                                              UINT_PTR, DWORD_PTR);
     HACCEL accel_ = nullptr;
+    // 批次 154：Ctrl+K 和弦前缀已按下。为 true 时下一个 Ctrl+C / Ctrl+U 被解释为
+    // 注释 / 取消注释；按到其它键则放弃前缀（见 RunMessageLoop 里的判定）。
+    bool chordPending_ = false;
     HMENU menu_ = nullptr;
     HMENU recentMenu_ = nullptr;
     std::vector<std::wstring> recentItems_;

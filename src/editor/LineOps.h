@@ -19,6 +19,16 @@ std::string ReverseLines(const std::string& text, const char* eol);
 std::string ToggleComment(const std::string& text, const std::string& prefix,
                           const char* eol, bool* outCommented);
 
+// 严格方向（VS 语义 Ctrl+K,C）：只加注释。非空且未带 prefix 的行在首个非空白列
+// 插入 prefix；空行/全空白行与已带 prefix 的行都不动。原文原样返回时也算成功。
+std::string CommentLines(const std::string& text, const std::string& prefix,
+                         const char* eol);
+
+// 严格方向（VS 语义 Ctrl+K,U）：只取消注释。带 prefix 的非空行移除 prefix 及其后
+// 紧随的一个空格；空行/无 prefix 行不动。
+std::string UncommentLines(const std::string& text, const std::string& prefix,
+                           const char* eol);
+
 // 按行拆分（\n、\r\n、\r 都识别），输出不含行尾符。
 void SplitLines(const std::string& text, std::vector<std::string>* lines,
                 bool* endsEol);

@@ -35,7 +35,8 @@
 //   同色会让这几类混成一片，排查时无法目视归类。
 //
 // 【跨行状态】块注释 `/* */` 与 C 字符串一致：字符串**不跨行**（现场文件如此，
-//   且 C 的多行字符串在 CRAFT 里也不常见），块注释跨行经 LexSpan 返回值传递。
+//   且 C 的多行字符串在 CRAFT 里也不常见）；块注释跨行的状态编码在**行尾字节的
+//   样式**里（见下方 enum 注释）——同一 Lex 调用内跨窗口与增量重排读的是同一个值。
 
 #include "ChromaPlanLexer.h"
 #include "Chroma3380Db.h"
@@ -47,7 +48,9 @@ namespace xfs {
 
 namespace {
 
-enum { kStateDefault = 0, kStateBlockComment = 1 };
+// 状态值必须**等于**行尾字节的样式号（理由见 AtePatternLexer 同处注释）：
+// Scintilla 增量重排时 initStyle = StyleAt(start-1) = 上一行行尾字节的样式号。
+enum { kStateDefault = SCE_PLN_DEFAULT, kStateBlockComment = SCE_PLN_COMMENT };
 
 inline bool IsSpace(char c) { return c == ' ' || c == '\t'; }
 inline bool IsDigit(char c) { return c >= '0' && c <= '9'; }

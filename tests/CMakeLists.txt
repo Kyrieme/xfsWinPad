@@ -320,6 +320,17 @@ endif()
 
 add_test(NAME lineops COMMAND test_lineops)
 
+# 批次 154：Ctrl+K,C / Ctrl+K,U 和弦判定纯函数（src/core/ChordKeys.h，header-only）。
+# 零源文件依赖，只 include 头 ⇒ 单独一个 target，让 ctest 总数增长成为可见信号。
+add_executable(test_chordkeys test_chordkeys.cpp)
+
+target_compile_definitions(test_chordkeys PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(test_chordkeys PRIVATE /utf-8 /W3)
+endif()
+
+add_test(NAME chordkeys COMMAND test_chordkeys)
+
 # 悬停气泡折行（批次 118）：把批次 103 写在 Editor.cpp 里、抓着 HDC 的折行算法抽成
 # 纯函数 src/editor/BalloonWrap.cpp，这里喂一把等宽量尺把它钉住 —— 重点是那条
 # 「超长词硬切」防御分支：对当前手册语料走不到（最长 token 64 字符 < 阈值 ~87），

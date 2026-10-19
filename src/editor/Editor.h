@@ -112,6 +112,8 @@ public:
     void RemoveEmptyLines();        // 选区（无选择 = 全文）删空白行
     void ReverseLines();            // 选区（无选择 = 全文）行序反转
     void ToggleLineComment();       // 按当前 lexer 选注释符，选区行切换
+    void CommentSelection();        // 严格只加注释（VS Ctrl+K,C）
+    void UncommentSelection();      // 严格只取消注释（VS Ctrl+K,U）
 
     // diff markers (marker 5 = changed line, 6 = added/removed)
     void ClearDiffMarks();
